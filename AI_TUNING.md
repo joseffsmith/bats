@@ -104,14 +104,58 @@ Side balance: 50.0% / 50.0% — restored.
 
 **Planned tuning for iteration 3:**
 
-- Aggressor: real nerf. Drop `damageDealt` 1.4 → 1.2, raise `counterRisk`
-  0.5 → 0.7, replace the second tank in preferred with infantry, raise
-  `infantryFloor` 2 → 3 so it has actual capturers.
-- Turtle: get away from artillery. preferred=[tank,infantry,artillery],
-  raise `positional` 0.7 → 1.0 + `capture` 1.4 → 1.6 to spread captures.
-- Economist: more teeth. damageDealt 1.0 → 1.1, tank earlier in preferred,
-  keep infantryFloor 3 → 4.
+- Aggressor: real nerf. `damageDealt` 1.4 → 1.2, `counterRisk` 0.5 → 0.7,
+  preferred [tank,recon,infantry], `infantryFloor` 2 → 3.
+- Turtle: less artillery, more tanks. preferred=[tank,infantry,artillery].
+- Economist: more teeth. preferred=[infantry,tank,recon].
 - Balanced: still the control.
+
+---
+
+## Iteration 3 — narrower archetypes (pilot, 10/pair/map)
+
+**Results (180 matches):**
+
+| persona   | W  | L  | D | WR    |
+|-----------|----|----|---|-------|
+| turtle    | 70 | 20 | 0 | 77.8% |
+| aggressor | 65 | 25 | 0 | 72.2% |
+| balanced  | 45 | 45 | 0 | 50.0% |
+| economist |  0 | 90 | 0 |  0.0% |
+
+Matrix:
+
+|           | aggressor | turtle | economist | balanced |
+|-----------|-----------|--------|-----------|----------|
+| aggressor | -         | 33%    | 100%      | 83%      |
+| turtle    | 67%       | -      | 100%      | 67%      |
+| economist | 0%        | 0%     | -         | 0%       |
+| balanced  | 17%       | 33%    | 100%      | -        |
+
+Side balance: 47.2 / 52.8.
+
+**Observations:**
+
+- BIG improvement: turtle and aggressor are now distinct archetypes that
+  trade wins. Turtle 67% on duel + canyon, but aggressor wins crossroads
+  100%. That's the kind of map-driven asymmetry we want.
+- Balanced settles at exactly 50% — a sensible control.
+- Economist is still 0/90. The damage/capture mix isn't enough; capture
+  doesn't pay off if the unit dies before flipping the tile.
+- Stalemates dropped substantially. `turtle vs balanced crossroads` 167
+  avg, `aggressor vs balanced crossroads` 122 avg — still long but no
+  longer all 200-cap. Only `aggressor vs turtle crossroads 100%` looks
+  decisive.
+
+**Planned tuning for iteration 4:**
+
+- Economist: defensive rework. `damageDealt` 1.1 → 0.8 (don't trade),
+  `counterRisk` 1.0 → 1.6, `futureThreat` 0.7 → 1.2, `objective` 1.0 → 1.4,
+  bump role-overrides for capturer/support/defender. Keep tank in preferred
+  but `infantryFloor` 4 → 5 so it doesn't lose capturer presence.
+- Aggressor: unchanged.
+- Turtle: unchanged.
+- Balanced: unchanged.
 
 ---
 

@@ -22,7 +22,7 @@
     },
     {
       "name": "turtle",
-      "description": "Tank + infantry walls on terrain. Slow push; ignores artillery.",
+      "description": "Tank + infantry walls on terrain. Slow push; ignores recon.",
       "weights": {
         "damageDealt": 1.0,
         "capture": 1.6,
@@ -43,23 +43,24 @@
     },
     {
       "name": "economist",
-      "description": "Capture-focused but with a tank reserve. Outscales on income.",
+      "description": "Survives, captures, outscales on income. Avoids trades.",
       "weights": {
-        "damageDealt": 1.1,
-        "capture": 1.6,
-        "counterRisk": 1.0,
-        "futureThreat": 0.7,
-        "positional": 0.5,
-        "objective": 1.0
+        "damageDealt": 0.8,
+        "capture": 2.0,
+        "counterRisk": 1.6,
+        "futureThreat": 1.2,
+        "positional": 0.7,
+        "objective": 1.4
       },
       "roleOverrides": {
-        "capturer": { "capture": 3.5, "counterRisk": 1.5, "objective": 1.4 },
-        "frontline": { "damageDealt": 1.2 }
+        "capturer": { "capture": 4.0, "counterRisk": 2.0, "objective": 1.8 },
+        "support": { "counterRisk": 3.0, "futureThreat": 2.5 },
+        "defender": { "futureThreat": 3.5, "positional": 1.4 }
       },
       "buildPolicy": {
-        "preferred": ["infantry", "tank", "recon"],
+        "preferred": ["infantry", "tank", "infantry", "recon"],
         "avoid": ["copter"],
-        "infantryFloor": 4
+        "infantryFloor": 5
       }
     },
     {
