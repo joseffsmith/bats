@@ -33,3 +33,14 @@ Questions and assumptions logged during autonomous execution. Resolved questions
 - **Infinity in JSON.** Used `null` for impassable move costs (Infinity isn't representable in JSON). The loader converts. Documented at the top of `loader.ts` and `terrain.json`.
 - **Stub may keep WAITing.** The stub picks the first unit it can find that hasn't acted; if that unit can't move or attack profitably, it WAITs. Real matches still terminate because (a) it tries every unit before END_TURN, (b) one side eventually pushes infantry forward and starts capturing, (c) we have a maxTurns hard cap. Phase 4's utility AI will obviously do this far better.
 - **Test for two-units-same-tile in maps.** Added to the loader. Strictly speaking PLAN.md doesn't say anything about this — but allowing it would break combat resolution since `unitAt` short-circuits on the first match. Fail-fast at load time is the safe choice.
+
+## Phase 3 (builder)
+
+- **Input lock during animations.** Picked "ignore" (not "queue") for clicks while `animQueue.busy()`. Hot-seat play hardly notices — Phase 4 with AI turns and longer chains may want to revisit.
+- **Action menu auto-Wait when empty.** If the unit's only option after MOVE is Wait, the menu lists Wait alone. I considered auto-committing Wait but decided the explicit click is less surprising; the menu still appears so the player can see the unit "is done".
+- **HP display.** Settled on `ceil(hp/10)`-style segmented HP bar (segments 1–10) for damaged units; full-HP units show no bar to reduce visual noise. Matches PLAN.md's "1–10" display intent without needing a numeric label.
+- **JSDOM `getContext('2d')` warning.** JSDOM still logs "Not implemented: HTMLCanvasElement's getContext()" via its virtual console even though tests override `canvas.getContext` with a stub. Suppressed at the `console.error` boundary in the test file. If we ever switch to `node-canvas`, this can go.
+- **Damage preview parity.** `previewAttack` lives in `combat.ts` and is consumed by both the renderer (hover tooltip) and the test harness (`damage-preview.test.ts`). The reducer still goes through `resolveAttack`; both share `computeDamage` so they stay in sync. The test brute-forces every melee pair + terrain × HP variations.
+- **Forest mountain pattern.** Used Canvas primitives (dots / triangle) for forest/mountain visual hints rather than texture images. Sprites land in Phase 6.
+- **Esc / Enter keybinds.** Esc cancels selection (matches PLAN.md). I added Enter as a convenience to end the turn — not in the spec, easy to remove if undesired.
+- **Crossroads map.** Phase 3 only asks for the duel map; main.ts loads `duel.json` directly. To switch maps in dev today, hand-edit main.ts. Phase 6's map-picker UI is the proper home for runtime selection.

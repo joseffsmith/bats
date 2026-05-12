@@ -38,6 +38,42 @@ export type CombatResult = {
 };
 
 /**
+ * Predict the damage exchange of an ATTACK without mutating state. The result
+ * (`dealt`, `counterReceived`) must match what `resolveAttack` actually applies
+ * for the same inputs — both functions share the `computeDamage` primitive so
+ * the renderer's hover tooltip stays in sync with what the reducer commits.
+ *
+ * Pure: does not read or write any state.units entries beyond the lookup of
+ * the two ids. Returns zeros if either unit is missing or the target is
+ * friendly.
+ */
+export function previewAttack(
+  state: GameState,
+  attackerId: string,
+  targetId: string,
+): { dealt: number; counterReceived: number } {
+  const attacker = state.units[attackerId];
+  const defender = state.units[targetId];
+  if (!attacker || !defender) return { dealt: 0, counterReceived: 0 };
+  if (attacker.owner === defender.owner) return { dealt: 0, counterReceived: 0 };
+
+  const dealt = computeDamage(state, attacker, defender);
+  const defHpAfter = Math.max(0, Math.min(100, defender.hp - dealt));
+  if (defHpAfter === 0) return { dealt, counterReceived: 0 };
+
+  // Counter logic mirrors `resolveAttack`. Indirect defenders never counter.
+  const defStats = UNITS[defender.type];
+  if (defStats.indirect) return { dealt, counterReceived: 0 };
+  if (!inAttackRange(defender, attacker)) return { dealt, counterReceived: 0 };
+
+  // Counter damage uses the defender's POST-hit HP — we must simulate the hit
+  // without mutating the real defender.
+  const defenderAfter: Unit = { ...defender, hp: defHpAfter };
+  const counter = computeDamage(state, defenderAfter, attacker);
+  return { dealt, counterReceived: counter };
+}
+
+/**
  * Mutates the given state's units in-place. Callers are expected to pass a
  * fresh deep clone (the reducer does this). Returns a summary for logging.
  */
