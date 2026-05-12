@@ -21,6 +21,11 @@ import { createAIDriver, AI_CHOICES } from './renderer/ai-driver';
 import type { AIChoice } from './renderer/ai-driver';
 import { log, setLogEnabled } from './engine/core/logger';
 import type { PlayerId } from './engine/core/types';
+import { createSpriteCache } from './renderer/sprites';
+import { createAudio } from './renderer/audio';
+import { mountSaveLoadPanel } from './renderer/save-load-ui';
+import { mountReplayPanel } from './renderer/replay-ui';
+import { runEditor } from './renderer/editor';
 
 // `?render-log=1` flips the render category on for click-by-click traces.
 // `?ai-trace=1` enables the very chatty per-candidate AI score log.
@@ -113,12 +118,50 @@ function mountAIPanel(
   parent.appendChild(panel);
 }
 
+function mountMuteToggle(
+  parent: HTMLElement,
+  audio: ReturnType<typeof createAudio>,
+): HTMLElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  const refresh = (): void => {
+    btn.textContent = audio.isMuted() ? '🔇 Sound off' : '🔊 Sound on';
+  };
+  refresh();
+  btn.style.cssText = [
+    'position: fixed',
+    'bottom: 8px',
+    'left: 8px',
+    'z-index: 10',
+    'background: #1a1d28',
+    'color: #e6ecff',
+    'border: 1px solid #3a3e50',
+    'padding: 3px 8px',
+    'font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    'cursor: pointer',
+    'border-radius: 3px',
+  ].join(';');
+  btn.addEventListener('click', () => {
+    audio.unlock();
+    audio.setMuted(!audio.isMuted());
+    refresh();
+  });
+  parent.appendChild(btn);
+  return btn;
+}
+
 function main(): void {
+  // Editor mode short-circuits the normal play wiring.
+  if (params.get('editor') === '1') {
+    runEditor(document.getElementById('app') ?? document.body);
+    return;
+  }
   const canvas = setupCanvas();
   const initialState = loadMap(duelMap);
   const emitter = createEmitter(initialState);
 
-  const renderer = createCanvasRenderer(canvas);
+  const sprites = createSpriteCache();
+  const renderer = createCanvasRenderer(canvas, { sprites });
   renderer.resize();
 
   let dirty = true;
@@ -146,6 +189,22 @@ function main(): void {
   // Mount AI control panel.
   const appRoot = document.getElementById('app') ?? document.body;
   mountAIPanel(appRoot, aiDriver);
+
+  // Audio: default muted (so we don't autoplay). The audio module gates its
+  // own context init on first canvas click so browsers don't reject it.
+  const audio = createAudio({
+    initiallyMuted: params.get('sound') !== '1',
+  });
+  emitter.on((ev) => {
+    if (ev.type !== 'stateChanged' || ev.action === null) return;
+    audio.onAction(ev.action, ev.state);
+  });
+  canvas.addEventListener('click', () => audio.unlock(), { once: true });
+
+  mountSaveLoadPanel(appRoot, emitter);
+  mountReplayPanel(appRoot, emitter, animQueue);
+  mountMuteToggle(appRoot, audio);
+  log('render', 'audio mounted', { muted: audio.isMuted() });
 
   // Wrap input.click so a clicked-on AI player has the input ignored. The
   // input controller doesn't know about the driver — we filter at the boundary.

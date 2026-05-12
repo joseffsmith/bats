@@ -435,11 +435,24 @@ export function createInputController(
       const target = state.units[action.targetId];
       const attacker = state.units[action.attackerId];
       if (!target || !attacker) return;
-      // Predict death so we can enqueue a fade.
+      // Predict death + HP tween + camera shake so the renderer can react.
       const dmg = previewAttack(state, action.attackerId, action.targetId);
-      if (target.hp - dmg.dealt <= 0) {
+      const targetFinalHp = Math.max(0, target.hp - dmg.dealt);
+      const attackerFinalHp = Math.max(0, attacker.hp - dmg.counterReceived);
+      // Camera shake when either side takes a >40 HP hit.
+      if (dmg.dealt > 40 || dmg.counterReceived > 40) {
+        animQueue.enqueueShake();
+      }
+      // HP tween for survivors; the death fade replaces the bar for the fallen.
+      if (targetFinalHp > 0) {
+        animQueue.enqueueHpTween(target.id, target.hp, targetFinalHp);
+      }
+      if (attackerFinalHp > 0 && dmg.counterReceived > 0) {
+        animQueue.enqueueHpTween(attacker.id, attacker.hp, attackerFinalHp);
+      }
+      if (targetFinalHp <= 0) {
         animQueue.enqueueDeath(target.id, target.pos);
-      } else if (attacker.hp - dmg.counterReceived <= 0) {
+      } else if (attackerFinalHp <= 0) {
         animQueue.enqueueDeath(attacker.id, attacker.pos);
       }
     }

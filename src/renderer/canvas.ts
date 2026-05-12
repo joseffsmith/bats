@@ -18,6 +18,11 @@ import type {
 } from '../engine/core/types';
 import { tileAt, unitAt } from '../engine/core/types';
 import type { AnimationQueue, Anim } from './animations';
+import { easeInOutCubic } from './easing';
+import type { SpriteCache } from './sprites';
+import { PLAYER_COLOURS } from './canvas-palette';
+export type { PlayerPalette } from './canvas-palette';
+export { PLAYER_COLOURS };
 
 // ─────────────────────────── Constants ───────────────────────────────────────
 
@@ -25,13 +30,6 @@ export const TILE_SIZE_DESKTOP = 48;
 export const TILE_SIZE_MOBILE = 32;
 export const MOBILE_BREAKPOINT = 768;
 export const HUD_HEIGHT = 56;
-
-export type PlayerPalette = { fill: string; letter: string };
-
-export const PLAYER_COLOURS: Record<PlayerId, PlayerPalette> = {
-  0: { fill: '#c83030', letter: '#fff5d0' }, // crimson red w/ pale yellow letter
-  1: { fill: '#2860c0', letter: '#e6ecff' }, // royal blue w/ pale blue letter
-};
 
 const NEUTRAL_HQ_OWNER_FILL = '#555';
 
@@ -127,6 +125,12 @@ export type Viewport = {
 
 // ─────────────────────────── Public renderer API ─────────────────────────────
 
+export type CanvasRendererDeps = {
+  /** Optional procedurally-baked sprite cache. If absent, units fall back to the
+   *  coloured-square renderer (used by tests with stub contexts). */
+  sprites?: SpriteCache;
+};
+
 export type CanvasRenderer = {
   readonly canvas: HTMLCanvasElement;
   resize(): Viewport;
@@ -142,7 +146,10 @@ export type CanvasRenderer = {
   getEndTurnRect(): { x: number; y: number; w: number; h: number };
 };
 
-export function createCanvasRenderer(canvas: HTMLCanvasElement): CanvasRenderer {
+export function createCanvasRenderer(
+  canvas: HTMLCanvasElement,
+  deps: CanvasRendererDeps = {},
+): CanvasRenderer {
   let viewport: Viewport = computeViewport(canvas);
 
   function computeViewport(c: HTMLCanvasElement): Viewport {
@@ -206,10 +213,24 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): CanvasRenderer 
     ctx.fillStyle = '#1a1a1a';
     ctx.fillRect(0, 0, vp.width, vp.height);
 
+    // Apply camera shake: translate the drawing transform a couple pixels so
+    // big-damage hits feel impactful. We add to the dpr-scaled transform.
+    const shake = anim.shakeOffset();
+    if (shake.dx !== 0 || shake.dy !== 0) {
+      ctx.setTransform(
+        vp.dpr,
+        0,
+        0,
+        vp.dpr,
+        Math.round(shake.dx * vp.dpr),
+        Math.round(shake.dy * vp.dpr),
+      );
+    }
+
     drawTerrain(ctx, state, vp);
     drawOwnerIndicators(ctx, state, vp);
     drawOverlays(ctx, vp, overlay);
-    drawUnits(ctx, state, vp, anim, overlay);
+    drawUnits(ctx, state, vp, anim, overlay, deps.sprites);
     drawWinnerBanner(ctx, state, vp);
   }
 
@@ -369,35 +390,71 @@ function drawUnits(
   vp: Viewport,
   anim: AnimationQueue,
   overlay: Overlay,
+  sprites: SpriteCache | undefined,
 ): void {
   const ts = vp.tileSize;
   const active = anim.active();
   const moveAnimById = new Map<string, Anim>();
   const attackerIds = new Set<string>();
   const flashTargetIds = new Set<string>();
+  const hpTweenById = new Map<string, Anim>();
   for (const a of active) {
     if (a.kind === 'move') moveAnimById.set(a.unitId, a);
     if (a.kind === 'attack') {
       attackerIds.add(a.attackerId);
       flashTargetIds.add(a.targetId);
     }
+    if (a.kind === 'hpTween') hpTweenById.set(a.unitId, a);
   }
 
   for (const unit of Object.values(state.units)) {
-    drawUnit(ctx, state, vp, unit, moveAnimById.get(unit.id), attackerIds.has(unit.id), flashTargetIds.has(unit.id));
+    drawUnit(
+      ctx,
+      state,
+      vp,
+      unit,
+      moveAnimById.get(unit.id),
+      attackerIds.has(unit.id),
+      flashTargetIds.has(unit.id) ? anim.flashIntensity(unit.id) : 0,
+      hpTweenById.get(unit.id),
+      sprites,
+    );
   }
 
-  // Death animations: render the (now-deleted) unit fading on its last tile.
+  // Death animations: render the (now-deleted) unit fading + a small radial
+  // particle explosion on its last tile.
   for (const a of active) {
     if (a.kind !== 'death') continue;
     const elapsed = performance.now() - a.startMs;
     const t = Math.max(0, Math.min(1, elapsed / a.durationMs));
+    const px = vp.origin.x + a.pos.x * ts;
+    const py = vp.origin.y + a.pos.y * ts;
+    // Fade + slight scale-down of the underlying silhouette.
+    ctx.save();
     ctx.globalAlpha = 1 - t;
-    const px = vp.origin.x + a.pos.x * ts + 4;
-    const py = vp.origin.y + a.pos.y * ts + 4;
+    const scale = 1 - t * 0.3;
+    const inset = (ts - ts * scale) / 2;
     ctx.fillStyle = '#888';
-    ctx.fillRect(px, py, ts - 8, ts - 8);
-    ctx.globalAlpha = 1;
+    ctx.fillRect(px + inset + 4, py + inset + 4, ts * scale - 8, ts * scale - 8);
+    ctx.restore();
+    // Particles. Each gets a velocity from createDeathParticles; we integrate
+    // over `elapsed/1000` seconds, multiplied by tileSize for pixel-space.
+    ctx.save();
+    const seconds = elapsed / 1000;
+    for (const p of a.particles) {
+      const cx = px + p.ox * ts + p.vx * seconds * ts;
+      const cy = py + p.oy * ts + p.vy * seconds * ts;
+      const r = Math.max(1, ts * 0.06 * (1 - t));
+      ctx.globalAlpha = Math.max(0, 1 - t);
+      // Hot core fading to dark.
+      const heat = 1 - t;
+      const colour = heat > 0.5 ? '#ffd84a' : '#ff7a40';
+      ctx.fillStyle = colour;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   // Damage preview tooltip.
@@ -413,17 +470,21 @@ function drawUnit(
   unit: Unit,
   moveAnim: Anim | undefined,
   isAttacking: boolean,
-  isFlashing: boolean,
+  flashIntensity: number,
+  hpTween: Anim | undefined,
+  sprites: SpriteCache | undefined,
 ): void {
   const ts = vp.tileSize;
   // Resolve render position — interpolate along the move path if mid-animation.
   let renderX: number;
   let renderY: number;
   if (moveAnim && moveAnim.kind === 'move') {
-    const t = Math.max(
+    const tRaw = Math.max(
       0,
       Math.min(1, (performance.now() - moveAnim.startMs) / moveAnim.durationMs),
     );
+    // Phase 6 polish: ease the full-path interpolant.
+    const t = easeInOutCubic(tRaw);
     const path = moveAnim.path;
     if (path.length === 0) {
       const p = tileTopLeft(vp, unit.pos);
@@ -454,7 +515,9 @@ function drawUnit(
     renderY = p.y;
   }
 
-  // Attack shake: small horizontal jitter for the attacker.
+  // Attack lunge: short horizontal jitter for the attacker. The amplitude is
+  // small (~6% of tile size) so it reads as "pushing forward" rather than
+  // jittering in place. Camera shake handles the impact feel.
   if (isAttacking) {
     const jitter = Math.sin(performance.now() * 0.08) * (ts * 0.06);
     renderX += jitter;
@@ -463,13 +526,38 @@ function drawUnit(
   const palette = PLAYER_COLOURS[unit.owner];
   const inset = Math.max(3, Math.floor(ts * 0.12));
   const size = ts - inset * 2;
-  ctx.fillStyle = palette.fill;
-  ctx.fillRect(renderX + inset, renderY + inset, size, size);
 
-  // Flash overlay on hit defender.
-  if (isFlashing) {
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  // ── Body draw: sprite if available, else coloured rectangle fallback. ──
+  let drewSprite = false;
+  if (sprites) {
+    try {
+      const variant = unit.hp < 50 ? 'damaged' : 'clean';
+      const img = sprites.get(unit.type, unit.owner, variant);
+      ctx.drawImage(img, renderX, renderY, ts, ts);
+      drewSprite = true;
+    } catch {
+      drewSprite = false;
+    }
+  }
+  if (!drewSprite) {
+    ctx.fillStyle = palette.fill;
     ctx.fillRect(renderX + inset, renderY + inset, size, size);
+    // Letter only on the fallback path — sprites carry their own silhouette.
+    ctx.fillStyle = palette.letter;
+    ctx.font = `bold ${Math.floor(ts * 0.45)}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(UNIT_LETTER[unit.type], renderX + ts / 2, renderY + ts / 2 + ts * 0.02);
+  }
+
+  // Flash overlay on hit defender. easeOutBack intensity reaches ~1.05 mid-
+  // animation, producing an overshoot that snaps back to 0.
+  if (flashIntensity > 0) {
+    const a = Math.max(0, Math.min(0.85, 0.85 - flashIntensity * 0.7));
+    if (a > 0) {
+      ctx.fillStyle = `rgba(255,255,255,${a})`;
+      ctx.fillRect(renderX + inset, renderY + inset, size, size);
+    }
   }
 
   // Greyed if the unit has acted (visual hint for hot-seat play).
@@ -478,26 +566,24 @@ function drawUnit(
     ctx.fillRect(renderX + inset, renderY + inset, size, size);
   }
 
-  // Letter.
-  ctx.fillStyle = palette.letter;
-  ctx.font = `bold ${Math.floor(ts * 0.45)}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(
-    UNIT_LETTER[unit.type],
-    renderX + ts / 2,
-    renderY + ts / 2 + ts * 0.02,
-  );
-
-  // HP bar if damaged.
-  if (unit.hp < 100) {
-    const segments = Math.max(1, Math.ceil(unit.hp / 10));
+  // HP bar if damaged. Tween between fromHp/toHp when an HP tween anim is
+  // active for this unit so the bar slides rather than snapping.
+  let displayHp = unit.hp;
+  if (hpTween && hpTween.kind === 'hpTween') {
+    const tt = Math.max(
+      0,
+      Math.min(1, (performance.now() - hpTween.startMs) / hpTween.durationMs),
+    );
+    displayHp = hpTween.fromHp + (hpTween.toHp - hpTween.fromHp) * easeInOutCubic(tt);
+  }
+  if (displayHp < 100) {
+    const segments = Math.max(1, Math.ceil(displayHp / 10));
     const barH = Math.max(3, Math.floor(ts * 0.1));
     const barY = renderY + ts - barH - 2;
     const barW = ts - 6;
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(renderX + 3, barY, barW, barH);
-    const filled = (segments / 10) * barW;
+    const filled = Math.max(0, (displayHp / 100) * barW);
     ctx.fillStyle = segments >= 6 ? '#7ed957' : segments >= 3 ? '#ffd84a' : '#ff5050';
     ctx.fillRect(renderX + 3, barY, filled, barH);
   }

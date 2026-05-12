@@ -9,7 +9,14 @@
 // and the category, e.g.:
 //   [2026-05-12T10:23:45.123Z][engine] action applied { type: 'MOVE', unitId: 'u1' }
 
-export type LogCategory = 'engine' | 'ai' | 'ai-trace' | 'render' | 'match';
+export type LogCategory =
+  | 'engine'
+  | 'ai'
+  | 'ai-trace'
+  | 'render'
+  | 'match'
+  | 'replay'
+  | 'editor';
 
 const enabled: Record<LogCategory, boolean> = {
   engine: true,
@@ -20,6 +27,10 @@ const enabled: Record<LogCategory, boolean> = {
   'ai-trace': false,
   render: false,
   match: true,
+  // Phase 6 categories. Off by default — replays and the editor get
+  // verbose; opt into them explicitly via setLogEnabled or URL params.
+  replay: false,
+  editor: false,
 };
 
 export function setLogEnabled(category: LogCategory, value: boolean): void {

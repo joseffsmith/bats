@@ -4,7 +4,19 @@
 // animation layer interpolates a visual representation of the change over a
 // short window so the human player can follow what happened.
 //
-// Design notes:
+// Phase 6 polish additions:
+//   - Move animations use `easeInOutCubic` instead of linear t for the
+//     intra-segment interpolant (see canvas.ts).
+//   - Attack animations expose a `flashIntensity()` helper driven by
+//     `easeOutBack` so the defender's white flash overshoots and snaps back.
+//   - Death animations now ship with a small radial particle field generated
+//     once at enqueue time (deterministic — same path every tick).
+//   - HP tween: when a unit takes damage, an HPTweenAnim runs for 200ms so the
+//     bar slides from old to new fill instead of snapping.
+//   - Camera shake: ATTACK animations whose damage > 40 HP enqueue a CameraShake
+//     that the renderer can read via `shakeOffset()`.
+//
+// Design notes (unchanged):
 // - Animations run serially. A new animation is enqueued and only starts when
 //   the previous one's end-time has passed. While anything is animating the
 //   `busy()` predicate returns true so input.ts can lock interaction.
@@ -15,6 +27,7 @@
 
 import type { Coord, UnitId } from '../engine/core/types';
 import { log } from '../engine/core/logger';
+import { easeOutBack } from './easing';
 
 export type MoveAnim = {
   kind: 'move';
@@ -32,6 +45,15 @@ export type AttackAnim = {
   durationMs: number;
 };
 
+export type DeathParticle = {
+  /** Velocity in tile-fractions per second (rendered as pixels by scaling tileSize). */
+  vx: number;
+  vy: number;
+  /** Initial offset within the tile, [0,1). */
+  ox: number;
+  oy: number;
+};
+
 export type DeathAnim = {
   kind: 'death';
   unitId: UnitId;
@@ -39,9 +61,31 @@ export type DeathAnim = {
   pos: Coord;
   startMs: number;
   durationMs: number;
+  particles: DeathParticle[];
 };
 
-export type Anim = MoveAnim | AttackAnim | DeathAnim;
+export type HpTweenAnim = {
+  kind: 'hpTween';
+  unitId: UnitId;
+  fromHp: number;
+  toHp: number;
+  startMs: number;
+  durationMs: number;
+};
+
+export type CameraShakeAnim = {
+  kind: 'shake';
+  magnitudePx: number;
+  startMs: number;
+  durationMs: number;
+};
+
+export type Anim =
+  | MoveAnim
+  | AttackAnim
+  | DeathAnim
+  | HpTweenAnim
+  | CameraShakeAnim;
 
 export type AnimationQueueDeps = {
   /** Called when the queue transitions from empty -> active or active -> empty. */
@@ -52,36 +96,85 @@ export type AnimationQueueDeps = {
   now?: () => number;
   /** Render-tick after each enqueue so a paused queue resumes. */
   onTick?: () => void;
+  /** Optional deterministic RNG for particle directions; defaults to Math.random. */
+  random?: () => number;
 };
 
 export const MOVE_MS = 300;
 export const ATTACK_MS = 250;
-export const DEATH_MS = 200;
+export const DEATH_MS = 400;
+export const HP_TWEEN_MS = 200;
+export const SHAKE_MS = 150;
+export const SHAKE_THRESHOLD_HP = 40;
+export const SHAKE_MAGNITUDE_PX = 2;
+export const DEATH_PARTICLE_COUNT = 10;
 
 export type AnimationQueue = {
   enqueueMove(unitId: UnitId, path: Coord[]): void;
   enqueueAttack(attackerId: UnitId, targetId: UnitId): void;
   enqueueDeath(unitId: UnitId, pos: Coord): void;
+  enqueueHpTween(unitId: UnitId, fromHp: number, toHp: number): void;
+  /** Enqueue a camera-shake parallel to the in-flight ATTACK (does not block). */
+  enqueueShake(magnitudePx?: number): void;
   /** Active animations (still running at `now()`). */
   active(): Anim[];
-  /** True if any animation is in progress or scheduled in the future. */
+  /** True if any *blocking* animation is in progress or scheduled in the future. */
   busy(): boolean;
   /** Advance to current time, drop finished animations, fire `end` events. */
   tick(): void;
   /** Drop everything immediately. */
   clear(): void;
+  /** Current camera shake offset (CSS pixels). Zero when no shake is active. */
+  shakeOffset(): { dx: number; dy: number };
+  /** Compute attack-flash intensity for the given target id (0..~1.05 with overshoot). */
+  flashIntensity(targetId: UnitId): number;
 };
+
+/**
+ * Create the deterministic per-enqueue particle layout. Pure given `random`.
+ *
+ * Particles spread radially with a slight randomised angle jitter and a
+ * uniform-ish speed band. Render code consumes vx/vy as tile-fractions/second.
+ */
+export function createDeathParticles(
+  random: () => number,
+  count: number = DEATH_PARTICLE_COUNT,
+): DeathParticle[] {
+  const out: DeathParticle[] = [];
+  for (let i = 0; i < count; i++) {
+    // Evenly spaced base angle plus a small jitter — keeps the "radial" look
+    // while avoiding a perfect ring.
+    const base = (i / count) * Math.PI * 2;
+    const jitter = (random() - 0.5) * 0.4;
+    const angle = base + jitter;
+    const speed = 0.8 + random() * 0.6; // tile-fractions per second
+    out.push({
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      ox: 0.5,
+      oy: 0.5,
+    });
+  }
+  return out;
+}
 
 export function createAnimationQueue(deps: AnimationQueueDeps = {}): AnimationQueue {
   const now = deps.now ?? ((): number => performance.now());
+  const random = deps.random ?? Math.random;
   const queue: Anim[] = [];
-  /** Cursor for the earliest start time the NEXT enqueued animation may use. */
-  let nextStart = 0;
+  /** Cursor for the earliest start time the NEXT blocking enqueued animation may use. */
+  let nextBlockingStart = 0;
   let wasBusy = false;
   /** Animations that have already had their `start` event fired. */
   const started = new WeakSet<Anim>();
   /** Animations that have already had their `end` event fired. */
   const ended = new WeakSet<Anim>();
+
+  function isBlocking(kind: Anim['kind']): boolean {
+    // HP tween + camera shake run alongside the main animation chain; they do
+    // not gate input or advance the cursor.
+    return kind !== 'hpTween' && kind !== 'shake';
+  }
 
   function setBusy(b: boolean): void {
     if (b !== wasBusy) {
@@ -90,14 +183,23 @@ export function createAnimationQueue(deps: AnimationQueueDeps = {}): AnimationQu
     }
   }
 
-  function schedule(anim: Anim): void {
+  function scheduleBlocking(anim: Anim): void {
     const t = now();
-    const start = Math.max(t, nextStart);
+    const start = Math.max(t, nextBlockingStart);
     anim.startMs = start;
-    nextStart = start + anim.durationMs;
+    nextBlockingStart = start + anim.durationMs;
     queue.push(anim);
     log('render', 'animation enqueued', { kind: anim.kind, start });
     setBusy(true);
+    deps.onTick?.();
+  }
+
+  function scheduleParallel(anim: Anim): void {
+    // Parallel anims start as soon as possible (now) and don't push the cursor.
+    const t = now();
+    anim.startMs = t;
+    queue.push(anim);
+    log('render', 'animation enqueued (parallel)', { kind: anim.kind, start: t });
     deps.onTick?.();
   }
 
@@ -123,15 +225,23 @@ export function createAnimationQueue(deps: AnimationQueueDeps = {}): AnimationQu
         queue.splice(i, 1);
       }
     }
-    if (queue.length === 0) setBusy(false);
+    // We're "busy" only while a blocking animation is pending.
+    const hasBlocking = queue.some((a) => isBlocking(a.kind));
+    if (!hasBlocking) setBusy(false);
   }
 
   return {
     enqueueMove(unitId, path): void {
-      schedule({ kind: 'move', unitId, path, startMs: 0, durationMs: MOVE_MS });
+      scheduleBlocking({
+        kind: 'move',
+        unitId,
+        path,
+        startMs: 0,
+        durationMs: MOVE_MS,
+      });
     },
     enqueueAttack(attackerId, targetId): void {
-      schedule({
+      scheduleBlocking({
         kind: 'attack',
         attackerId,
         targetId,
@@ -140,20 +250,74 @@ export function createAnimationQueue(deps: AnimationQueueDeps = {}): AnimationQu
       });
     },
     enqueueDeath(unitId, pos): void {
-      schedule({ kind: 'death', unitId, pos, startMs: 0, durationMs: DEATH_MS });
+      scheduleBlocking({
+        kind: 'death',
+        unitId,
+        pos,
+        startMs: 0,
+        durationMs: DEATH_MS,
+        particles: createDeathParticles(random),
+      });
+    },
+    enqueueHpTween(unitId, fromHp, toHp): void {
+      // Skip no-ops.
+      if (fromHp === toHp) return;
+      scheduleParallel({
+        kind: 'hpTween',
+        unitId,
+        fromHp,
+        toHp,
+        startMs: 0,
+        durationMs: HP_TWEEN_MS,
+      });
+    },
+    enqueueShake(magnitudePx = SHAKE_MAGNITUDE_PX): void {
+      scheduleParallel({
+        kind: 'shake',
+        magnitudePx,
+        startMs: 0,
+        durationMs: SHAKE_MS,
+      });
     },
     active(): Anim[] {
       const t = now();
       return queue.filter((a) => t >= a.startMs && t < a.startMs + a.durationMs);
     },
     busy(): boolean {
-      return queue.length > 0;
+      return queue.some((a) => isBlocking(a.kind));
     },
     tick,
     clear(): void {
       queue.length = 0;
-      nextStart = 0;
+      nextBlockingStart = 0;
       setBusy(false);
+    },
+    shakeOffset(): { dx: number; dy: number } {
+      const t = now();
+      let dx = 0;
+      let dy = 0;
+      for (const a of queue) {
+        if (a.kind !== 'shake') continue;
+        const elapsed = t - a.startMs;
+        if (elapsed < 0 || elapsed >= a.durationMs) continue;
+        const k = 1 - elapsed / a.durationMs; // decay
+        // Two orthogonal sinusoids at slightly different frequencies so the
+        // shake doesn't look diagonal-only.
+        dx += Math.sin(elapsed * 0.08) * a.magnitudePx * k;
+        dy += Math.cos(elapsed * 0.11) * a.magnitudePx * k;
+      }
+      return { dx, dy };
+    },
+    flashIntensity(targetId: UnitId): number {
+      const t = now();
+      for (const a of queue) {
+        if (a.kind !== 'attack') continue;
+        if (a.targetId !== targetId) continue;
+        const elapsed = t - a.startMs;
+        if (elapsed < 0 || elapsed >= a.durationMs) continue;
+        return easeOutBack(elapsed / a.durationMs);
+      }
+      return 0;
     },
   };
 }
