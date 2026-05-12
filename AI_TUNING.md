@@ -149,13 +149,45 @@ Side balance: 47.2 / 52.8.
 
 **Planned tuning for iteration 4:**
 
-- Economist: defensive rework. `damageDealt` 1.1 → 0.8 (don't trade),
-  `counterRisk` 1.0 → 1.6, `futureThreat` 0.7 → 1.2, `objective` 1.0 → 1.4,
-  bump role-overrides for capturer/support/defender. Keep tank in preferred
-  but `infantryFloor` 4 → 5 so it doesn't lose capturer presence.
-- Aggressor: unchanged.
-- Turtle: unchanged.
-- Balanced: unchanged.
+- Economist: defensive rework. damage 0.8, counterRisk 1.6, futureThreat 1.2,
+  objective 1.4, infantryFloor 5.
+
+---
+
+## Iteration 4 — defensive economist (pilot, 10/pair/map)
+
+Results are **byte-identical to iter 3**:
+
+| persona   | W  | L  | D | WR    |
+|-----------|----|----|---|-------|
+| turtle    | 70 | 20 | 0 | 77.8% |
+| aggressor | 65 | 25 | 0 | 72.2% |
+| balanced  | 45 | 45 | 0 | 50.0% |
+| economist |  0 | 90 | 0 |  0.0% |
+
+**Observations:**
+
+- Same scoreboard means the defensive changes had **zero net behaviour
+  difference**. Inspecting `aggressor-vs-economist-duel` logs: economist
+  build-spams infantry on every turn (it has `infantryFloor=5` and never
+  drops below 2 infantry, so the floor keeps firing, never reaching the
+  tank in `preferred`).
+- The build-policy logic uses `myInfantryCount < infantryFloor` as a
+  HARD-PREFER-infantry trigger. That's the bug: floor should trigger only
+  if we ALSO have low total units, otherwise our 7th infantry slot still
+  spawns infantry instead of a tank.
+- For this tuning round we'll fix the bug indirectly with persona
+  configuration — drop `infantryFloor` to 2, put `tank` first in preferred.
+
+**Planned tuning for iteration 5:**
+
+- Economist: pivot. Cheap-units swarm BUT with a tank reserve.
+  - `damageDealt` 0.8 → 1.0, `counterRisk` 1.6 → 0.9, `futureThreat` 1.2 → 0.6
+  - `objective` 1.4 → 1.2
+  - capturer override: capture 4.0 → 4.5, counterRisk 2.0 → 1.4 (capturers
+    were too scared to commit)
+  - buildPolicy: `infantryFloor` 5 → 2, preferred=[tank,infantry,recon,infantry]
+- Aggressor / turtle / balanced: unchanged.
 
 ---
 
