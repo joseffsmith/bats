@@ -86,3 +86,55 @@ Questions and assumptions logged during autonomous execution. Resolved questions
 - **Bundle size.** Final gzipped bundle is **26.10 KB**, well under the 250 KB budget. Sprites/audio/animation polish/editor add roughly ~20 KB raw / ~5 KB gzipped over Phase 5.
 - **Death particles deterministic per enqueue.** `createDeathParticles(random, count)` is pure — given a seeded RNG, the same particle field is produced. Useful if a future replay viewer wants to be visually identical to the live match.
 - **HP tween non-blocking.** `enqueueHpTween` and `enqueueShake` run as parallel anims (don't push the cursor) so the main MOVE→ATTACK chain stays serial while bars and shake decay in the background.
+
+## Phase 7 (persona iteration)
+
+- **Crossroads finishability vs persona behaviour.** Even after tuning,
+  `turtle vs economist` on crossroads/canyon stalemates the 200-turn cap
+  in pilot rounds. Diagnosis from a sample log:
+    - Both AIs hit `TIER3_UNIT_CAP = 12` units.
+    - Once at cap, the build phase stops producing replacements.
+    - Existing units fill the centre, neither side breaks through the
+      forest belt because pushing into enemy territory raises
+      `futureThreat` to a level that overwhelms `damageDealt`.
+    - WAITs dominate (~1.7k WAITs in a 200-turn stalemate vs 16
+      CAPTUREs).
+  A "pusher" persona experiment would need either (a) the `objective`
+  weight scaled even higher with a custom override that pushes infantry
+  directly toward the enemy HQ (current tier3's frontline target is the
+  hottest-threat tile, which is *defensive*, not "toward the HQ"), or
+  (b) raising/removing `TIER3_UNIT_CAP` so the AI keeps building. Both
+  are persona/engine tweaks rather than reducer changes.
+- **Build policy `infantryFloor` semantics.** As implemented, the floor
+  is a hard-prefer-infantry trigger as long as `myInfantryCount < floor`
+  AND `unowned > 0`. A persona with `infantryFloor: 5` ends up spamming
+  infantry on every factory until it reaches 5 infantry — meanwhile its
+  `preferred` list (which may include tank or recon) never fires. That
+  was the iter 4 economist bug. Considered changing the rule to "only
+  prefer infantry when total unit count is also low" — left for a
+  future iteration to keep the iter 5 personas stable.
+- **Frontline objective target = hottest enemy-threat tile, not enemy
+  HQ.** A consequence noticed during iteration: tier3 frontline units
+  cluster around their OWN side of the threat hot zone (because hottest
+  threatMap tile is where enemies project most damage — i.e., right at
+  our line). They don't naturally march toward the enemy HQ. If a
+  future persona wants HQ pressure, we'd need either a new role
+  (`pusher`) or a per-persona objective-target override. Left as an
+  open question rather than implemented because the spec said personas
+  should sit on top of the existing role machinery without changing it.
+- **Side balance was off in iter 1 (44.4/55.6 p0/p1).** Tightened to
+  47/53 by iter 2 and held. Suspected cause: p0 always moves first, so
+  in close matches a one-turn tempo can flip the outcome — but in
+  decisive matches (which the personas mostly produce) the side bias is
+  largely a function of which persona is on which side. The half-and-
+  half side rotation in the round-robin matrix removes this bias from
+  the per-pair stats.
+- **Economist iter-4 no-op.** Identical pilot results vs iter 3 despite
+  five weight changes. Documented in AI_TUNING.md as a learning — when
+  a persona's defining behaviour is gated by its build policy, weight
+  tweaks alone can't move the needle.
+- **island_hop dropped from round-robin.** Sea-heavy map with no
+  transports (and only one capturable per side reachable without a
+  copter). All matchups degenerate into capture grinds with whoever
+  builds a copter first walking to the enemy HQ. Re-include once
+  transports land.
