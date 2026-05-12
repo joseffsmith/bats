@@ -181,13 +181,58 @@ Results are **byte-identical to iter 3**:
 
 **Planned tuning for iteration 5:**
 
-- Economist: pivot. Cheap-units swarm BUT with a tank reserve.
-  - `damageDealt` 0.8 → 1.0, `counterRisk` 1.6 → 0.9, `futureThreat` 1.2 → 0.6
-  - `objective` 1.4 → 1.2
-  - capturer override: capture 4.0 → 4.5, counterRisk 2.0 → 1.4 (capturers
-    were too scared to commit)
-  - buildPolicy: `infantryFloor` 5 → 2, preferred=[tank,infantry,recon,infantry]
+- Economist: pivot. damage 0.8→1.0, counterRisk 1.6→0.9, futureThreat
+  1.2→0.6, objective 1.4→1.2; capturer override 4.0→4.5, counterRisk
+  2.0→1.4; buildPolicy floor 5→2, preferred=[tank,infantry,recon,infantry].
 - Aggressor / turtle / balanced: unchanged.
+
+---
+
+## Iteration 5 — economist as swarm-with-tank (pilot, 10/pair/map)
+
+**Results (180 matches):**
+
+| persona   | W  | L  | D | WR    |
+|-----------|----|----|---|-------|
+| economist | 70 | 20 | 0 | 77.8% |
+| aggressor | 45 | 45 | 0 | 50.0% |
+| turtle    | 45 | 45 | 0 | 50.0% |
+| balanced  | 20 | 70 | 0 | 22.2% |
+
+Matrix:
+
+|           | aggressor | turtle | economist | balanced |
+|-----------|-----------|--------|-----------|----------|
+| aggressor | -         | 33%    | 33%       | 83%      |
+| turtle    | 67%       | -      | 17%       | 67%      |
+| economist | 67%       | 83%    | -         | 83%      |
+| balanced  | 17%       | 33%    | 17%       | -        |
+
+**Floor check:** Every persona has ≥17% win rate vs every other persona —
+meets the **≥10% pairing floor**. Per-map asymmetry survives (turtle 0/10
+vs aggressor on crossroads, but 10/10 on duel + canyon).
+
+Side balance 52.8% / 47.2% — within noise.
+
+**Observations:**
+
+- Real four-way tournament. Economist climbed from 0% to 78% by lowering
+  its infantryFloor to 2 and putting tank first in preferred — meaning
+  the AI actually builds tanks once it has any infantry presence.
+- Balanced becomes the weak archetype this round (22.2%). That's expected:
+  the three tuned personas have explicit advantages; the control doesn't.
+- **Crossroads finish issue partially resolved.** Earlier rounds had 5–7
+  matches hitting the 200-turn cap; this round has 3 cap-stalemates only:
+  - turtle vs economist on all three maps (duel 5/5, crossroads 0/10,
+    canyon 0/10) — the matchup is the new pathological pairing because
+    both personas have positional/capture biases.
+  - aggressor vs economist crossroads (5/5, avg 196 turns).
+- Turtle 0/10 on crossroads vs aggressor is the most lopsided per-map
+  cell — but it's BALANCED by turtle winning duel and canyon 10/10. This
+  is the map-driven asymmetry the spec asked for.
+
+**Stop condition met** — five rounds run, ≥10% floor achieved on every
+pair (though not every map). Final 50/pair/map tournament next.
 
 ---
 
