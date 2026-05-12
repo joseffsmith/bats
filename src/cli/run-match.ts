@@ -22,6 +22,7 @@ import { reduce } from '../engine/core/reducer';
 import { createRng } from '../engine/core/rng';
 import { randomAI } from '../engine/ai/random';
 import { utilityAI } from '../engine/ai/utility';
+import { personaAI, PERSONAS, PERSONA_NAMES } from '../engine/ai/personas';
 import type { AI } from '../engine/ai/types';
 import type {
   Action,
@@ -37,9 +38,13 @@ import { log, setLogEnabled } from '../engine/core/logger';
 // `tier3` is Tier 1 + threat maps + role-based weight modulation.
 // `utility` is preserved as a synonym of `tier1` to keep older tests/scripts
 //   passing without modification.
-export type AIName = 'random' | 'utility' | 'tier1' | 'tier2' | 'tier3';
+//
+// Persona names (loaded from `src/data/ai-personas.json`) are also accepted —
+// `isAIName` returns true for any persona name as well as the built-ins.
+export type BuiltinAIName = 'random' | 'utility' | 'tier1' | 'tier2' | 'tier3';
+export type AIName = BuiltinAIName | string;
 
-export const AI_NAMES: ReadonlyArray<AIName> = [
+export const BUILTIN_AI_NAMES: ReadonlyArray<BuiltinAIName> = [
   'random',
   'utility',
   'tier1',
@@ -47,8 +52,16 @@ export const AI_NAMES: ReadonlyArray<AIName> = [
   'tier3',
 ];
 
+/** Combined list — built-ins plus all loaded persona names. */
+export const AI_NAMES: ReadonlyArray<string> = [
+  ...BUILTIN_AI_NAMES,
+  ...PERSONA_NAMES,
+];
+
 export function isAIName(s: string): s is AIName {
-  return AI_NAMES.includes(s as AIName);
+  return (
+    (BUILTIN_AI_NAMES as ReadonlyArray<string>).includes(s) || s in PERSONAS
+  );
 }
 
 export type AISpec = {
@@ -78,7 +91,10 @@ export function makeAI(spec: AISpec): AI {
     if (spec.weights) opts.weights = spec.weights;
     return utilityAI(opts);
   }
-  throw new Error(`unknown AI name: ${spec.name as string}`);
+  if (spec.name in PERSONAS) {
+    return personaAI(spec.name);
+  }
+  throw new Error(`unknown AI name: ${spec.name}`);
 }
 
 // ─────────────────────────── Public types ────────────────────────────────────

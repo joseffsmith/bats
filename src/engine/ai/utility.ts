@@ -45,7 +45,7 @@ import {
   assignRoles,
   countByRole,
 } from './roles';
-import type { Role } from './roles';
+import type { Role, RoleMultipliers } from './roles';
 
 // Soft cap on actions per turn so a bug can't infinite-loop the runner.
 const ACTION_STEP_CAP = 200;
@@ -71,6 +71,16 @@ const OBJECTIVE_BONUS = 3;
  */
 const TIER3_UNIT_CAP = 12;
 
+/**
+ * Persona-style build hints. Mirrors `BuildPolicy` in `./personas.ts` but kept
+ * here as a structural type so the AI module has no upward dependency.
+ */
+export type BuildPolicyHint = {
+  preferred?: ReadonlyArray<UnitType>;
+  avoid?: ReadonlyArray<UnitType>;
+  infantryFloor?: number;
+};
+
 export type UtilityAIOptions = {
   /** Display name (default: "utility"). */
   name?: string;
@@ -87,6 +97,14 @@ export type UtilityAIOptions = {
    * Implies `useThreatMap` for the HQ-threat check.
    */
   useRoles?: boolean;
+  /**
+   * Persona role-multiplier overrides. When provided, these REPLACE the
+   * canonical ROLE_MULTIPLIERS map per role for this AI instance. Only
+   * meaningful when `useRoles` is on.
+   */
+  roleMultipliers?: Record<Role, RoleMultipliers>;
+  /** Persona BUILD hints. Default: behave as before. */
+  buildPolicy?: BuildPolicyHint;
 };
 
 export const utilityAI: AIFactory = (opts) => {
@@ -94,6 +112,9 @@ export const utilityAI: AIFactory = (opts) => {
   const weights = (opts?.weights as AIWeights | undefined) ?? DEFAULT_AI_WEIGHTS;
   const useThreatMap = (opts?.useThreatMap as boolean | undefined) ?? false;
   const useRoles = (opts?.useRoles as boolean | undefined) ?? false;
+  const roleMultipliers =
+    (opts?.roleMultipliers as Record<Role, RoleMultipliers> | undefined) ?? ROLE_MULTIPLIERS;
+  const buildPolicy = (opts?.buildPolicy as BuildPolicyHint | undefined) ?? {};
   // `useRoles` implies `useThreatMap` — we need an HQ threat read for the
   // defender promotion.
   const effectiveThreatMap = useThreatMap || useRoles;
@@ -103,6 +124,8 @@ export const utilityAI: AIFactory = (opts) => {
       return planUtilityTurn(ctx, weights, {
         useThreatMap: effectiveThreatMap,
         useRoles,
+        roleMultipliers,
+        buildPolicy,
       });
     },
   };
@@ -111,6 +134,8 @@ export const utilityAI: AIFactory = (opts) => {
 type PlanOptions = {
   useThreatMap: boolean;
   useRoles: boolean;
+  roleMultipliers: Record<Role, RoleMultipliers>;
+  buildPolicy: BuildPolicyHint;
 };
 
 function planUtilityTurn(
@@ -203,9 +228,9 @@ function planUtilityTurn(
       const role = planOpts.useRoles ? getRoles(state).get(unit.id) ?? null : null;
       // Pre-multiply role multipliers into the unit's effective weights ONCE
       // per unit per turn so scoreAction doesn't allocate a fresh object per
-      // candidate.
+      // candidate. Persona overrides (if any) replace the canonical table.
       const effectiveWeights = role
-        ? applyRoleMultipliers(weights, ROLE_MULTIPLIERS[role])
+        ? applyRoleMultipliers(weights, planOpts.roleMultipliers[role])
         : weights;
       const ctx2: ScoreContext = {
         weights: effectiveWeights,
@@ -248,7 +273,7 @@ function planUtilityTurn(
   if (state.winner === null) {
     const unitCap = planOpts.useRoles ? TIER3_UNIT_CAP : Infinity;
     let myUnits = countOwnedAll(state, player);
-    for (const b of enumerateBuilds(state, player)) {
+    for (const b of enumerateBuilds(state, player, planOpts.buildPolicy)) {
       if (stepCount >= ACTION_STEP_CAP - 1) break;
       if (myUnits >= unitCap) break;
       if (!isLegalAction(state, b).legal) continue;
@@ -775,13 +800,33 @@ function orderedOwnedUnits(state: GameState, player: PlayerId): string[] {
 }
 
 /**
- * Build greedily: pick the most expensive affordable unit on each owned
- * factory. Prefer infantry early if we own no infantry on a frontier near a
- * capturable tile (very simple heuristic to keep capture pressure up).
+ * Build greedily, respecting an optional `BuildPolicyHint`:
+ *
+ *   - If `infantryFloor` is set and our own infantry count is below it AND
+ *     there are unowned capturables on the map, build infantry first.
+ *   - Else iterate `policy.preferred` (in order) and pick the first
+ *     affordable unit not on the `avoid` list.
+ *   - Else pick the most expensive affordable from the default order
+ *     [tank, recon, artillery, infantry], skipping `avoid` if anything else
+ *     is affordable.
+ *   - As a last resort, build a unit on `avoid` if it's the only affordable
+ *     option — so we still spend funds rather than stagnate.
+ *
+ * The legacy behaviour (no policy) is preserved: infantryFloor=2 (when
+ * `unowned > 0`), preferred order [tank, recon, artillery, infantry].
  */
-function enumerateBuilds(state: GameState, player: PlayerId): Action[] {
+function enumerateBuilds(
+  state: GameState,
+  player: PlayerId,
+  policy: BuildPolicyHint,
+): Action[] {
   const out: Action[] = [];
   const myInfantryCount = countOwned(state, player, 'infantry');
+  const infantryFloor = policy.infantryFloor ?? 2;
+  const avoid = new Set<UnitType>(policy.avoid ?? []);
+  const preferred: ReadonlyArray<UnitType> =
+    policy.preferred ?? ['tank', 'recon', 'artillery', 'infantry'];
+
   for (let y = 0; y < state.map.length; y++) {
     const row = state.map[y]!;
     for (let x = 0; x < row.length; x++) {
@@ -790,20 +835,33 @@ function enumerateBuilds(state: GameState, player: PlayerId): Action[] {
       if (tile.owner !== player) continue;
       if (occupied(state, x, y)) continue;
       const funds = state.players[player].funds;
-      // Choose by priority: if we have very few infantry and there are
-      // unowned capturables on the map, prefer infantry. Otherwise pick the
-      // most expensive affordable.
       const unowned = unownedCapturables(state, player);
       let pick: UnitType | null = null;
-      if (myInfantryCount < 2 && unowned > 0 && funds >= UNITS.infantry.cost) {
+
+      // Infantry floor — keep capture pressure up.
+      if (
+        myInfantryCount < infantryFloor &&
+        unowned > 0 &&
+        funds >= UNITS.infantry.cost &&
+        !avoid.has('infantry')
+      ) {
         pick = 'infantry';
       } else {
-        // Most expensive affordable from the offensive set.
-        const order: UnitType[] = ['tank', 'recon', 'artillery', 'infantry'];
-        for (const t of order) {
+        // Walk the preferred list; skip avoided types.
+        for (const t of preferred) {
+          if (avoid.has(t)) continue;
           if (funds >= UNITS[t].cost) {
             pick = t;
             break;
+          }
+        }
+        // Last-resort fallback: try avoided types so we still spend funds.
+        if (!pick) {
+          for (const t of preferred) {
+            if (funds >= UNITS[t].cost) {
+              pick = t;
+              break;
+            }
           }
         }
       }

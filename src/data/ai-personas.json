@@ -1,0 +1,77 @@
+{
+  "personas": [
+    {
+      "name": "aggressor",
+      "description": "Pushes damage, accepts trades. Builds tanks and recons, avoids artillery.",
+      "weights": {
+        "damageDealt": 1.6,
+        "capture": 0.6,
+        "counterRisk": 0.35,
+        "futureThreat": 0.2,
+        "positional": 0.5,
+        "objective": 0.8
+      },
+      "roleOverrides": {
+        "frontline": { "damageDealt": 1.6, "counterRisk": 0.8 }
+      },
+      "buildPolicy": {
+        "preferred": ["tank", "recon", "tank"],
+        "avoid": ["artillery"],
+        "infantryFloor": 2
+      }
+    },
+    {
+      "name": "turtle",
+      "description": "Cautious, defends with terrain bonuses, builds artillery + infantry walls.",
+      "weights": {
+        "damageDealt": 0.9,
+        "capture": 1.4,
+        "counterRisk": 1.2,
+        "futureThreat": 1.0,
+        "positional": 0.7,
+        "objective": 0.5
+      },
+      "roleOverrides": {
+        "defender": { "futureThreat": 4, "positional": 1.5 },
+        "support": { "counterRisk": 2.5, "futureThreat": 2.0 }
+      },
+      "buildPolicy": {
+        "preferred": ["artillery", "infantry", "tank"],
+        "avoid": ["recon"],
+        "infantryFloor": 4
+      }
+    },
+    {
+      "name": "economist",
+      "description": "Capture-heavy, cheap infantry spam, lets opponent come and outscales on income.",
+      "weights": {
+        "damageDealt": 0.7,
+        "capture": 2.4,
+        "counterRisk": 1.0,
+        "futureThreat": 0.8,
+        "positional": 0.4,
+        "objective": 1.0
+      },
+      "roleOverrides": {
+        "capturer": { "capture": 4.5, "counterRisk": 1.8, "objective": 1.5 }
+      },
+      "buildPolicy": {
+        "preferred": ["infantry", "infantry", "recon"],
+        "avoid": ["copter"],
+        "infantryFloor": 5
+      }
+    },
+    {
+      "name": "balanced",
+      "description": "Tuned tier3 baseline — no major weight changes, control persona.",
+      "weights": {
+        "damageDealt": 1.0,
+        "capture": 1.5,
+        "counterRisk": 0.8,
+        "futureThreat": 0.5,
+        "positional": 0.3,
+        "objective": 0.6
+      }
+    }
+  ]
+}

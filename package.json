@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "lint": "eslint src tests",
     "match": "tsx src/cli/run-match.ts",
-    "tournament": "tsx src/cli/tournament.ts"
+    "tournament": "tsx src/cli/tournament.ts",
+    "round-robin": "tsx src/cli/round-robin.ts"
   },
   "devDependencies": {
     "@types/node": "^25.7.0",
