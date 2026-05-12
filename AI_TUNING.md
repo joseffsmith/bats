@@ -59,17 +59,59 @@ Side balance: p0=44.4% / p1=55.6% — small skew, acceptable.
 
 **Planned tuning for iteration 2:**
 
-- Economist: bump `damageDealt` from 0.7 → 1.0; lower `capture` from 2.4 →
-  1.8; add `recon` to preferred earlier; raise `infantryFloor` no, *lower* it
-  from 5 to 3 so it actually builds a fighting unit.
-- Turtle: needs an offensive trigger. Bump `damageDealt` 0.9 → 1.1 and add
-  `tank` to preferred earlier (preferred=[artillery,tank,infantry]). Reduce
-  `infantryFloor` 4 → 3 so it can spend on artillery sooner. Bump `objective`
-  0.5 → 0.8 so frontline pushes.
-- Aggressor: nerf slightly to make room for diversity. `damageDealt` 1.6 →
-  1.4; raise `counterRisk` 0.35 → 0.5; remove `recon` from preferred (it
-  shouldn't ignore tanks for recons).
-- Balanced: keep as-is (control).
+- Economist: bump `damageDealt` 0.7 → 1.0; lower `capture` 2.4 → 1.8; add
+  `recon`/`tank` to preferred; lower `infantryFloor` 5 → 3.
+- Turtle: more offence: `damageDealt` 0.9 → 1.1, `objective` 0.5 → 0.8,
+  preferred=[artillery,tank,infantry], `infantryFloor` 4 → 3.
+- Aggressor: nerf: `damageDealt` 1.6 → 1.4, `counterRisk` 0.35 → 0.5.
+- Balanced: control, unchanged.
+
+---
+
+## Iteration 2 — small retune (pilot, 10 matches × 3 maps)
+
+**Results (180 matches):**
+
+| persona   | W  | L  | D | WR    |
+|-----------|----|----|---|-------|
+| aggressor | 85 |  5 | 0 | 94.4% |
+| balanced  | 65 | 25 | 0 | 72.2% |
+| turtle    | 25 | 65 | 0 | 27.8% |
+| economist |  5 | 85 | 0 |  5.6% |
+
+Matrix (row vs col WR%):
+
+|           | aggressor | turtle | economist | balanced |
+|-----------|-----------|--------|-----------|----------|
+| aggressor | -         | 100%   | 100%      | 83%      |
+| turtle    | 0%        | -      | 83%       | 0%       |
+| economist | 0%        | 17%    | -         | 0%       |
+| balanced  | 17%       | 100%   | 100%      | -        |
+
+Side balance: 50.0% / 50.0% — restored.
+
+**Observations:**
+
+- Aggressor got STRONGER, not weaker. The lower damageDealt was offset by
+  the more aggressive build mix and lower counterRisk vs balanced.
+- Turtle's bump to damage+objective didn't help — turtle still walls up
+  with artillery and stalls (aggressor vs turtle duel + crossroads still
+  hit 201 turns despite turtle losing 10/10).
+- Economist scored its first wins (5 vs turtle on duel) — building a recon
+  + tank gave it something with which to bite.
+- Stalemates: still seven 201-turn matchups. The crossroads finish problem
+  is now in turtle-vs-aggressor too.
+
+**Planned tuning for iteration 3:**
+
+- Aggressor: real nerf. Drop `damageDealt` 1.4 → 1.2, raise `counterRisk`
+  0.5 → 0.7, replace the second tank in preferred with infantry, raise
+  `infantryFloor` 2 → 3 so it has actual capturers.
+- Turtle: get away from artillery. preferred=[tank,infantry,artillery],
+  raise `positional` 0.7 → 1.0 + `capture` 1.4 → 1.6 to spread captures.
+- Economist: more teeth. damageDealt 1.0 → 1.1, tank earlier in preferred,
+  keep infantryFloor 3 → 4.
+- Balanced: still the control.
 
 ---
 

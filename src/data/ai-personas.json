@@ -2,63 +2,64 @@
   "personas": [
     {
       "name": "aggressor",
-      "description": "Pushes damage, accepts trades. Builds tanks and recons, avoids artillery.",
+      "description": "Tank-heavy push. Accepts trades but no longer ignores capture.",
       "weights": {
-        "damageDealt": 1.6,
-        "capture": 0.6,
-        "counterRisk": 0.35,
-        "futureThreat": 0.2,
-        "positional": 0.5,
-        "objective": 0.8
+        "damageDealt": 1.2,
+        "capture": 0.9,
+        "counterRisk": 0.7,
+        "futureThreat": 0.3,
+        "positional": 0.4,
+        "objective": 0.9
       },
       "roleOverrides": {
-        "frontline": { "damageDealt": 1.6, "counterRisk": 0.8 }
+        "frontline": { "damageDealt": 1.5, "counterRisk": 0.8 }
       },
       "buildPolicy": {
-        "preferred": ["tank", "recon", "tank"],
+        "preferred": ["tank", "recon", "infantry"],
         "avoid": ["artillery"],
-        "infantryFloor": 2
+        "infantryFloor": 3
       }
     },
     {
       "name": "turtle",
-      "description": "Cautious, defends with terrain bonuses, builds artillery + infantry walls.",
+      "description": "Tank + infantry walls on terrain. Slow push; ignores artillery.",
       "weights": {
-        "damageDealt": 0.9,
-        "capture": 1.4,
-        "counterRisk": 1.2,
-        "futureThreat": 1.0,
-        "positional": 0.7,
-        "objective": 0.5
+        "damageDealt": 1.0,
+        "capture": 1.6,
+        "counterRisk": 0.9,
+        "futureThreat": 0.7,
+        "positional": 1.0,
+        "objective": 1.0
       },
       "roleOverrides": {
-        "defender": { "futureThreat": 4, "positional": 1.5 },
-        "support": { "counterRisk": 2.5, "futureThreat": 2.0 }
+        "defender": { "futureThreat": 3.0, "positional": 1.6, "capture": 0 },
+        "frontline": { "damageDealt": 1.1, "positional": 1.5 }
       },
       "buildPolicy": {
-        "preferred": ["artillery", "infantry", "tank"],
+        "preferred": ["tank", "infantry", "artillery"],
         "avoid": ["recon"],
-        "infantryFloor": 4
+        "infantryFloor": 3
       }
     },
     {
       "name": "economist",
-      "description": "Capture-heavy, cheap infantry spam, lets opponent come and outscales on income.",
+      "description": "Capture-focused but with a tank reserve. Outscales on income.",
       "weights": {
-        "damageDealt": 0.7,
-        "capture": 2.4,
+        "damageDealt": 1.1,
+        "capture": 1.6,
         "counterRisk": 1.0,
-        "futureThreat": 0.8,
-        "positional": 0.4,
+        "futureThreat": 0.7,
+        "positional": 0.5,
         "objective": 1.0
       },
       "roleOverrides": {
-        "capturer": { "capture": 4.5, "counterRisk": 1.8, "objective": 1.5 }
+        "capturer": { "capture": 3.5, "counterRisk": 1.5, "objective": 1.4 },
+        "frontline": { "damageDealt": 1.2 }
       },
       "buildPolicy": {
-        "preferred": ["infantry", "infantry", "recon"],
+        "preferred": ["infantry", "tank", "recon"],
         "avoid": ["copter"],
-        "infantryFloor": 5
+        "infantryFloor": 4
       }
     },
     {
