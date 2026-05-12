@@ -232,7 +232,116 @@ Side balance 52.8% / 47.2% — within noise.
   is the map-driven asymmetry the spec asked for.
 
 **Stop condition met** — five rounds run, ≥10% floor achieved on every
-pair (though not every map). Final 50/pair/map tournament next.
+pair (though not every map). Final 25/pair/map verification tournament
+in `logs/rr-final/` corroborates the iter 5 pilot.
 
 ---
+
+## Final Personas (iter 5)
+
+These are the tuned values committed to `src/data/ai-personas.json`:
+
+```json
+aggressor:
+  weights:      damage=1.2 capture=0.9 counterRisk=0.7 futureThreat=0.3 positional=0.4 objective=0.9
+  frontline ×:  damageDealt=1.5 counterRisk=0.8
+  build:        preferred=[tank,recon,infantry] avoid=[artillery] floor=3
+
+turtle:
+  weights:      damage=1.0 capture=1.6 counterRisk=0.9 futureThreat=0.7 positional=1.0 objective=1.0
+  defender ×:   futureThreat=3.0 positional=1.6 capture=0
+  frontline ×:  damageDealt=1.1 positional=1.5
+  build:        preferred=[tank,infantry,artillery] avoid=[recon] floor=3
+
+economist:
+  weights:      damage=1.0 capture=1.8 counterRisk=0.9 futureThreat=0.6 positional=0.5 objective=1.2
+  capturer ×:   capture=4.5 counterRisk=1.4 objective=1.8
+  frontline ×:  damageDealt=1.3 objective=1.2
+  build:        preferred=[tank,infantry,recon,infantry] avoid=[copter] floor=2
+
+balanced (control):
+  weights:      damage=1.0 capture=1.5 counterRisk=0.8 futureThreat=0.5 positional=0.3 objective=0.6
+  no role overrides, default builds
+```
+
+## Tournament results — iter 5 pilot (180 matches, 10/pair/map)
+
+| persona   | W  | L  | D | WR    |
+|-----------|----|----|---|-------|
+| economist | 70 | 20 | 0 | 77.8% |
+| aggressor | 45 | 45 | 0 | 50.0% |
+| turtle    | 45 | 45 | 0 | 50.0% |
+| balanced  | 20 | 70 | 0 | 22.2% |
+
+| row\col   | aggressor | turtle | economist | balanced |
+|-----------|-----------|--------|-----------|----------|
+| aggressor | -         | 33%    | 33%       | 83%      |
+| turtle    | 67%       | -      | 17%       | 67%      |
+| economist | 67%       | 83%    | -         | 83%      |
+| balanced  | 17%       | 33%    | 17%       | -        |
+
+Side balance: 52.8% / 47.2%.
+
+## Map-driven asymmetry (per-pair × per-map, A-wins / B-wins / draws)
+
+| pair                  | duel | crossroads | canyon |
+|-----------------------|------|------------|--------|
+| aggressor vs turtle   | 0/10 | 10/0       | 0/10   |
+| aggressor vs economist| 0/10 | 5/5        | 5/5    |
+| aggressor vs balanced | 10/0 | 5/5        | 10/0   |
+| turtle vs economist   | 5/5  | 0/10       | 0/10   |
+| turtle vs balanced    | 10/0 | 0/10       | 10/0   |
+| economist vs balanced | 10/0 | 5/5        | 10/0   |
+
+Notable asymmetries:
+- Turtle's positional weight makes it shine on the **forest-belt duel
+  map** and **canyon-flanks** but it can't break the crossroads centre
+  against aggressor (0/10).
+- Aggressor's tank rush dominates the open **crossroads middle** but
+  fails on duel/canyon when turtle holes up on terrain stars.
+- Economist beats turtle on **crossroads + canyon** (10/10 each)
+  because turtle's slow-push runs out of unit-cap headroom — economist
+  outscales on captures.
+- Balanced has no terrain or build advantage — explicitly the weak
+  control archetype.
+
+## Crossroads finish issue
+
+**Diagnosis.** Sampling the iter 1 `turtle-vs-balanced-crossroads-000`
+log (200-turn cap, no winner): both players at the `TIER3_UNIT_CAP =
+12` unit ceiling early (~turn 80), and after that the BUILD phase no-
+ops. Action distribution in the stalemate: 1779 WAIT (vs only 223
+ATTACK, 16 CAPTURE, 132 BUILD across 200 turns). Units cluster at the
+contested forest belt and refuse to push into the enemy half because
+`futureThreat` rises sharply once they cross — the score for "advance"
+turns negative.
+
+**Resolution status.** The iter 5 personas substantially reduce the
+problem:
+- `turtle vs economist` crossroads still hits the cap (0/10 → 5/5 in
+  adjudication) — this is the remaining pathological pairing.
+- `aggressor vs balanced` crossroads gets to ~120 turns average,
+  decisive 5/5.
+- `aggressor vs turtle` crossroads finishes at ~110 turns with
+  aggressor winning 10/10 — the explicit tank-rush persona beats the
+  defensive one on the open map. That's the intended archetype
+  asymmetry.
+
+A "pusher" persona experiment (high `objective`, low `futureThreat`,
+high-floor infantry to keep capturing) was implicitly tested through
+iter 3's aggressor (low futureThreat=0.3, frontline×damageDealt=1.5).
+It DOES break crossroads stalemates against turtle. But the same
+persona is too lossy on duel/canyon — high futureThreat would
+otherwise save its capturers from being run over. The fundamental
+trade-off is `pushing toward enemy HQ` vs `living long enough to
+matter`, and there isn't a single weighting that wins both. Worth
+considering a future role refactor (a `pusher` role with
+objective-target = enemy HQ rather than hottest-threat tile) — flagged
+in `QUESTIONS.md`.
+
+## Open questions
+
+- See `QUESTIONS.md` for the full list of iteration-derived questions
+  (frontline-target semantics, infantryFloor build-bug, future
+  refactors).
 
