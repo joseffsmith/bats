@@ -32,9 +32,20 @@ import { log, setLogEnabled } from '../engine/core/logger';
 
 // ─────────────────────────── AI registry ─────────────────────────────────────
 
-export type AIName = 'random' | 'utility';
+// `tier1` is the canonical Tier 1 utility AI (Phase 4 acceptance).
+// `tier2` is Tier 1 + precomputed threat/value maps (Phase 5, partial).
+// `tier3` is Tier 1 + threat maps + role-based weight modulation.
+// `utility` is preserved as a synonym of `tier1` to keep older tests/scripts
+//   passing without modification.
+export type AIName = 'random' | 'utility' | 'tier1' | 'tier2' | 'tier3';
 
-export const AI_NAMES: ReadonlyArray<AIName> = ['random', 'utility'];
+export const AI_NAMES: ReadonlyArray<AIName> = [
+  'random',
+  'utility',
+  'tier1',
+  'tier2',
+  'tier3',
+];
 
 export function isAIName(s: string): s is AIName {
   return AI_NAMES.includes(s as AIName);
@@ -48,8 +59,22 @@ export type AISpec = {
 
 export function makeAI(spec: AISpec): AI {
   if (spec.name === 'random') return randomAI({ name: 'random' });
-  if (spec.name === 'utility') {
-    const opts: Record<string, unknown> = { name: 'utility' };
+  if (spec.name === 'utility' || spec.name === 'tier1') {
+    const opts: Record<string, unknown> = { name: spec.name };
+    if (spec.weights) opts.weights = spec.weights;
+    return utilityAI(opts);
+  }
+  if (spec.name === 'tier2') {
+    const opts: Record<string, unknown> = { name: 'tier2', useThreatMap: true };
+    if (spec.weights) opts.weights = spec.weights;
+    return utilityAI(opts);
+  }
+  if (spec.name === 'tier3') {
+    const opts: Record<string, unknown> = {
+      name: 'tier3',
+      useThreatMap: true,
+      useRoles: true,
+    };
     if (spec.weights) opts.weights = spec.weights;
     return utilityAI(opts);
   }
@@ -346,8 +371,9 @@ function printHelp(): void {
       '  --map <name>          map to load (default: duel)',
       '  --max-turns <N>       hard turn cap (default: 200)',
       '  --seed <N>            RNG seed (default: 1)',
-      '  --p0 <name>           AI for player 0: random | utility (default: utility)',
-      '  --p1 <name>           AI for player 1: random | utility (default: random)',
+      '  --p0 <name>           AI for player 0 (default: utility)',
+      '  --p1 <name>           AI for player 1 (default: random)',
+      `                          names: ${AI_NAMES.join(' | ')}`,
       '  --p0-weights <path>   JSON file of utility weights for player 0',
       '  --p1-weights <path>   JSON file of utility weights for player 1',
       '  --quiet               suppress per-action log lines',

@@ -17,6 +17,7 @@ import type {
   GameState,
   PlayerId,
   Unit,
+  UnitId,
   UnitType,
 } from '../core/types';
 import {
@@ -36,6 +37,15 @@ import { computeDamage, inAttackRange } from '../systems/combat';
 import { generateCandidates } from './candidates';
 import type { Candidate } from './candidates';
 import type { AIContext, AIFactory } from './types';
+import { computeThreatMap, computeValueMap } from './threatMap';
+import type { ThreatMap, ValueMap } from './threatMap';
+import {
+  ROLE_MULTIPLIERS,
+  applyRoleMultipliers,
+  assignRoles,
+  countByRole,
+} from './roles';
+import type { Role } from './roles';
 
 // Soft cap on actions per turn so a bug can't infinite-loop the runner.
 const ACTION_STEP_CAP = 200;
@@ -43,18 +53,71 @@ const ACTION_STEP_CAP = 200;
 /** Re-export for callers that want the default. */
 export const DEFAULT_AI_WEIGHTS: AIWeights = AI_WEIGHTS;
 
+/** Weight on the valueMap term inside positionalValue when `useThreatMap` is on. */
+const VALUE_MAP_WEIGHT = 0.1;
+
+/**
+ * Bonus magnitude added to `objectiveBonus` when a candidate moves the unit
+ * toward its role objective. PLAN.md specifies +3.
+ */
+const OBJECTIVE_BONUS = 3;
+
+/**
+ * Soft cap on Tier-3 owned-unit count to keep per-turn AI time under the
+ * 200ms budget. With >20 units acting twice per turn the scoring loop on a
+ * 16×10 map blows past 200ms even with the precomputed maps in place. The
+ * AI still replenishes losses (the cap floats with kills) so it doesn't
+ * shrivel up after a bad exchange.
+ */
+const TIER3_UNIT_CAP = 12;
+
+export type UtilityAIOptions = {
+  /** Display name (default: "utility"). */
+  name?: string;
+  /** Weight overrides. Defaults to ai-weights.json. */
+  weights?: AIWeights;
+  /**
+   * If true, precompute a threat map + value map once per turn and use them
+   * in `futureThreat` and `positionalValue`. Tier 2 behaviour.
+   */
+  useThreatMap?: boolean;
+  /**
+   * If true, assign roles to units at turn start, modulating the per-unit
+   * weights and giving `objectiveBonus` something to do. Tier 3 behaviour.
+   * Implies `useThreatMap` for the HQ-threat check.
+   */
+  useRoles?: boolean;
+};
+
 export const utilityAI: AIFactory = (opts) => {
   const name = (opts?.name as string | undefined) ?? 'utility';
   const weights = (opts?.weights as AIWeights | undefined) ?? DEFAULT_AI_WEIGHTS;
+  const useThreatMap = (opts?.useThreatMap as boolean | undefined) ?? false;
+  const useRoles = (opts?.useRoles as boolean | undefined) ?? false;
+  // `useRoles` implies `useThreatMap` — we need an HQ threat read for the
+  // defender promotion.
+  const effectiveThreatMap = useThreatMap || useRoles;
   return {
     name,
     takeTurn(ctx: AIContext): Action[] {
-      return planUtilityTurn(ctx, weights);
+      return planUtilityTurn(ctx, weights, {
+        useThreatMap: effectiveThreatMap,
+        useRoles,
+      });
     },
   };
 };
 
-function planUtilityTurn(ctx: AIContext, weights: AIWeights): Action[] {
+type PlanOptions = {
+  useThreatMap: boolean;
+  useRoles: boolean;
+};
+
+function planUtilityTurn(
+  ctx: AIContext,
+  weights: AIWeights,
+  planOpts: PlanOptions,
+): Action[] {
   const { player } = ctx;
   let state = ctx.state;
   const out: Action[] = [];
@@ -66,11 +129,27 @@ function planUtilityTurn(ctx: AIContext, weights: AIWeights): Action[] {
     return out;
   }
 
+  // ─── Per-turn precomputation ──────────────────────────────────────────────
   // Enemy move-range cache: maps enemy unit id -> Set<coordKey> of tiles they
   // could reach next turn. Computed lazily; reset whenever we mutate state
   // (since an enemy could have died).
+  //
+  // The threat map, value map, and role assignments are computed ONCE at the
+  // beginning of the turn and stay valid for the whole turn. Enemy positions
+  // and roster don't change during our turn (we move our units; theirs are
+  // static). The only mid-turn deltas are:
+  //   - an enemy DIES from our attack (their threat contribution to the map
+  //     becomes stale-positive — an over-estimate that's safe to keep);
+  //   - our roster changes from BUILD (handled separately at end of turn).
+  // Stale-positive threats just make our AI slightly more cautious for the
+  // remaining actions, which is a fine trade for keeping the per-turn budget
+  // under 200ms on crossroads.
   let enemyReachCache: Map<string, Set<string>> | null = null;
-  const invalidateCache = (): void => {
+  let threatMapCache: ThreatMap | null = null;
+  let valueMapCache: ValueMap | null = null;
+  let roleCache: Map<UnitId, Role> | null = null;
+  let frontlineTargetCache: Coord | null = null;
+  const invalidateEnemyReach = (): void => {
     enemyReachCache = null;
   };
   const getEnemyReach = (s: GameState): Map<string, Set<string>> => {
@@ -78,6 +157,34 @@ function planUtilityTurn(ctx: AIContext, weights: AIWeights): Action[] {
     enemyReachCache = computeEnemyReachRanges(s, player);
     return enemyReachCache;
   };
+  const getThreatMap = (s: GameState): ThreatMap => {
+    if (threatMapCache) return threatMapCache;
+    threatMapCache = computeThreatMap(s, otherPlayer(player), player);
+    return threatMapCache;
+  };
+  const getValueMap = (s: GameState): ValueMap => {
+    if (valueMapCache) return valueMapCache;
+    valueMapCache = computeValueMap(s, player);
+    return valueMapCache;
+  };
+  const getRoles = (s: GameState): Map<UnitId, Role> => {
+    if (roleCache) return roleCache;
+    roleCache = assignRoles(s, player, getThreatMap(s));
+    if (planOpts.useRoles) {
+      log('ai', 'roles assigned', countByRole(roleCache));
+    }
+    return roleCache;
+  };
+  const getFrontlineTarget = (s: GameState): Coord | null => {
+    if (frontlineTargetCache) return frontlineTargetCache;
+    frontlineTargetCache = hottestThreatTile(getThreatMap(s));
+    return frontlineTargetCache;
+  };
+
+  // Optional one-shot log of the threat map (very noisy — gated by ai-trace).
+  if (planOpts.useThreatMap && isLogEnabled('ai-trace')) {
+    log('ai-trace', 'threat map', getThreatMap(state));
+  }
 
   let stepCount = 0;
   let progress = true;
@@ -92,7 +199,24 @@ function planUtilityTurn(ctx: AIContext, weights: AIWeights): Action[] {
       if (unit.hasMoved && unit.hasActed) continue;
 
       const enemyReach = getEnemyReach(state);
-      const pick = pickBestCandidate(state, unit, weights, enemyReach);
+      const tm = planOpts.useThreatMap ? getThreatMap(state) : null;
+      const role = planOpts.useRoles ? getRoles(state).get(unit.id) ?? null : null;
+      // Pre-multiply role multipliers into the unit's effective weights ONCE
+      // per unit per turn so scoreAction doesn't allocate a fresh object per
+      // candidate.
+      const effectiveWeights = role
+        ? applyRoleMultipliers(weights, ROLE_MULTIPLIERS[role])
+        : weights;
+      const ctx2: ScoreContext = {
+        weights: effectiveWeights,
+        planOpts,
+        enemyReach,
+        threatMap: tm,
+        valueMap: planOpts.useThreatMap ? getValueMap(state) : null,
+        role,
+        frontlineTarget: tm ? getFrontlineTarget(state) : null,
+      };
+      const pick = pickBestCandidate(state, unit, ctx2);
       if (!pick) continue;
       if (pick.score <= 0) continue;
 
@@ -104,7 +228,10 @@ function planUtilityTurn(ctx: AIContext, weights: AIWeights): Action[] {
       out.push(pick.candidate.followUp);
       state = reduce(state, pick.candidate.followUp);
       stepCount += 1;
-      invalidateCache();
+      // Only the enemy-reach cache becomes stale per action; the threat map,
+      // value map, roles, and frontline target are stable per turn (see
+      // comment at the top of planUtilityTurn).
+      invalidateEnemyReach();
       progress = true;
       if (state.winner !== null) break;
     }
@@ -113,15 +240,24 @@ function planUtilityTurn(ctx: AIContext, weights: AIWeights): Action[] {
 
   // Build phase: greedy spend on the most expensive affordable unit per
   // factory. Cheap heuristic that prevents the AI from sitting on cash.
+  //
+  // For Tier 2/3 we add a soft cap on owned-unit count: building infinite
+  // units snowballs to 60+ on large maps, which puts the per-turn AI budget
+  // way over 200ms. Capping at TIER3_UNIT_CAP keeps action volume per turn
+  // bounded while still letting the AI replenish losses.
   if (state.winner === null) {
+    const unitCap = planOpts.useRoles ? TIER3_UNIT_CAP : Infinity;
+    let myUnits = countOwnedAll(state, player);
     for (const b of enumerateBuilds(state, player)) {
       if (stepCount >= ACTION_STEP_CAP - 1) break;
+      if (myUnits >= unitCap) break;
       if (!isLegalAction(state, b).legal) continue;
       const next = reduce(state, b);
       if (next === state) continue;
       out.push(b);
       state = next;
       stepCount += 1;
+      myUnits += 1;
     }
   }
 
@@ -134,21 +270,43 @@ function planUtilityTurn(ctx: AIContext, weights: AIWeights): Action[] {
 
 type Scored = { candidate: Candidate; score: number };
 
+/**
+ * Bundled per-turn scoring context. Lives across a single AI turn and is
+ * threaded into `scoreAction` so the heuristic terms have O(1) access to the
+ * caches.
+ */
+export type ScoreContext = {
+  /** Already-effective weights: base × role multipliers (when useRoles). */
+  weights: AIWeights;
+  planOpts: PlanOptions;
+  enemyReach: Map<string, Set<string>>;
+  /** Non-null iff `planOpts.useThreatMap`. */
+  threatMap: ThreatMap | null;
+  /** Non-null iff `planOpts.useThreatMap`. */
+  valueMap: ValueMap | null;
+  /** Non-null iff `planOpts.useRoles`. */
+  role: Role | null;
+  /** Tier 3: precomputed objective-target tile for the frontline role
+   *  (hottest threatMap tile). Saves a full map scan per candidate. Null when
+   *  no useful target exists. */
+  frontlineTarget: Coord | null;
+};
+
 function pickBestCandidate(
   state: GameState,
   unit: Unit,
-  weights: AIWeights,
-  enemyReach: Map<string, Set<string>>,
+  sctx: ScoreContext,
 ): Scored | null {
   let best: Scored | null = null;
   for (const c of generateCandidates(state, unit)) {
-    const score = scoreAction(state, c, unit, weights, enemyReach);
+    const score = scoreAction(state, c, unit, sctx);
     if (isLogEnabled('ai-trace')) {
       log('ai-trace', 'candidate', {
         unit: unit.id,
         dest: c.destination,
         followUp: c.followUp.type,
         score: Number(score.toFixed(3)),
+        role: sctx.role,
       });
     }
     if (best === null || score > best.score) {
@@ -164,9 +322,12 @@ function pickBestCandidate(
  *   damageDealt      × W.damageDealt
  * + captureProgress  × W.capture
  * - counterAttackDmg × W.counterRisk
- * - futureThreat     × W.futureThreat
- * + positionalValue  × W.positional
- * + objectiveBonus   × W.objective
+ * - futureThreat     × W.futureThreat       (threatMap[y][x] when Tier 2)
+ * + positionalValue  × W.positional         (+ valueMap[y][x]×w when Tier 2)
+ * + objectiveBonus   × W.objective          (real value when Tier 3)
+ *
+ * When `sctx.role` is set, the per-key weights are scaled by the role
+ * multipliers from `ROLE_MULTIPLIERS`.
  *
  * `unit` is the acting unit's PRE-action snapshot (for positional baseline).
  * The post-action unit is read from `candidate.finalState`.
@@ -175,28 +336,46 @@ export function scoreAction(
   state: GameState,
   candidate: Candidate,
   unit: Unit,
-  weights: AIWeights,
-  enemyReach: Map<string, Set<string>>,
+  sctx: ScoreContext,
 ): number {
   const after = candidate.finalState;
   const movedUnit = after.units[unit.id];
+  // sctx.weights is already role-multiplied (see planUtilityTurn).
+  const w = sctx.weights;
   // The unit may have been killed by a counter-attack — treat as a heavy
   // negative so the AI never elects to suicide.
   if (!movedUnit) {
     return (
-      damageDealt(state, after, unit.owner) * weights.damageDealt -
-      (unit.hp * (UNITS[unit.type].cost / 1000)) * weights.counterRisk -
+      damageDealt(state, after, unit.owner) * w.damageDealt -
+      (unit.hp * (UNITS[unit.type].cost / 1000)) * w.counterRisk -
       50 // self-death penalty
     );
   }
 
+  // Future-threat term: O(1) lookup when a threat map is available, otherwise
+  // fall back to the Phase 4 per-enemy scan.
+  const ft = sctx.threatMap
+    ? futureThreatFromMap(sctx.threatMap, movedUnit)
+    : futureThreat(after, movedUnit, sctx.enemyReach);
+
+  // Positional value: terrain bonus stays; HQ-distance term is replaced by
+  // a valueMap lookup when available.
+  const pv = sctx.valueMap
+    ? positionalValueFromMaps(after, movedUnit, sctx.valueMap)
+    : positionalValue(after, movedUnit);
+
+  // Objective bonus depends on role.
+  const ob = sctx.role
+    ? objectiveBonusForRole(state, unit, movedUnit, sctx.role, sctx.frontlineTarget)
+    : objectiveBonus(after, movedUnit);
+
   return (
-    damageDealt(state, after, unit.owner) * weights.damageDealt +
-    captureProgressScore(state, after, movedUnit, candidate.followUp) * weights.capture -
-    counterAttackDamage(state, after, unit) * weights.counterRisk -
-    futureThreat(after, movedUnit, enemyReach) * weights.futureThreat +
-    positionalValue(after, movedUnit) * weights.positional +
-    objectiveBonus(after, movedUnit) * weights.objective
+    damageDealt(state, after, unit.owner) * w.damageDealt +
+    captureProgressScore(state, after, movedUnit, candidate.followUp) * w.capture -
+    counterAttackDamage(state, after, unit) * w.counterRisk -
+    ft * w.futureThreat +
+    pv * w.positional +
+    ob * w.objective
   );
 }
 
@@ -350,9 +529,162 @@ export function positionalValue(state: GameState, unit: Unit): number {
   return -dist * 0.1 + stars * 0.5;
 }
 
-/** Phase 5 will populate this with role-based objectives. */
+/**
+ * Tier 2 positional value: terrain defenseStars (unchanged) + a valueMap
+ * lookup scaled by `VALUE_MAP_WEIGHT`. The HQ-distance penalty from the Phase
+ * 4 formula is subsumed by the value map's HQ-attraction ramp.
+ */
+export function positionalValueFromMaps(
+  state: GameState,
+  unit: Unit,
+  valueMap: ValueMap,
+): number {
+  const tile = tileAt(state.map, unit.pos);
+  const stars = TERRAIN[tile.terrain].defenseStars;
+  const v = valueMap[unit.pos.y]?.[unit.pos.x] ?? 0;
+  return stars * 0.5 + v * VALUE_MAP_WEIGHT;
+}
+
+/**
+ * Tier 2 future-threat: O(1) lookup. The threat map's per-tile value already
+ * encodes "max damage to a representative target standing here next turn",
+ * which is exactly what futureThreat sums over enemies — minus the
+ * uncertainty discount and the per-enemy cost weighting. We apply a 0.5
+ * uncertainty discount and an HP scaling so the magnitude lives in the same
+ * ballpark as the Phase 4 term (which is what the weights were tuned against).
+ */
+export function futureThreatFromMap(
+  threatMap: ThreatMap,
+  unit: Unit,
+): number {
+  const raw = threatMap[unit.pos.y]?.[unit.pos.x] ?? 0;
+  if (raw <= 0) return 0;
+  // Scale by the unit's cost/1000 so losing a tank threatens the score harder
+  // than losing an infantry — matches the Phase 4 weighting.
+  const cost = UNITS[unit.type].cost;
+  return raw * (cost / 1000) * 0.5;
+}
+
+/** Phase 4 stub. Tier 3 callers route through `objectiveBonusForRole` instead. */
 export function objectiveBonus(_state: GameState, _unit: Unit): number {
   return 0;
+}
+
+/**
+ * Tier 3 objective bonus. PLAN.md gives the four-line spec; we mirror it:
+ *   capturer  : +OBJECTIVE_BONUS if action moves toward nearest unowned capturable
+ *   defender  : +OBJECTIVE_BONUS if action moves toward own HQ
+ *   support   : +OBJECTIVE_BONUS if action moves AWAY from nearest enemy
+ *   frontline : +OBJECTIVE_BONUS if action moves toward the highest-threat
+ *               concentration WE project against the enemy (i.e. the tile in
+ *               our threatMap-from-our-perspective with the largest value),
+ *               or — if no threat map is available — toward the nearest enemy.
+ *
+ * `before` is the pre-action state, `after` is post; `unit` is the pre-action
+ * snapshot, `movedUnit` is the post-action unit (alive — caller handles dead).
+ */
+function objectiveBonusForRole(
+  before: GameState,
+  unit: Unit,
+  movedUnit: Unit,
+  role: Role,
+  frontlineTarget: Coord | null,
+): number {
+  // No movement, no bonus (the unit's "objective progress" is zero).
+  if (coordEq(unit.pos, movedUnit.pos)) return 0;
+
+  switch (role) {
+    case 'capturer': {
+      const tgt = nearestUnownedCapturable(before, unit.owner, unit.pos);
+      if (!tgt) return 0;
+      const dBefore = manhattan(unit.pos, tgt);
+      const dAfter = manhattan(movedUnit.pos, tgt);
+      return dAfter < dBefore ? OBJECTIVE_BONUS : 0;
+    }
+    case 'defender': {
+      const hq = before.players[unit.owner].hq;
+      const dBefore = manhattan(unit.pos, hq);
+      const dAfter = manhattan(movedUnit.pos, hq);
+      return dAfter < dBefore ? OBJECTIVE_BONUS : 0;
+    }
+    case 'support': {
+      const e = nearestEnemy(before, unit.owner, unit.pos);
+      if (!e) return 0;
+      const dBefore = manhattan(unit.pos, e.pos);
+      const dAfter = manhattan(movedUnit.pos, e.pos);
+      // Reward retreat: dAfter > dBefore means we got further away.
+      return dAfter > dBefore ? OBJECTIVE_BONUS : 0;
+    }
+    case 'frontline': {
+      // Toward enemy threat concentration if we have a (our) threat map; else
+      // toward nearest enemy.
+      const target =
+        frontlineTarget ?? nearestEnemy(before, unit.owner, unit.pos)?.pos ?? null;
+      if (!target) return 0;
+      const dBefore = manhattan(unit.pos, target);
+      const dAfter = manhattan(movedUnit.pos, target);
+      return dAfter < dBefore ? OBJECTIVE_BONUS : 0;
+    }
+  }
+  return 0;
+}
+
+function nearestUnownedCapturable(
+  state: GameState,
+  player: PlayerId,
+  from: Coord,
+): Coord | null {
+  let bestD = Infinity;
+  let best: Coord | null = null;
+  for (let y = 0; y < state.map.length; y++) {
+    const row = state.map[y]!;
+    for (let x = 0; x < row.length; x++) {
+      const t = row[x]!;
+      if (!isCapturable(t.terrain)) continue;
+      if (t.owner === player) continue;
+      const d = Math.abs(from.x - x) + Math.abs(from.y - y);
+      if (d < bestD) {
+        bestD = d;
+        best = { x, y };
+      }
+    }
+  }
+  return best;
+}
+
+function nearestEnemy(
+  state: GameState,
+  player: PlayerId,
+  from: Coord,
+): Unit | null {
+  let bestD = Infinity;
+  let best: Unit | null = null;
+  for (const u of Object.values(state.units)) {
+    if (u.owner === player) continue;
+    const d = Math.abs(from.x - u.pos.x) + Math.abs(from.y - u.pos.y);
+    if (d < bestD) {
+      bestD = d;
+      best = u;
+    }
+  }
+  return best;
+}
+
+/** Coord with the maximum threat value. Ties broken by lowest (y,x). */
+function hottestThreatTile(threatMap: ThreatMap): Coord | null {
+  let best: Coord | null = null;
+  let bestV = -1;
+  for (let y = 0; y < threatMap.length; y++) {
+    const row = threatMap[y]!;
+    for (let x = 0; x < row.length; x++) {
+      const v = row[x]!;
+      if (v > bestV) {
+        bestV = v;
+        best = { x, y };
+      }
+    }
+  }
+  return bestV > 0 ? best : null;
 }
 
 // ─────────────────────────── Enemy reach precompute ──────────────────────────
@@ -490,6 +822,14 @@ function countOwned(state: GameState, player: PlayerId, type: UnitType): number 
   return n;
 }
 
+function countOwnedAll(state: GameState, player: PlayerId): number {
+  let n = 0;
+  for (const u of Object.values(state.units)) {
+    if (u.owner === player) n += 1;
+  }
+  return n;
+}
+
 function unownedCapturables(state: GameState, player: PlayerId): number {
   let n = 0;
   for (const row of state.map) {
@@ -513,9 +853,16 @@ export const __test = {
   captureProgressScore,
   counterAttackDamage,
   futureThreat,
+  futureThreatFromMap,
   positionalValue,
+  positionalValueFromMaps,
   computeEnemyReachRanges,
+  nearestUnownedCapturable,
+  nearestEnemy,
+  hottestThreatTile,
   CAPTURE_THRESHOLD,
   coordEq,
   inAttackRange,
+  VALUE_MAP_WEIGHT,
+  OBJECTIVE_BONUS,
 };
