@@ -1,11 +1,12 @@
-// Phase 3 entry point.
+// Phase 3 + 4 entry point.
 //
-// Wires the engine + renderer + input layers together for hot-seat play on a
-// single Canvas. No AI yet — Phase 4 owns that. The flow:
+// Wires the engine + renderer + input + AI driver together for hot-seat play
+// or AI-vs-AI demos on a single Canvas. The flow:
 //   1. Load the `duel` map JSON via the engine loader.
 //   2. Spin up a state emitter holding that initial state.
 //   3. Mount a CanvasRenderer + animation queue + InputController + HUD.
-//   4. Subscribe a single redraw callback that paints map → hud each frame.
+//   4. Mount the AI driver. By default both players are 'human'; flip via
+//      the HUD AI controls panel or `?p0=utility&p1=utility` URL params.
 //
 // The page is the game — the canvas fills the viewport.
 
@@ -16,19 +17,35 @@ import { createCanvasRenderer } from './renderer/canvas';
 import { createInputController } from './renderer/input';
 import { createHud } from './renderer/hud';
 import { createAnimationQueue } from './renderer/animations';
+import { createAIDriver, AI_CHOICES } from './renderer/ai-driver';
+import type { AIChoice } from './renderer/ai-driver';
 import { log, setLogEnabled } from './engine/core/logger';
+import type { PlayerId } from './engine/core/types';
 
 // `?render-log=1` flips the render category on for click-by-click traces.
+// `?ai-trace=1` enables the very chatty per-candidate AI score log.
 const params = new URLSearchParams(window.location.search);
 if (params.get('render-log') === '1') {
   setLogEnabled('render', true);
 }
+if (params.get('ai-trace') === '1') {
+  setLogEnabled('ai-trace', true);
+}
+
+function parseInitialAI(): Record<PlayerId, AIChoice> {
+  const out: Record<PlayerId, AIChoice> = { 0: 'human', 1: 'human' };
+  for (const [pid, key] of [[0, 'p0'], [1, 'p1']] as Array<[PlayerId, string]>) {
+    const raw = params.get(key);
+    if (raw && (AI_CHOICES as readonly string[]).includes(raw)) {
+      out[pid] = raw as AIChoice;
+    }
+  }
+  return out;
+}
 
 function setupCanvas(): HTMLCanvasElement {
   const existing = document.querySelector('canvas');
-  if (existing) {
-    existing.remove(); // Phase 0's placeholder, if still present
-  }
+  if (existing) existing.remove();
   const canvas = document.createElement('canvas');
   const app = document.getElementById('app');
   if (app) {
@@ -38,6 +55,62 @@ function setupCanvas(): HTMLCanvasElement {
     document.body.appendChild(canvas);
   }
   return canvas;
+}
+
+function mountAIPanel(
+  parent: HTMLElement,
+  driver: ReturnType<typeof createAIDriver>,
+): void {
+  // Floating DOM panel in the top-right corner. Keeps canvas paint loop
+  // unencumbered while still meeting the "HUD AI controls" requirement.
+  const panel = document.createElement('div');
+  panel.style.cssText = [
+    'position: fixed',
+    'top: 8px',
+    'right: 168px', // sit to the left of the canvas End-Turn area
+    'z-index: 10',
+    'background: rgba(20,20,28,0.92)',
+    'color: #e6ecff',
+    'border: 1px solid #3a3e50',
+    'border-radius: 4px',
+    'padding: 6px 10px',
+    'font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    'display: flex',
+    'gap: 12px',
+    'align-items: center',
+  ].join(';');
+
+  function row(label: string, pid: PlayerId): HTMLElement {
+    const wrap = document.createElement('label');
+    wrap.style.cssText = 'display: flex; gap: 6px; align-items: center;';
+    const span = document.createElement('span');
+    span.textContent = label;
+    span.style.cssText = 'opacity: 0.8;';
+    const select = document.createElement('select');
+    select.style.cssText =
+      'background: #1a1d28; color: #e6ecff; border: 1px solid #3a3e50; padding: 2px 4px; font: inherit;';
+    for (const c of AI_CHOICES) {
+      const opt = document.createElement('option');
+      opt.value = c;
+      opt.textContent = c[0]!.toUpperCase() + c.slice(1);
+      select.appendChild(opt);
+    }
+    select.value = driver.getPlayerAI(pid);
+    select.addEventListener('change', () => {
+      driver.setPlayerAI(pid, select.value as AIChoice);
+    });
+    wrap.appendChild(span);
+    wrap.appendChild(select);
+    return wrap;
+  }
+
+  const title = document.createElement('span');
+  title.textContent = 'AI:';
+  title.style.cssText = 'opacity: 0.6; font-weight: 600;';
+  panel.appendChild(title);
+  panel.appendChild(row('P1', 0));
+  panel.appendChild(row('P2', 1));
+  parent.appendChild(panel);
 }
 
 function main(): void {
@@ -59,12 +132,30 @@ function main(): void {
     },
   });
 
+  const initialAI = parseInitialAI();
+  const aiDriver = createAIDriver({
+    emitter,
+    animQueue,
+    initial: initialAI,
+    pauseMs: 250,
+  });
+
   const input = createInputController(renderer, emitter, animQueue);
   const hud = createHud(renderer);
 
+  // Mount AI control panel.
+  const appRoot = document.getElementById('app') ?? document.body;
+  mountAIPanel(appRoot, aiDriver);
+
+  // Wrap input.click so a clicked-on AI player has the input ignored. The
+  // input controller doesn't know about the driver — we filter at the boundary.
+  const originalClickHandlers = new Map<string, EventListener>();
+  void originalClickHandlers; // reserved for future detach work
+
   function frame(): void {
     animQueue.tick();
-    if (dirty || animQueue.busy()) {
+    aiDriver.tick();
+    if (dirty || animQueue.busy() || aiDriver.busy()) {
       const state = emitter.getState();
       const overlay = input.getOverlay();
       renderer.draw(state, overlay, animQueue);
@@ -83,18 +174,43 @@ function main(): void {
     dirty = true;
   });
 
+  // Disable canvas clicks when the current player is AI-controlled. We
+  // attach a capture-phase listener that intercepts events before the
+  // input controller sees them.
+  canvas.addEventListener(
+    'click',
+    (e) => {
+      if (aiDriver.inputLocked(emitter.getState())) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+      }
+    },
+    true, // capture phase
+  );
+  canvas.addEventListener(
+    'contextmenu',
+    (e) => {
+      if (aiDriver.inputLocked(emitter.getState())) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+      }
+    },
+    true,
+  );
+
   rafId = window.requestAnimationFrame(frame);
 
-  // Wire up cleanup for HMR / Vite dev.
   if (import.meta.hot) {
     import.meta.hot.dispose(() => {
       window.cancelAnimationFrame(rafId);
     });
   }
 
-  log('engine', 'phase 3 boot complete', {
+  log('engine', 'phase 4 boot complete', {
     map: 'duel',
     units: Object.keys(initialState.units).length,
+    p0: initialAI[0],
+    p1: initialAI[1],
   });
 }
 

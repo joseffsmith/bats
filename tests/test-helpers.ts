@@ -7,6 +7,7 @@ import type { InitialMapSpec } from '../src/engine/core/initial-state';
 
 setLogEnabled('engine', false);
 setLogEnabled('ai', false);
+setLogEnabled('ai-trace', false);
 setLogEnabled('render', false);
 setLogEnabled('match', false);
 
