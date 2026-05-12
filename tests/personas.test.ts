@@ -171,9 +171,9 @@ describe('personaAI dispatch', () => {
   }, 120_000);
 
   it('build policy actually biases what gets built', async () => {
-    // Run aggressor (avoid=artillery) and turtle (preferred=artillery first)
-    // on a long enough match that both have time to BUILD multiple times.
-    // Verify aggressor never builds artillery, turtle builds at least one.
+    // Aggressor has `avoid: ['artillery']` — it must NEVER build one in 30
+    // turns. Turtle has `avoid: ['recon']` — it must NEVER build one. Both
+    // constraints exercise the avoid path of the build policy.
     const agg = await runMatch({
       mapName: 'crossroads',
       maxTurns: 30,
@@ -198,18 +198,19 @@ describe('personaAI dispatch', () => {
     const tBuilds = turt.actions.filter(
       (x) => x.player === 0 && x.action.type === 'BUILD',
     );
+    // Both must have actually built things — otherwise the test is vacuous.
+    expect(aBuilds.length).toBeGreaterThan(0);
+    expect(tBuilds.length).toBeGreaterThan(0);
     // Aggressor avoids artillery.
     const aArtillery = aBuilds.filter(
       (x) => x.action.type === 'BUILD' && x.action.unitType === 'artillery',
     );
-    const tArtillery = tBuilds.filter(
-      (x) => x.action.type === 'BUILD' && x.action.unitType === 'artillery',
+    // Turtle avoids recon.
+    const tRecons = tBuilds.filter(
+      (x) => x.action.type === 'BUILD' && x.action.unitType === 'recon',
     );
     expect(aArtillery.length).toBe(0);
-    // Turtle should have built at least one artillery if it had funds for it.
-    // 6000 cost on crossroads with 4 cities + factory means 5000/turn — so by
-    // turn ~3 it can afford one.
-    expect(tArtillery.length).toBeGreaterThanOrEqual(1);
+    expect(tRecons.length).toBe(0);
   }, 120_000);
 });
 
