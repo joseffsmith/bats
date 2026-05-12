@@ -1,2 +1,191 @@
-// Pure (state, action) => state reducer. Populated in Phase 1.
-export {};
+// Pure (state, action) => state reducer.
+//
+// Contract:
+// - Always returns a new state object via `structuredClone`. Inputs never
+//   mutated.
+// - Illegal actions are NO-OPS: the original state is returned unchanged and
+//   the rejection reason is logged. (See validators.ts for rationale.)
+// - After every legal action (including END_TURN), the win condition is
+//   evaluated; if a winner is detected, `state.winner` is set. Once a winner
+//   is set, all subsequent actions are rejected.
+//
+// Action semantics (per PLAN.md):
+// - MOVE: validate path, relocate unit, mark hasMoved. Does not consume the
+//   unit's action. If the unit moves OFF a capturable tile, its
+//   captureProgress resets.
+// - ATTACK: applies damage, resolves counter, marks unit as
+//   hasMoved + hasActed. Removes destroyed units.
+// - CAPTURE: accumulates progress, possibly flips ownership, marks
+//   hasMoved + hasActed.
+// - BUILD: spawns a unit on the factory tile with hasMoved + hasActed (built
+//   units act next turn). Deducts funds.
+// - WAIT: marks hasMoved + hasActed.
+// - END_TURN: grants income to the *current* player, then advances
+//   currentPlayer, resets the new currentPlayer's units' flags, increments
+//   `turn`.
+
+import type { Action, GameState, PlayerId, Unit, UnitId } from './types';
+import { coordEq, isCapturable, otherPlayer, tileAt } from './types';
+import { isLegalAction } from './validators';
+import { log } from './logger';
+import { validatePath } from '../systems/pathfinding';
+import { resolveAttack } from '../systems/combat';
+import { resetCapture, resolveCapture } from '../systems/capture';
+import { grantIncome } from '../systems/economy';
+import { checkWinner } from '../systems/win';
+import { UNITS } from '../data-inline';
+
+export function reduce(state: GameState, action: Action): GameState {
+  log('engine', 'action dispatched', action);
+  if (state.winner !== null) {
+    log('engine', 'action rejected', { reason: 'game over', action });
+    return state;
+  }
+  const legality = isLegalAction(state, action);
+  if (!legality.legal) {
+    log('engine', 'action rejected', { reason: legality.reason, action });
+    return state;
+  }
+
+  const next: GameState = structuredClone(state);
+
+  switch (action.type) {
+    case 'MOVE':
+      applyMove(next, action);
+      break;
+    case 'ATTACK':
+      applyAttack(next, action);
+      break;
+    case 'CAPTURE':
+      applyCapture(next, action);
+      break;
+    case 'BUILD':
+      applyBuild(next, action);
+      break;
+    case 'WAIT':
+      applyWait(next, action);
+      break;
+    case 'END_TURN':
+      applyEndTurn(next);
+      break;
+  }
+
+  // Detect win after every action.
+  const winner = checkWinner(next);
+  if (winner !== null && next.winner === null) {
+    next.winner = winner;
+    log('engine', 'winner set', { winner });
+  }
+  return next;
+}
+
+function applyMove(
+  state: GameState,
+  action: Extract<Action, { type: 'MOVE' }>,
+): void {
+  const u = state.units[action.unitId];
+  if (!u) return;
+  const r = validatePath(state, u, action.path);
+  if (!r.ok) {
+    // Should have been caught by validator; bail safely.
+    log('engine', 'move validation failed in apply', { reason: r.reason });
+    return;
+  }
+  const dest = action.path[action.path.length - 1];
+  if (!dest) return;
+  const movedOff = !coordEq(dest, u.pos);
+  u.pos = { x: dest.x, y: dest.y };
+  u.hasMoved = true;
+  if (movedOff) resetCapture(u);
+  log('engine', 'unit moved', { id: u.id, to: u.pos, cost: r.cost });
+}
+
+function applyAttack(
+  state: GameState,
+  action: Extract<Action, { type: 'ATTACK' }>,
+): void {
+  const a = state.units[action.attackerId];
+  const t = state.units[action.targetId];
+  if (!a || !t) return;
+  const res = resolveAttack(state, a, t);
+  // Remove destroyed units.
+  if (res.defenderDestroyed) {
+    delete state.units[t.id];
+  }
+  if (res.attackerDestroyed) {
+    delete state.units[a.id];
+    return; // attacker gone, no flag updates needed
+  }
+  a.hasMoved = true;
+  a.hasActed = true;
+}
+
+function applyCapture(
+  state: GameState,
+  action: Extract<Action, { type: 'CAPTURE' }>,
+): void {
+  const u = state.units[action.unitId];
+  if (!u) return;
+  resolveCapture(state, u);
+  u.hasMoved = true;
+  u.hasActed = true;
+}
+
+function applyBuild(
+  state: GameState,
+  action: Extract<Action, { type: 'BUILD' }>,
+): void {
+  const cost = UNITS[action.unitType].cost;
+  const ps = state.players[action.owner];
+  ps.funds -= cost;
+  const id: UnitId = `u${state.nextUnitId++}`;
+  const unit: Unit = {
+    id,
+    type: action.unitType,
+    owner: action.owner,
+    pos: { x: action.at.x, y: action.at.y },
+    hp: 100,
+    hasMoved: true,
+    hasActed: true,
+    captureProgress: 0,
+  };
+  state.units[id] = unit;
+  log('engine', 'unit built', { id, type: action.unitType, at: action.at, cost });
+}
+
+function applyWait(
+  state: GameState,
+  action: Extract<Action, { type: 'WAIT' }>,
+): void {
+  const u = state.units[action.unitId];
+  if (!u) return;
+  u.hasMoved = true;
+  u.hasActed = true;
+  log('engine', 'unit waited', { id: u.id });
+}
+
+function applyEndTurn(state: GameState): void {
+  // 1. Income for the player whose turn just ended.
+  grantIncome(state, state.currentPlayer);
+  // 2. Advance.
+  const nextPlayer: PlayerId = otherPlayer(state.currentPlayer);
+  state.currentPlayer = nextPlayer;
+  // 3. Reset new currentPlayer's units' flags. Also reset captureProgress on
+  //    any of their units NOT standing on a capturable tile they don't own
+  //    (defensive — should already be 0 if invariants hold).
+  for (const u of Object.values(state.units)) {
+    if (u.owner !== nextPlayer) continue;
+    u.hasMoved = false;
+    u.hasActed = false;
+    const tile = tileAt(state.map, u.pos);
+    if (!isCapturable(tile.terrain) || tile.owner === u.owner) {
+      u.captureProgress = 0;
+    }
+  }
+  // 4. Bump turn counter (each END_TURN increments; two = a round).
+  state.turn += 1;
+  log('engine', 'turn ended', {
+    newCurrentPlayer: state.currentPlayer,
+    turn: state.turn,
+  });
+}
