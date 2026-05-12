@@ -1,1 +1,37 @@
-{}
+{
+  "infantry": {
+    "infantry": 55,
+    "recon": 12,
+    "tank": 5,
+    "artillery": 15,
+    "copter": 7
+  },
+  "recon": {
+    "infantry": 75,
+    "recon": 35,
+    "tank": 10,
+    "artillery": 35,
+    "copter": 55
+  },
+  "tank": {
+    "infantry": 75,
+    "recon": 85,
+    "tank": 55,
+    "artillery": 70,
+    "copter": 65
+  },
+  "artillery": {
+    "infantry": 90,
+    "recon": 80,
+    "tank": 70,
+    "artillery": 75,
+    "copter": 65
+  },
+  "copter": {
+    "infantry": 75,
+    "recon": 55,
+    "tank": 25,
+    "artillery": 65,
+    "copter": 65
+  }
+}

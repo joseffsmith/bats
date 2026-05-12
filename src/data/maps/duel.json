@@ -1,1 +1,35 @@
-{}
+{
+  "name": "duel",
+  "width": 12,
+  "height": 8,
+  "tiles": [
+    "............",
+    "...C....C...",
+    ".0...FF...1.",
+    ".a...FF...b.",
+    ".....FF.....",
+    ".....FF.....",
+    "...C....C...",
+    "............"
+  ],
+  "tileLegend": {
+    ".": { "terrain": "plain" },
+    "F": { "terrain": "forest" },
+    "C": { "terrain": "city" },
+    "M": { "terrain": "mountain" },
+    "R": { "terrain": "road" },
+    "S": { "terrain": "sea" },
+    "0": { "terrain": "hq", "owner": 0 },
+    "1": { "terrain": "hq", "owner": 1 },
+    "a": { "terrain": "factory", "owner": 0 },
+    "b": { "terrain": "factory", "owner": 1 }
+  },
+  "players": {
+    "0": { "funds": 0, "hq": { "x": 1, "y": 2 } },
+    "1": { "funds": 0, "hq": { "x": 10, "y": 2 } }
+  },
+  "units": [
+    { "type": "infantry", "owner": 0, "pos": { "x": 2, "y": 2 } },
+    { "type": "infantry", "owner": 1, "pos": { "x": 9, "y": 2 } }
+  ]
+}

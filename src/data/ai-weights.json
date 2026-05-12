@@ -1,1 +1,8 @@
-{}
+{
+  "damageDealt": 1.0,
+  "capture": 1.5,
+  "counterRisk": 0.8,
+  "futureThreat": 0.5,
+  "positional": 0.3,
+  "objective": 0.6
+}

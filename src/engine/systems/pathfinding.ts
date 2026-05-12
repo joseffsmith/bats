@@ -10,7 +10,7 @@
 
 import type { Coord, GameState, Unit } from '../core/types';
 import { coordEq, coordKey, inBounds, unitAt } from '../core/types';
-import { TERRAIN, UNITS } from '../data-inline';
+import { TERRAIN, UNITS } from '../data';
 
 export type ReachableTile = {
   coord: Coord;

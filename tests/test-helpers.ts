@@ -8,6 +8,7 @@ import type { InitialMapSpec } from '../src/engine/core/initial-state';
 setLogEnabled('engine', false);
 setLogEnabled('ai', false);
 setLogEnabled('render', false);
+setLogEnabled('match', false);
 
 export function makeState(spec: InitialMapSpec): ReturnType<typeof createInitialState> {
   return createInitialState(spec);

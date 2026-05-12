@@ -1,1 +1,52 @@
-{}
+[
+  {
+    "type": "infantry",
+    "cost": 1000,
+    "move": 3,
+    "movementClass": "foot",
+    "minRange": 1,
+    "maxRange": 1,
+    "canCapture": true,
+    "indirect": false
+  },
+  {
+    "type": "recon",
+    "cost": 4000,
+    "move": 8,
+    "movementClass": "wheel",
+    "minRange": 1,
+    "maxRange": 1,
+    "canCapture": false,
+    "indirect": false
+  },
+  {
+    "type": "tank",
+    "cost": 7000,
+    "move": 6,
+    "movementClass": "tread",
+    "minRange": 1,
+    "maxRange": 1,
+    "canCapture": false,
+    "indirect": false
+  },
+  {
+    "type": "artillery",
+    "cost": 6000,
+    "move": 5,
+    "movementClass": "tread",
+    "minRange": 2,
+    "maxRange": 3,
+    "canCapture": false,
+    "indirect": true
+  },
+  {
+    "type": "copter",
+    "cost": 9000,
+    "move": 6,
+    "movementClass": "air",
+    "minRange": 1,
+    "maxRange": 1,
+    "canCapture": false,
+    "indirect": false
+  }
+]

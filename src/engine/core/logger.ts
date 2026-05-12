@@ -9,12 +9,13 @@
 // and the category, e.g.:
 //   [2026-05-12T10:23:45.123Z][engine] action applied { type: 'MOVE', unitId: 'u1' }
 
-export type LogCategory = 'engine' | 'ai' | 'render';
+export type LogCategory = 'engine' | 'ai' | 'render' | 'match';
 
 const enabled: Record<LogCategory, boolean> = {
   engine: true,
   ai: true,
   render: false,
+  match: true,
 };
 
 export function setLogEnabled(category: LogCategory, value: boolean): void {

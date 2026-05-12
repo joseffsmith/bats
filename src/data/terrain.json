@@ -1,1 +1,42 @@
-{}
+[
+  {
+    "terrain": "plain",
+    "defenseStars": 1,
+    "moveCost": { "foot": 1, "wheel": 2, "tread": 1, "air": 1, "sea": null }
+  },
+  {
+    "terrain": "road",
+    "defenseStars": 0,
+    "moveCost": { "foot": 1, "wheel": 1, "tread": 1, "air": 1, "sea": null }
+  },
+  {
+    "terrain": "forest",
+    "defenseStars": 2,
+    "moveCost": { "foot": 1, "wheel": 3, "tread": 2, "air": 1, "sea": null }
+  },
+  {
+    "terrain": "mountain",
+    "defenseStars": 4,
+    "moveCost": { "foot": 2, "wheel": null, "tread": null, "air": 1, "sea": null }
+  },
+  {
+    "terrain": "sea",
+    "defenseStars": 0,
+    "moveCost": { "foot": null, "wheel": null, "tread": null, "air": 1, "sea": 1 }
+  },
+  {
+    "terrain": "city",
+    "defenseStars": 3,
+    "moveCost": { "foot": 1, "wheel": 1, "tread": 1, "air": 1, "sea": null }
+  },
+  {
+    "terrain": "hq",
+    "defenseStars": 4,
+    "moveCost": { "foot": 1, "wheel": 1, "tread": 1, "air": 1, "sea": null }
+  },
+  {
+    "terrain": "factory",
+    "defenseStars": 3,
+    "moveCost": { "foot": 1, "wheel": 1, "tread": 1, "air": 1, "sea": null }
+  }
+]

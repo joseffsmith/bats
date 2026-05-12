@@ -3,7 +3,7 @@
     "target": "ES2022",
     "module": "ESNext",
     "lib": ["ES2022", "DOM"],
-    "types": ["vite/client"],
+    "types": ["vite/client", "node"],
     "skipLibCheck": true,
 
     /* Bundler mode */
@@ -13,6 +13,7 @@
     "moduleDetection": "force",
     "noEmit": true,
     "isolatedModules": true,
+    "resolveJsonModule": true,
 
     /* Strictness */
     "strict": true,

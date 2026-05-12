@@ -1,1 +1,37 @@
-{}
+{
+  "name": "crossroads",
+  "width": 16,
+  "height": 10,
+  "tiles": [
+    "................",
+    ".a.....C......b.",
+    "..C..F....F..C..",
+    "................",
+    ".0......RR....1.",
+    "........RR......",
+    "..C..F....F..C..",
+    "................",
+    ".a......C.....b.",
+    "................"
+  ],
+  "tileLegend": {
+    ".": { "terrain": "plain" },
+    "F": { "terrain": "forest" },
+    "C": { "terrain": "city" },
+    "M": { "terrain": "mountain" },
+    "R": { "terrain": "road" },
+    "S": { "terrain": "sea" },
+    "0": { "terrain": "hq", "owner": 0 },
+    "1": { "terrain": "hq", "owner": 1 },
+    "a": { "terrain": "factory", "owner": 0 },
+    "b": { "terrain": "factory", "owner": 1 }
+  },
+  "players": {
+    "0": { "funds": 0, "hq": { "x": 1, "y": 4 } },
+    "1": { "funds": 0, "hq": { "x": 14, "y": 4 } }
+  },
+  "units": [
+    { "type": "infantry", "owner": 0, "pos": { "x": 2, "y": 4 } },
+    { "type": "infantry", "owner": 1, "pos": { "x": 13, "y": 4 } }
+  ]
+}

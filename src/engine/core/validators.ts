@@ -5,7 +5,7 @@
 
 import type { Action, GameState, LegalityResult, Unit } from './types';
 import { coordEq, inBounds, isCapturable, manhattan, tileAt, unitAt } from './types';
-import { UNITS } from '../data-inline';
+import { UNITS } from '../data';
 import { validatePath } from '../systems/pathfinding';
 
 function findUnit(state: GameState, id: string): Unit | undefined {

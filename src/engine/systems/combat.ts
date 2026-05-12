@@ -9,7 +9,7 @@
 
 import type { GameState, Unit } from '../core/types';
 import { manhattan, tileAt } from '../core/types';
-import { DAMAGE, TERRAIN, UNITS } from '../data-inline';
+import { DAMAGE, TERRAIN, UNITS } from '../data';
 import { log } from '../core/logger';
 
 /** Compute the integer HP-damage `attacker` deals to `defender` at their current HPs and positions. */

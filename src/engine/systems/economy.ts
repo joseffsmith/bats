@@ -1,7 +1,7 @@
 // Income at end of turn + build legality + unit cost lookup.
 
 import type { GameState, PlayerId, UnitType } from '../core/types';
-import { INCOME_PER_PROPERTY, INCOME_TERRAIN, UNITS } from '../data-inline';
+import { INCOME_PER_PROPERTY, INCOME_TERRAIN, UNITS } from '../data';
 import { log } from '../core/logger';
 
 export function unitCost(type: UnitType): number {

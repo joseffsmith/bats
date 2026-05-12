@@ -10,7 +10,7 @@
 
 import type { GameState, Unit } from '../core/types';
 import { isCapturable, tileAt } from '../core/types';
-import { CAPTURE_THRESHOLD } from '../data-inline';
+import { CAPTURE_THRESHOLD } from '../data';
 import { log } from '../core/logger';
 
 export type CaptureResult = {

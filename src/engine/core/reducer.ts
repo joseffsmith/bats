@@ -33,7 +33,7 @@ import { resolveAttack } from '../systems/combat';
 import { resetCapture, resolveCapture } from '../systems/capture';
 import { grantIncome } from '../systems/economy';
 import { checkWinner } from '../systems/win';
-import { UNITS } from '../data-inline';
+import { UNITS } from '../data';
 
 export function reduce(state: GameState, action: Action): GameState {
   log('engine', 'action dispatched', action);

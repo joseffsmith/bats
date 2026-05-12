@@ -2,7 +2,7 @@
 
 import type { Coord, GameState, Unit, UnitId } from '../core/types';
 import { inBounds, manhattan, unitAt } from '../core/types';
-import { UNITS } from '../data-inline';
+import { UNITS } from '../data';
 import { reachableTiles } from '../systems/pathfinding';
 import type { ReachableTile } from '../systems/pathfinding';
 
