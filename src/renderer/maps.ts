@@ -9,14 +9,24 @@ import duelMap from '../data/maps/duel.json';
 import crossroadsMap from '../data/maps/crossroads.json';
 import islandHopMap from '../data/maps/island_hop.json';
 import canyonMap from '../data/maps/canyon.json';
+import highlandsMap from '../data/maps/highlands.json';
+import armadaMap from '../data/maps/armada.json';
 
-export type MapName = 'duel' | 'crossroads' | 'island_hop' | 'canyon';
+export type MapName =
+  | 'duel'
+  | 'crossroads'
+  | 'island_hop'
+  | 'canyon'
+  | 'highlands'
+  | 'armada';
 
 export const MAP_NAMES: ReadonlyArray<MapName> = [
   'duel',
   'crossroads',
   'island_hop',
   'canyon',
+  'highlands',
+  'armada',
 ];
 
 export const DEFAULT_MAP: MapName = 'duel';
@@ -26,6 +36,8 @@ export const MAPS: Record<MapName, unknown> = {
   crossroads: crossroadsMap,
   island_hop: islandHopMap,
   canyon: canyonMap,
+  highlands: highlandsMap,
+  armada: armadaMap,
 };
 
 /** Validate a raw string against the known map names; returns DEFAULT_MAP on

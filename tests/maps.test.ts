@@ -12,13 +12,17 @@ import duelMap from '../src/data/maps/duel.json';
 import crossroadsMap from '../src/data/maps/crossroads.json';
 import islandHopMap from '../src/data/maps/island_hop.json';
 import canyonMap from '../src/data/maps/canyon.json';
-import type { GameState, TerrainType } from '../src/engine/core/types';
+import highlandsMap from '../src/data/maps/highlands.json';
+import armadaMap from '../src/data/maps/armada.json';
+import type { GameState, TerrainType, UnitType } from '../src/engine/core/types';
 
 const ALL_MAPS = [
   { name: 'duel', json: duelMap as unknown },
   { name: 'crossroads', json: crossroadsMap as unknown },
   { name: 'island_hop', json: islandHopMap as unknown },
   { name: 'canyon', json: canyonMap as unknown },
+  { name: 'highlands', json: highlandsMap as unknown },
+  { name: 'armada', json: armadaMap as unknown },
 ] as const;
 
 function countTerrain(state: GameState, t: TerrainType): number {
@@ -100,5 +104,100 @@ describe('map data', () => {
     expect(countTerrain(state, 'mountain')).toBeGreaterThanOrEqual(20);
     // Central chokepoint city at (7,5).
     expect(state.map[5]![7]!.terrain).toBe('city');
+  });
+
+  it('highlands is fully landlocked with a mountain spine and air-focused roster', () => {
+    const state = loadMap(highlandsMap as unknown);
+    // No sea tiles anywhere — air superiority matters, naval is out by design.
+    expect(countTerrain(state, 'sea')).toBe(0);
+    // Substantial mountain spine across the middle.
+    expect(countTerrain(state, 'mountain')).toBeGreaterThanOrEqual(15);
+    // Both players own two factories each, all inland (no sea-adjacent).
+    let p0Factories = 0;
+    let p1Factories = 0;
+    for (let y = 0; y < state.map.length; y++) {
+      for (let x = 0; x < state.map[0]!.length; x++) {
+        const t = state.map[y]![x]!;
+        if (t.terrain !== 'factory') continue;
+        if (t.owner === 0) p0Factories += 1;
+        else if (t.owner === 1) p1Factories += 1;
+      }
+    }
+    expect(p0Factories).toBe(2);
+    expect(p1Factories).toBe(2);
+
+    // Roster per player: infantry, tank, copter, fighter.
+    const countByOwnerType = new Map<string, number>();
+    for (const u of Object.values(state.units)) {
+      const k = `${u.owner}:${u.type}`;
+      countByOwnerType.set(k, (countByOwnerType.get(k) ?? 0) + 1);
+    }
+    for (const owner of [0, 1] as const) {
+      for (const type of ['infantry', 'tank', 'copter', 'fighter'] as UnitType[]) {
+        expect(countByOwnerType.get(`${owner}:${type}`)).toBe(1);
+      }
+    }
+  });
+
+  it('armada has wide central sea with at least one coastal factory per side', () => {
+    const state = loadMap(armadaMap as unknown);
+    const height = state.map.length;
+    const width = state.map[0]!.length;
+    expect(width).toBeGreaterThanOrEqual(18);
+    // Sea-heavy map — at least half the tiles are sea.
+    const seaTiles = countTerrain(state, 'sea');
+    expect(seaTiles).toBeGreaterThanOrEqual((width * height) / 2);
+
+    // For each owner, locate factories and check at least one is coastal and
+    // at least one is inland.
+    const isSea = (x: number, y: number): boolean => {
+      const row = state.map[y];
+      if (!row) return false;
+      const t = row[x];
+      return t !== undefined && t.terrain === 'sea';
+    };
+    for (const owner of [0, 1] as const) {
+      let coastal = 0;
+      let inland = 0;
+      let factories = 0;
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const t = state.map[y]![x]!;
+          if (t.terrain !== 'factory' || t.owner !== owner) continue;
+          factories += 1;
+          const seaAdj =
+            isSea(x - 1, y) || isSea(x + 1, y) || isSea(x, y - 1) || isSea(x, y + 1);
+          if (seaAdj) coastal += 1;
+          else inland += 1;
+        }
+      }
+      expect(factories).toBeGreaterThanOrEqual(2);
+      expect(coastal).toBeGreaterThanOrEqual(1);
+      expect(inland).toBeGreaterThanOrEqual(1);
+    }
+
+    // Naval starting roster per player: transport, cruiser, battleship, submarine, infantry.
+    const countByOwnerType = new Map<string, number>();
+    for (const u of Object.values(state.units)) {
+      const k = `${u.owner}:${u.type}`;
+      countByOwnerType.set(k, (countByOwnerType.get(k) ?? 0) + 1);
+    }
+    for (const owner of [0, 1] as const) {
+      for (const type of [
+        'infantry',
+        'transport',
+        'cruiser',
+        'battleship',
+        'submarine',
+      ] as UnitType[]) {
+        expect(countByOwnerType.get(`${owner}:${type}`)).toBe(1);
+      }
+    }
+
+    // Central island with neutral cities reachable only by sea drop or copter.
+    expect(state.map[6]![9]!.terrain).toBe('city');
+    expect(state.map[6]![10]!.terrain).toBe('city');
+    expect(state.map[6]![9]!.owner).toBeNull();
+    expect(state.map[6]![10]!.owner).toBeNull();
   });
 });

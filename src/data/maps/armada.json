@@ -1,0 +1,47 @@
+{
+  "name": "armada",
+  "width": 20,
+  "height": 12,
+  "tiles": [
+    "....SSSSSSSSSSSS....",
+    ".C..SSSSSSSSSSSS..C.",
+    ".0..SSSSSSSSSSSS..1.",
+    ".F..SSSSSSSSSSSS..F.",
+    ".a..SSSSSSSSSSSS..b.",
+    "....SSSSSSSSSSSS....",
+    "....SSSSSCCSSSSS....",
+    "....SSSSS..SSSSS....",
+    "....SSSSSSSSSSSS....",
+    "...aSSSSSSSSSSSSb...",
+    ".C..SSSSSSSSSSSS..C.",
+    "....SSSSSSSSSSSS...."
+  ],
+  "tileLegend": {
+    ".": { "terrain": "plain" },
+    "F": { "terrain": "forest" },
+    "C": { "terrain": "city" },
+    "M": { "terrain": "mountain" },
+    "R": { "terrain": "road" },
+    "S": { "terrain": "sea" },
+    "0": { "terrain": "hq", "owner": 0 },
+    "1": { "terrain": "hq", "owner": 1 },
+    "a": { "terrain": "factory", "owner": 0 },
+    "b": { "terrain": "factory", "owner": 1 }
+  },
+  "players": {
+    "0": { "funds": 0, "hq": { "x": 1, "y": 2 } },
+    "1": { "funds": 0, "hq": { "x": 18, "y": 2 } }
+  },
+  "units": [
+    { "type": "infantry", "owner": 0, "pos": { "x": 2, "y": 2 } },
+    { "type": "transport", "owner": 0, "pos": { "x": 4, "y": 2 } },
+    { "type": "submarine", "owner": 0, "pos": { "x": 4, "y": 3 } },
+    { "type": "cruiser", "owner": 0, "pos": { "x": 4, "y": 5 } },
+    { "type": "battleship", "owner": 0, "pos": { "x": 4, "y": 8 } },
+    { "type": "infantry", "owner": 1, "pos": { "x": 17, "y": 2 } },
+    { "type": "transport", "owner": 1, "pos": { "x": 15, "y": 2 } },
+    { "type": "submarine", "owner": 1, "pos": { "x": 15, "y": 3 } },
+    { "type": "cruiser", "owner": 1, "pos": { "x": 15, "y": 5 } },
+    { "type": "battleship", "owner": 1, "pos": { "x": 15, "y": 8 } }
+  ]
+}
