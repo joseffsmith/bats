@@ -116,6 +116,23 @@ function checkBuild(
   if (tile.terrain !== 'factory') return illegal('tile is not a factory');
   if (tile.owner !== action.owner) return illegal('factory not owned by player');
   if (unitAt(state, action.at)) return illegal('factory occupied');
+  // Sea-class units can only launch from a factory with an adjacent sea tile,
+  // otherwise they'd spawn stranded on land they can't traverse.
+  if (UNITS[action.unitType].movementClass === 'sea') {
+    const adj = [
+      { x: action.at.x - 1, y: action.at.y },
+      { x: action.at.x + 1, y: action.at.y },
+      { x: action.at.x, y: action.at.y - 1 },
+      { x: action.at.x, y: action.at.y + 1 },
+    ];
+    const coastal = adj.some((n) => {
+      const row = state.map[n.y];
+      if (!row) return false;
+      const t = row[n.x];
+      return t !== undefined && t.terrain === 'sea';
+    });
+    if (!coastal) return illegal('sea-class unit needs adjacent sea tile');
+  }
   const cost = UNITS[action.unitType].cost;
   const funds = state.players[action.owner].funds;
   if (funds < cost) return illegal(`insufficient funds (${funds} < ${cost})`);

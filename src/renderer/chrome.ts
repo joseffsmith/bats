@@ -1184,6 +1184,7 @@ function ensureStyle(): void {
   pointer-events: auto;
   animation: winner-fade 0.5s ease both;
 }
+.winner-overlay[hidden] { display: none; }
 @keyframes winner-fade {
   from { opacity: 0; }
   to   { opacity: 1; }

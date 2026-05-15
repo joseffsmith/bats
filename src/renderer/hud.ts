@@ -26,9 +26,9 @@ const UNIT_LETTER: Record<UnitType, string> = {
   transport: 'X',
 };
 
-// Transports are buildable from any factory in this first pass. A future
-// iteration may restrict transports to coastal factories (factories with a
-// sea tile within Manhattan distance 1) so they can actually launch.
+// Transports are sea-class, so they can only launch from a factory that has a
+// sea tile within Manhattan distance 1. Otherwise a player could build a
+// transport on a landlocked factory and be unable to move it.
 const BUILDABLE: ReadonlyArray<UnitType> = [
   'infantry',
   'recon',
@@ -37,6 +37,22 @@ const BUILDABLE: ReadonlyArray<UnitType> = [
   'copter',
   'transport',
 ];
+
+function isCoastalFactory(state: GameState, at: { x: number; y: number }): boolean {
+  const neighbours = [
+    { x: at.x - 1, y: at.y },
+    { x: at.x + 1, y: at.y },
+    { x: at.x, y: at.y - 1 },
+    { x: at.x, y: at.y + 1 },
+  ];
+  for (const n of neighbours) {
+    const row = state.map[n.y];
+    if (!row) continue;
+    const tile = row[n.x];
+    if (tile && tile.terrain === 'sea') return true;
+  }
+  return false;
+}
 
 export type HudHitTarget =
   | { kind: 'action-menu'; entry: ActionMenuEntry }
@@ -228,10 +244,17 @@ function drawBuildMenu(
 
 // ─────────────────────────── Build menu factory ──────────────────────────────
 
-export function buildMenuEntries(state: GameState, owner: PlayerId): BuildMenuEntry[] {
+export function buildMenuEntries(
+  state: GameState,
+  owner: PlayerId,
+  at: { x: number; y: number },
+): BuildMenuEntry[] {
   const funds = state.players[owner].funds;
+  const coastal = isCoastalFactory(state, at);
   const entries: BuildMenuEntry[] = [];
   for (const type of BUILDABLE) {
+    // Transports need a sea tile next door to launch.
+    if (type === 'transport' && !coastal) continue;
     const cost = UNITS[type].cost;
     entries.push({
       unitType: type,

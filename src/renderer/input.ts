@@ -347,7 +347,7 @@ export function createInputController(
           t.owner === state.currentPlayer &&
           !occupant
         ) {
-          const entries = buildMenuEntries(state, state.currentPlayer);
+          const entries = buildMenuEntries(state, state.currentPlayer, tile);
           log('render', 'build menu open', { tile });
           setState({ kind: 'build-menu-open', tile, entries }, 'idle');
           return;
