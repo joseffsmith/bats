@@ -12,8 +12,8 @@ import { createSpriteCache } from '../src/renderer/sprites';
 describe('sprite cache', () => {
   it('contains entries for every (type, owner, variant) tuple', () => {
     const cache = createSpriteCache();
-    // 12 types * 2 owners * 2 variants = 48 entries.
-    expect(cache.size()).toBe(12 * 2 * 2);
+    // 14 types * 2 owners * 2 variants = 56 entries.
+    expect(cache.size()).toBe(14 * 2 * 2);
     const keys = cache.keys();
     expect(keys).toContain('infantry-0-clean');
     expect(keys).toContain('infantry-0-damaged');
@@ -28,6 +28,11 @@ describe('sprite cache', () => {
     expect(keys).toContain('cruiser-1-clean');
     expect(keys).toContain('aatank-0-damaged');
     expect(keys).toContain('lander-1-clean');
+    // Tier-3 stealth additions.
+    expect(keys).toContain('submarine-0-clean');
+    expect(keys).toContain('submarine-1-damaged');
+    expect(keys).toContain('carrier-0-clean');
+    expect(keys).toContain('carrier-1-damaged');
   });
 
   it('get() returns a CanvasImageSource and throws on missing keys', () => {

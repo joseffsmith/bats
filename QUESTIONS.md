@@ -151,3 +151,25 @@ Questions and assumptions logged during autonomous execution. Resolved questions
   and (b) include transports in `enumerateBuilds` with a coastal-
   factory heuristic. Until then, re-adding island_hop to the tournament
   is gated on AI behaviour, not engine support.
+
+- **Submarine stealth + carrier air cargo; AI integration deferred.**
+  Tier-3 added `submarine` (cost 16000, move 5, sea, melee) and
+  `carrier` (cost 22000, move 5, sea, capacity 2 for air-class cargo).
+  Submarines carry a persistent `submerged` flag toggled by new DIVE /
+  SURFACE actions; while submerged the sub is filtered out of
+  `attackableTargets` for non-cruiser/non-submarine attackers and
+  hidden from the renderer for any viewer without a cruiser/submarine
+  within Manhattan distance 1. The utility AI does NOT yet (a) DIVE
+  its own subs, (b) recognise that a submerged enemy sub is a threat
+  it cannot see, or (c) load fighters/bombers onto carriers. The
+  random AI may DIVE/SURFACE only by accident (the candidate
+  generator yields WAIT for subs, not DIVE — so for now random subs
+  never dive). Follow-up tasks:
+    - Extend `generateCandidates` to yield DIVE/SURFACE follow-ups
+      for subs, gated on simple heuristics (DIVE when enemy cruiser
+      in range; SURFACE when alone + want to attack).
+    - Teach the utility AI to factor stealth into `futureThreat`
+      (submerged subs contribute zero projected damage from any
+      non-cruiser observer; cruisers and friendly subs see them).
+    - Extend `enumerateBuilds` with carriers + submarines on coastal
+      factories under a budget heuristic.

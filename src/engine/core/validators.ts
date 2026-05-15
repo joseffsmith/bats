@@ -34,11 +34,43 @@ export function isLegalAction(state: GameState, action: Action): LegalityResult 
       return checkLoad(state, action);
     case 'UNLOAD':
       return checkUnload(state, action);
+    case 'DIVE':
+      return checkDive(state, action);
+    case 'SURFACE':
+      return checkSurface(state, action);
     case 'END_TURN':
       return { legal: true };
     default:
       return illegal('unknown action type');
   }
+}
+
+function checkDive(
+  state: GameState,
+  action: Extract<Action, { type: 'DIVE' }>,
+): LegalityResult {
+  const u = findUnit(state, action.unitId);
+  if (!u) return illegal('unknown unit');
+  if (u.owner !== state.currentPlayer) return illegal('not owner');
+  if (u.type !== 'submarine') return illegal('unit is not a submarine');
+  if (u.loadedIn !== undefined) return illegal('unit is loaded in a transport');
+  if (u.hasActed) return illegal('unit already acted');
+  if (u.submerged === true) return illegal('submarine already submerged');
+  return { legal: true };
+}
+
+function checkSurface(
+  state: GameState,
+  action: Extract<Action, { type: 'SURFACE' }>,
+): LegalityResult {
+  const u = findUnit(state, action.unitId);
+  if (!u) return illegal('unknown unit');
+  if (u.owner !== state.currentPlayer) return illegal('not owner');
+  if (u.type !== 'submarine') return illegal('unit is not a submarine');
+  if (u.loadedIn !== undefined) return illegal('unit is loaded in a transport');
+  if (u.hasActed) return illegal('unit already acted');
+  if (u.submerged !== true) return illegal('submarine is not submerged');
+  return { legal: true };
 }
 
 function checkMove(

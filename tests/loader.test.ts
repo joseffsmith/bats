@@ -38,6 +38,8 @@ const UNIT_TYPES: UnitType[] = [
   'cruiser',
   'aatank',
   'lander',
+  'submarine',
+  'carrier',
 ];
 const TERRAIN_TYPES: TerrainType[] = [
   'plain',

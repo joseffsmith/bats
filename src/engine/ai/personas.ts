@@ -73,6 +73,8 @@ const UNIT_TYPES_ALL: ReadonlyArray<UnitType> = [
   'cruiser',
   'aatank',
   'lander',
+  'submarine',
+  'carrier',
 ];
 
 function fail(path: string, msg: string): never {

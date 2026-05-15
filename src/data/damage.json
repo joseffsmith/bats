@@ -11,7 +11,9 @@
     "battleship": 0,
     "cruiser": 0,
     "aatank": 5,
-    "lander": 14
+    "lander": 14,
+    "submarine": 0,
+    "carrier": 0
   },
   "recon": {
     "infantry": 75,
@@ -25,7 +27,9 @@
     "battleship": 0,
     "cruiser": 0,
     "aatank": 8,
-    "lander": 35
+    "lander": 35,
+    "submarine": 0,
+    "carrier": 0
   },
   "tank": {
     "infantry": 75,
@@ -39,7 +43,9 @@
     "battleship": 0,
     "cruiser": 0,
     "aatank": 45,
-    "lander": 60
+    "lander": 60,
+    "submarine": 0,
+    "carrier": 0
   },
   "artillery": {
     "infantry": 90,
@@ -53,7 +59,9 @@
     "battleship": 40,
     "cruiser": 50,
     "aatank": 70,
-    "lander": 55
+    "lander": 55,
+    "submarine": 0,
+    "carrier": 45
   },
   "copter": {
     "infantry": 75,
@@ -67,7 +75,9 @@
     "battleship": 25,
     "cruiser": 5,
     "aatank": 20,
-    "lander": 55
+    "lander": 55,
+    "submarine": 0,
+    "carrier": 55
   },
   "transport": {
     "infantry": 0,
@@ -81,7 +91,9 @@
     "battleship": 0,
     "cruiser": 0,
     "aatank": 0,
-    "lander": 0
+    "lander": 0,
+    "submarine": 0,
+    "carrier": 0
   },
   "fighter": {
     "infantry": 0,
@@ -95,7 +107,9 @@
     "battleship": 5,
     "cruiser": 5,
     "aatank": 0,
-    "lander": 5
+    "lander": 5,
+    "submarine": 0,
+    "carrier": 5
   },
   "bomber": {
     "infantry": 110,
@@ -109,7 +123,9 @@
     "battleship": 75,
     "cruiser": 75,
     "aatank": 95,
-    "lander": 80
+    "lander": 80,
+    "submarine": 0,
+    "carrier": 80
   },
   "battleship": {
     "infantry": 95,
@@ -123,7 +139,9 @@
     "battleship": 100,
     "cruiser": 95,
     "aatank": 100,
-    "lander": 95
+    "lander": 95,
+    "submarine": 75,
+    "carrier": 100
   },
   "cruiser": {
     "infantry": 0,
@@ -137,7 +155,9 @@
     "battleship": 30,
     "cruiser": 25,
     "aatank": 0,
-    "lander": 25
+    "lander": 25,
+    "submarine": 105,
+    "carrier": 25
   },
   "aatank": {
     "infantry": 60,
@@ -151,7 +171,9 @@
     "battleship": 0,
     "cruiser": 5,
     "aatank": 45,
-    "lander": 5
+    "lander": 5,
+    "submarine": 0,
+    "carrier": 5
   },
   "lander": {
     "infantry": 0,
@@ -165,6 +187,40 @@
     "battleship": 0,
     "cruiser": 0,
     "aatank": 0,
-    "lander": 0
+    "lander": 0,
+    "submarine": 0,
+    "carrier": 0
+  },
+  "submarine": {
+    "infantry": 0,
+    "recon": 0,
+    "tank": 0,
+    "artillery": 0,
+    "copter": 0,
+    "transport": 90,
+    "fighter": 0,
+    "bomber": 0,
+    "battleship": 95,
+    "cruiser": 80,
+    "aatank": 0,
+    "lander": 90,
+    "submarine": 80,
+    "carrier": 95
+  },
+  "carrier": {
+    "infantry": 0,
+    "recon": 0,
+    "tank": 0,
+    "artillery": 0,
+    "copter": 0,
+    "transport": 0,
+    "fighter": 0,
+    "bomber": 0,
+    "battleship": 0,
+    "cruiser": 0,
+    "aatank": 0,
+    "lander": 0,
+    "submarine": 0,
+    "carrier": 0
   }
 }

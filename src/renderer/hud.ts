@@ -18,10 +18,11 @@ import type {
 } from './canvas';
 
 // Build-menu icon letters. Each unit type gets a unique letter; the existing
-// 6 keep their letters, the new 6 take F/B/S/U/K/L (chosen to avoid clashes
-// with recon=R, artillery=A and transport=X). See README/PLAN for the full
-// mapping. The renderer's tile-letter fallback in canvas.ts uses the same
-// table.
+// roster keeps its letters. Tier-3 stealth additions: submarine = M
+// (sub**M**arine — "S" is taken by battleship and "U" by cruiser) and
+// carrier = V (Vessel; clearer than C which already means copter). See
+// README/PLAN for the full mapping. The renderer's tile-letter fallback in
+// canvas.ts uses the same table.
 const UNIT_LETTER: Record<UnitType, string> = {
   infantry: 'I',
   recon: 'R',
@@ -35,6 +36,8 @@ const UNIT_LETTER: Record<UnitType, string> = {
   cruiser: 'U',
   aatank: 'K',
   lander: 'L',
+  submarine: 'M',
+  carrier: 'V',
 };
 
 // Sea-class units (transport, battleship, cruiser, lander) can only launch
@@ -54,6 +57,8 @@ const BUILDABLE: ReadonlyArray<UnitType> = [
   'lander',
   'cruiser',
   'battleship',
+  'submarine',
+  'carrier',
 ];
 
 function isCoastalFactory(state: GameState, at: { x: number; y: number }): boolean {

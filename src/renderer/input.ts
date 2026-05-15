@@ -317,6 +317,12 @@ export function createInputController(
           { kind: 'unload-targeting', transport: carrier, cargo, destinations },
           'action-menu',
         );
+      } else if (entry.label === 'Dive') {
+        commit({ type: 'DIVE', unitId: unit.id });
+        setState({ kind: 'idle' }, 'action-menu');
+      } else if (entry.label === 'Surface') {
+        commit({ type: 'SURFACE', unitId: unit.id });
+        setState({ kind: 'idle' }, 'action-menu');
       }
       return;
     }
@@ -587,6 +593,17 @@ function computeActionMenuEntries(
     if (cargo) {
       const dests = adjacentUnloadDestinations(state, unit, cargo);
       if (dests.length > 0) entries.push({ label: 'Unload', enabled: true });
+    }
+  }
+
+  // Dive / Surface: submarines toggle their stealth state. Only one of the
+  // two labels appears depending on current state. Mutually exclusive with
+  // Attack/Capture/Unload since the sub spends its whole action.
+  if (!unit.hasActed && unit.type === 'submarine') {
+    if (unit.submerged === true) {
+      entries.push({ label: 'Surface', enabled: true });
+    } else {
+      entries.push({ label: 'Dive', enabled: true });
     }
   }
 

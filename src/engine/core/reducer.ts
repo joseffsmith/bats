@@ -71,6 +71,12 @@ export function reduce(state: GameState, action: Action): GameState {
     case 'UNLOAD':
       applyUnload(next, action);
       break;
+    case 'DIVE':
+      applyDive(next, action);
+      break;
+    case 'SURFACE':
+      applySurface(next, action);
+      break;
     case 'END_TURN':
       applyEndTurn(next);
       break;
@@ -235,6 +241,30 @@ function applyUnload(
     transport: transport.id,
     to: cargo.pos,
   });
+}
+
+function applyDive(
+  state: GameState,
+  action: Extract<Action, { type: 'DIVE' }>,
+): void {
+  const u = state.units[action.unitId];
+  if (!u) return;
+  u.submerged = true;
+  u.hasMoved = true;
+  u.hasActed = true;
+  log('engine', 'unit dived', { id: u.id });
+}
+
+function applySurface(
+  state: GameState,
+  action: Extract<Action, { type: 'SURFACE' }>,
+): void {
+  const u = state.units[action.unitId];
+  if (!u) return;
+  u.submerged = false;
+  u.hasMoved = true;
+  u.hasActed = true;
+  log('engine', 'unit surfaced', { id: u.id });
 }
 
 function applyEndTurn(state: GameState): void {

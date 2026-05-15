@@ -122,5 +122,27 @@
     "indirect": false,
     "cargoCapacity": 1,
     "cargoMovementClasses": ["foot", "wheel", "tread"]
+  },
+  {
+    "type": "submarine",
+    "cost": 16000,
+    "move": 5,
+    "movementClass": "sea",
+    "minRange": 1,
+    "maxRange": 1,
+    "canCapture": false,
+    "indirect": false
+  },
+  {
+    "type": "carrier",
+    "cost": 22000,
+    "move": 5,
+    "movementClass": "sea",
+    "minRange": 0,
+    "maxRange": 0,
+    "canCapture": false,
+    "indirect": false,
+    "cargoCapacity": 2,
+    "cargoMovementClasses": ["air"]
   }
 ]

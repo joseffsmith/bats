@@ -17,7 +17,9 @@ export type UnitType =
   | 'battleship'
   | 'cruiser'
   | 'aatank'
-  | 'lander';
+  | 'lander'
+  | 'submarine'
+  | 'carrier';
 
 export type TerrainType =
   | 'plain'
@@ -50,6 +52,14 @@ export type Unit = {
   // Back-pointer set on a loaded unit: the id of the carrying transport.
   // Absent on free-standing units. Cleared on UNLOAD.
   loadedIn?: UnitId;
+  // ── Submarine stealth ───────────────────────────────────────────────────
+  // Only meaningful on `type === 'submarine'`. When true the sub is dived
+  // and hidden from observers without a cruiser or submarine within
+  // Manhattan distance 1. Persists across turns until a SURFACE action
+  // toggles it off. `unitAt` (engine truth) still sees the sub on its tile;
+  // `visibleUnitAt` is the viewer-aware variant used by the renderer/input
+  // layer. See selectors.ts.
+  submerged?: boolean;
 };
 
 export type Tile = {
@@ -88,6 +98,13 @@ export type Action =
   // Standard AW rule: both the transport AND the unloaded cargo are marked
   // hasActed (cargo cannot move again that turn).
   | { type: 'UNLOAD'; transportId: UnitId; cargoId: UnitId; destination: Coord }
+  // DIVE: submarine transitions from surfaced to submerged. Same gating as
+  // WAIT (own unit, not yet acted). After: hasMoved = hasActed = true and
+  // submerged = true. Persists across turns.
+  | { type: 'DIVE'; unitId: UnitId }
+  // SURFACE: submarine transitions from submerged to surfaced. Mirror of
+  // DIVE.
+  | { type: 'SURFACE'; unitId: UnitId }
   | { type: 'END_TURN' };
 
 export type LegalityResult =

@@ -70,6 +70,8 @@ const UNIT_TYPES: ReadonlyArray<UnitType> = [
   'cruiser',
   'aatank',
   'lander',
+  'submarine',
+  'carrier',
 ];
 
 const PLAYERS: ReadonlyArray<PlayerId> = [0, 1];
@@ -156,6 +158,12 @@ function paintSprite(ctx: Ctx, type: UnitType, owner: PlayerId, variant: SpriteV
       break;
     case 'lander':
       paintLander(ctx, body, dark, light);
+      break;
+    case 'submarine':
+      paintSubmarine(ctx, body, dark, light);
+      break;
+    case 'carrier':
+      paintCarrier(ctx, body, dark, light);
       break;
   }
   if (variant === 'damaged') paintDents(ctx);
@@ -712,6 +720,132 @@ function paintLander(ctx: Ctx, body: string, dark: string, light: string): void 
   ctx.beginPath();
   ctx.moveTo(S * 0.16, S * 0.50);
   ctx.lineTo(S * 0.22, S * 0.50);
+  ctx.stroke();
+}
+
+function paintSubmarine(ctx: Ctx, body: string, dark: string, light: string): void {
+  const S = SPRITE_SIZE;
+  // Waves below — same convention as the other ships.
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.14, S * 0.84);
+  ctx.quadraticCurveTo(S * 0.28, S * 0.80, S * 0.42, S * 0.84);
+  ctx.quadraticCurveTo(S * 0.56, S * 0.88, S * 0.70, S * 0.84);
+  ctx.quadraticCurveTo(S * 0.80, S * 0.82, S * 0.86, S * 0.84);
+  ctx.stroke();
+  // Long cigar-shaped hull (rounded ellipse).
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.ellipse(S * 0.5, S * 0.66, S * 0.36, S * 0.10, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Hull shading: a thin darker band along the bottom.
+  ctx.fillStyle = dark;
+  ctx.beginPath();
+  ctx.ellipse(S * 0.5, S * 0.72, S * 0.34, S * 0.04, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Conning tower (sail): centered hump on top of the hull.
+  ctx.fillStyle = body;
+  roundedRect(ctx, S * 0.42, S * 0.46, S * 0.18, S * 0.14, 3);
+  ctx.fill();
+  // Tower trim.
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.42, S * 0.58);
+  ctx.lineTo(S * 0.60, S * 0.58);
+  ctx.stroke();
+  // Tiny porthole-like window on the tower.
+  ctx.fillStyle = light;
+  ctx.fillRect(S * 0.48, S * 0.50, S * 0.05, S * 0.04);
+  // Periscope mast — vertical line above the tower.
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(S * 0.52, S * 0.46);
+  ctx.lineTo(S * 0.52, S * 0.30);
+  ctx.stroke();
+  // Periscope head — small T.
+  ctx.beginPath();
+  ctx.moveTo(S * 0.48, S * 0.30);
+  ctx.lineTo(S * 0.56, S * 0.30);
+  ctx.stroke();
+  // Bow rounded cap highlight.
+  ctx.fillStyle = light;
+  ctx.beginPath();
+  ctx.ellipse(S * 0.82, S * 0.64, S * 0.04, S * 0.03, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function paintCarrier(ctx: Ctx, body: string, dark: string, light: string): void {
+  const S = SPRITE_SIZE;
+  // Waves.
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.06, S * 0.86);
+  ctx.quadraticCurveTo(S * 0.20, S * 0.82, S * 0.34, S * 0.86);
+  ctx.quadraticCurveTo(S * 0.48, S * 0.90, S * 0.62, S * 0.86);
+  ctx.quadraticCurveTo(S * 0.78, S * 0.82, S * 0.94, S * 0.86);
+  ctx.stroke();
+  // Long flat hull.
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.06, S * 0.60);
+  ctx.lineTo(S * 0.86, S * 0.56);
+  ctx.lineTo(S * 0.94, S * 0.68);
+  ctx.lineTo(S * 0.86, S * 0.80);
+  ctx.lineTo(S * 0.12, S * 0.80);
+  ctx.closePath();
+  ctx.fill();
+  // Flight deck — a long darker rectangle along the top of the hull.
+  ctx.fillStyle = dark;
+  roundedRect(ctx, S * 0.08, S * 0.52, S * 0.78, S * 0.10, 2);
+  ctx.fill();
+  // Dashed centerline runway markings.
+  ctx.strokeStyle = light;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(S * 0.12, S * 0.57);
+  ctx.lineTo(S * 0.82, S * 0.57);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // Side runway dashes (second deck line).
+  ctx.strokeStyle = light;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(S * 0.16, S * 0.61);
+  ctx.lineTo(S * 0.78, S * 0.61);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // Island superstructure (small bridge tower on the starboard side).
+  ctx.fillStyle = light;
+  roundedRect(ctx, S * 0.56, S * 0.36, S * 0.10, S * 0.16, 2);
+  ctx.fill();
+  // Bridge window strip.
+  ctx.fillStyle = dark;
+  ctx.fillRect(S * 0.58, S * 0.40, S * 0.06, S * 0.03);
+  // Mast atop the island.
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.61, S * 0.36);
+  ctx.lineTo(S * 0.61, S * 0.22);
+  ctx.stroke();
+  // Mast yard.
+  ctx.beginPath();
+  ctx.moveTo(S * 0.57, S * 0.28);
+  ctx.lineTo(S * 0.65, S * 0.28);
+  ctx.stroke();
+  // Bow line shading.
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.06, S * 0.60);
+  ctx.lineTo(S * 0.86, S * 0.56);
   ctx.stroke();
 }
 

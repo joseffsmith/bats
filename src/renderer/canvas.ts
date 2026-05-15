@@ -16,7 +16,7 @@ import type {
   Unit,
   UnitType,
 } from '../engine/core/types';
-import { tileAt, unitAt } from '../engine/core/types';
+import { manhattan, tileAt, unitAt } from '../engine/core/types';
 import type { AnimationQueue, Anim } from './animations';
 import { easeInOutCubic } from './easing';
 import type { SpriteCache } from './sprites';
@@ -92,6 +92,8 @@ const UNIT_LETTER: Record<UnitType, string> = {
   cruiser: 'U',
   aatank: 'K',
   lander: 'L',
+  submarine: 'M',
+  carrier: 'V',
 };
 
 // ─────────────────────────── View state ──────────────────────────────────────
@@ -118,7 +120,7 @@ export type Overlay = {
 };
 
 export type ActionMenuEntry = {
-  label: 'Attack' | 'Capture' | 'Wait' | 'Unload';
+  label: 'Attack' | 'Capture' | 'Wait' | 'Unload' | 'Dive' | 'Surface';
   enabled: boolean;
 };
 
@@ -484,6 +486,17 @@ function drawUnits(
     // Loaded cargo isn't drawn separately — its carrier renders a cargo
     // badge instead.
     if (unit.loadedIn !== undefined) continue;
+    // Submerged-submarine stealth: skip rendering an enemy submerged sub
+    // unless the current viewer has a cruiser/submarine adjacent. (Own
+    // submerged subs always render; for ground-truth debugging the
+    // viewer-aware lookup is in selectors.visibleUnitAt.)
+    if (
+      unit.type === 'submarine' &&
+      unit.submerged === true &&
+      unit.owner !== state.currentPlayer
+    ) {
+      if (!hasAdjacentSpotter(state, unit.pos, state.currentPlayer)) continue;
+    }
     drawUnit(
       ctx,
       state,
@@ -604,6 +617,14 @@ function drawUnit(
   const size = ts - inset * 2;
 
   // ── Body draw: sprite if available, else coloured rectangle fallback. ──
+  // Submerged subs visible to the viewer get a ghosted (semi-transparent)
+  // treatment so the player can tell a sub is dived (their own) or that a
+  // spotter is exposing an enemy submerged sub.
+  const submergedGhost = unit.type === 'submarine' && unit.submerged === true;
+  if (submergedGhost) {
+    ctx.save();
+    ctx.globalAlpha = 0.45;
+  }
   let drewSprite = false;
   if (sprites) {
     try {
@@ -624,6 +645,17 @@ function drawUnit(
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(UNIT_LETTER[unit.type], renderX + ts / 2, renderY + ts / 2 + ts * 0.02);
+  }
+  if (submergedGhost) {
+    ctx.restore();
+    // Dashed outline marks the submerged silhouette, so the ghosted sprite
+    // doesn't look like a draw bug.
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.strokeRect(renderX + inset, renderY + inset, size, size);
+    ctx.restore();
   }
 
   // Flash overlay on hit defender. easeOutBack intensity reaches ~1.05 mid-
@@ -761,4 +793,23 @@ export function tileSizeFor(width: number): number {
 
 export function isUnitAt(state: GameState, c: Coord): Unit | undefined {
   return unitAt(state, c);
+}
+
+/**
+ * True if `viewer` has a cruiser or submarine within Manhattan distance 1 of
+ * `at`. Used by the renderer to decide whether to draw an enemy submerged
+ * submarine. Mirrors the `isVisibleTo` rule in `selectors.ts`.
+ */
+function hasAdjacentSpotter(
+  state: GameState,
+  at: Coord,
+  viewer: PlayerId,
+): boolean {
+  for (const u of Object.values(state.units)) {
+    if (u.owner !== viewer) continue;
+    if (u.loadedIn !== undefined) continue;
+    if (u.type !== 'cruiser' && u.type !== 'submarine') continue;
+    if (manhattan(u.pos, at) <= 1) return true;
+  }
+  return false;
 }
