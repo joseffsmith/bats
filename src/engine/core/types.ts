@@ -11,7 +11,13 @@ export type UnitType =
   | 'tank'
   | 'artillery'
   | 'copter'
-  | 'transport';
+  | 'transport'
+  | 'fighter'
+  | 'bomber'
+  | 'battleship'
+  | 'cruiser'
+  | 'aatank'
+  | 'lander';
 
 export type TerrainType =
   | 'plain'

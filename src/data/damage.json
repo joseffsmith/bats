@@ -5,7 +5,13 @@
     "tank": 5,
     "artillery": 15,
     "copter": 7,
-    "transport": 14
+    "transport": 14,
+    "fighter": 0,
+    "bomber": 0,
+    "battleship": 0,
+    "cruiser": 0,
+    "aatank": 5,
+    "lander": 14
   },
   "recon": {
     "infantry": 75,
@@ -13,7 +19,13 @@
     "tank": 10,
     "artillery": 35,
     "copter": 55,
-    "transport": 50
+    "transport": 50,
+    "fighter": 0,
+    "bomber": 0,
+    "battleship": 0,
+    "cruiser": 0,
+    "aatank": 8,
+    "lander": 35
   },
   "tank": {
     "infantry": 75,
@@ -21,7 +33,13 @@
     "tank": 55,
     "artillery": 70,
     "copter": 65,
-    "transport": 80
+    "transport": 80,
+    "fighter": 0,
+    "bomber": 0,
+    "battleship": 0,
+    "cruiser": 0,
+    "aatank": 45,
+    "lander": 60
   },
   "artillery": {
     "infantry": 90,
@@ -29,7 +47,13 @@
     "tank": 70,
     "artillery": 75,
     "copter": 65,
-    "transport": 80
+    "transport": 80,
+    "fighter": 0,
+    "bomber": 0,
+    "battleship": 40,
+    "cruiser": 50,
+    "aatank": 70,
+    "lander": 55
   },
   "copter": {
     "infantry": 75,
@@ -37,7 +61,13 @@
     "tank": 25,
     "artillery": 65,
     "copter": 65,
-    "transport": 60
+    "transport": 60,
+    "fighter": 0,
+    "bomber": 0,
+    "battleship": 25,
+    "cruiser": 5,
+    "aatank": 20,
+    "lander": 55
   },
   "transport": {
     "infantry": 0,
@@ -45,6 +75,96 @@
     "tank": 0,
     "artillery": 0,
     "copter": 0,
-    "transport": 0
+    "transport": 0,
+    "fighter": 0,
+    "bomber": 0,
+    "battleship": 0,
+    "cruiser": 0,
+    "aatank": 0,
+    "lander": 0
+  },
+  "fighter": {
+    "infantry": 0,
+    "recon": 0,
+    "tank": 0,
+    "artillery": 0,
+    "copter": 100,
+    "transport": 0,
+    "fighter": 70,
+    "bomber": 90,
+    "battleship": 5,
+    "cruiser": 5,
+    "aatank": 0,
+    "lander": 5
+  },
+  "bomber": {
+    "infantry": 110,
+    "recon": 95,
+    "tank": 100,
+    "artillery": 90,
+    "copter": 0,
+    "transport": 90,
+    "fighter": 0,
+    "bomber": 0,
+    "battleship": 75,
+    "cruiser": 75,
+    "aatank": 95,
+    "lander": 80
+  },
+  "battleship": {
+    "infantry": 95,
+    "recon": 95,
+    "tank": 100,
+    "artillery": 100,
+    "copter": 0,
+    "transport": 95,
+    "fighter": 0,
+    "bomber": 0,
+    "battleship": 100,
+    "cruiser": 95,
+    "aatank": 100,
+    "lander": 95
+  },
+  "cruiser": {
+    "infantry": 0,
+    "recon": 0,
+    "tank": 5,
+    "artillery": 5,
+    "copter": 105,
+    "transport": 25,
+    "fighter": 105,
+    "bomber": 105,
+    "battleship": 30,
+    "cruiser": 25,
+    "aatank": 0,
+    "lander": 25
+  },
+  "aatank": {
+    "infantry": 60,
+    "recon": 50,
+    "tank": 35,
+    "artillery": 50,
+    "copter": 105,
+    "transport": 5,
+    "fighter": 100,
+    "bomber": 105,
+    "battleship": 0,
+    "cruiser": 5,
+    "aatank": 45,
+    "lander": 5
+  },
+  "lander": {
+    "infantry": 0,
+    "recon": 0,
+    "tank": 0,
+    "artillery": 0,
+    "copter": 0,
+    "transport": 0,
+    "fighter": 0,
+    "bomber": 0,
+    "battleship": 0,
+    "cruiser": 0,
+    "aatank": 0,
+    "lander": 0
   }
 }

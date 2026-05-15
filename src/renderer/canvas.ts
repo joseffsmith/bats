@@ -86,6 +86,12 @@ const UNIT_LETTER: Record<UnitType, string> = {
   artillery: 'A',
   copter: 'C',
   transport: 'X',
+  fighter: 'F',
+  bomber: 'B',
+  battleship: 'S',
+  cruiser: 'U',
+  aatank: 'K',
+  lander: 'L',
 };
 
 // ─────────────────────────── View state ──────────────────────────────────────

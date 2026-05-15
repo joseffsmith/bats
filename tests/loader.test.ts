@@ -25,7 +25,20 @@ import {
 } from '../src/engine/data/loader';
 import type { TerrainType, UnitType } from '../src/engine/core/types';
 
-const UNIT_TYPES: UnitType[] = ['infantry', 'recon', 'tank', 'artillery', 'copter'];
+const UNIT_TYPES: UnitType[] = [
+  'infantry',
+  'recon',
+  'tank',
+  'artillery',
+  'copter',
+  'transport',
+  'fighter',
+  'bomber',
+  'battleship',
+  'cruiser',
+  'aatank',
+  'lander',
+];
 const TERRAIN_TYPES: TerrainType[] = [
   'plain',
   'road',

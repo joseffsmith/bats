@@ -17,6 +17,11 @@ import type {
   Overlay,
 } from './canvas';
 
+// Build-menu icon letters. Each unit type gets a unique letter; the existing
+// 6 keep their letters, the new 6 take F/B/S/U/K/L (chosen to avoid clashes
+// with recon=R, artillery=A and transport=X). See README/PLAN for the full
+// mapping. The renderer's tile-letter fallback in canvas.ts uses the same
+// table.
 const UNIT_LETTER: Record<UnitType, string> = {
   infantry: 'I',
   recon: 'R',
@@ -24,18 +29,31 @@ const UNIT_LETTER: Record<UnitType, string> = {
   artillery: 'A',
   copter: 'C',
   transport: 'X',
+  fighter: 'F',
+  bomber: 'B',
+  battleship: 'S',
+  cruiser: 'U',
+  aatank: 'K',
+  lander: 'L',
 };
 
-// Transports are sea-class, so they can only launch from a factory that has a
-// sea tile within Manhattan distance 1. Otherwise a player could build a
-// transport on a landlocked factory and be unable to move it.
+// Sea-class units (transport, battleship, cruiser, lander) can only launch
+// from a factory adjacent to a sea tile — otherwise they'd spawn stranded on
+// land they can't traverse. The validator at checkBuild enforces this; the
+// build menu filters them out so the option isn't even offered.
 const BUILDABLE: ReadonlyArray<UnitType> = [
   'infantry',
   'recon',
   'tank',
   'artillery',
+  'aatank',
   'copter',
+  'fighter',
+  'bomber',
   'transport',
+  'lander',
+  'cruiser',
+  'battleship',
 ];
 
 function isCoastalFactory(state: GameState, at: { x: number; y: number }): boolean {
@@ -253,17 +271,25 @@ export function buildMenuEntries(
   const coastal = isCoastalFactory(state, at);
   const entries: BuildMenuEntry[] = [];
   for (const type of BUILDABLE) {
-    // Transports need a sea tile next door to launch.
-    if (type === 'transport' && !coastal) continue;
+    // Sea-class units (transport, lander, cruiser, battleship) need a sea
+    // tile adjacent to the factory to launch. The engine's BUILD validator
+    // also enforces this — filtering here just keeps the menu honest.
+    if (UNITS[type].movementClass === 'sea' && !coastal) continue;
     const cost = UNITS[type].cost;
     entries.push({
       unitType: type,
-      label: capitalise(type),
+      label: labelFor(type),
       cost,
       affordable: funds >= cost,
     });
   }
   return entries;
+}
+
+function labelFor(type: UnitType): string {
+  // `aatank` reads better as "AA Tank" in the build menu UI.
+  if (type === 'aatank') return 'AA Tank';
+  return capitalise(type);
 }
 
 function capitalise(s: string): string {

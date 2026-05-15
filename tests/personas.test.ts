@@ -83,7 +83,7 @@ describe('personas loader', () => {
               positional: 1,
               objective: 1,
             },
-            buildPolicy: { preferred: ['battleship'] },
+            buildPolicy: { preferred: ['submarine'] },
           },
         ],
       }),

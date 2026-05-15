@@ -66,6 +66,13 @@ const UNIT_TYPES_ALL: ReadonlyArray<UnitType> = [
   'tank',
   'artillery',
   'copter',
+  'transport',
+  'fighter',
+  'bomber',
+  'battleship',
+  'cruiser',
+  'aatank',
+  'lander',
 ];
 
 function fail(path: string, msg: string): never {

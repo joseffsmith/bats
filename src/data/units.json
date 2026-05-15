@@ -60,5 +60,67 @@
     "indirect": false,
     "cargoCapacity": 1,
     "cargoMovementClasses": ["foot"]
+  },
+  {
+    "type": "fighter",
+    "cost": 12000,
+    "move": 9,
+    "movementClass": "air",
+    "minRange": 1,
+    "maxRange": 1,
+    "canCapture": false,
+    "indirect": false
+  },
+  {
+    "type": "bomber",
+    "cost": 14000,
+    "move": 7,
+    "movementClass": "air",
+    "minRange": 1,
+    "maxRange": 1,
+    "canCapture": false,
+    "indirect": false
+  },
+  {
+    "type": "battleship",
+    "cost": 18000,
+    "move": 5,
+    "movementClass": "sea",
+    "minRange": 2,
+    "maxRange": 6,
+    "canCapture": false,
+    "indirect": true
+  },
+  {
+    "type": "cruiser",
+    "cost": 11000,
+    "move": 6,
+    "movementClass": "sea",
+    "minRange": 1,
+    "maxRange": 1,
+    "canCapture": false,
+    "indirect": false
+  },
+  {
+    "type": "aatank",
+    "cost": 8000,
+    "move": 6,
+    "movementClass": "tread",
+    "minRange": 1,
+    "maxRange": 1,
+    "canCapture": false,
+    "indirect": false
+  },
+  {
+    "type": "lander",
+    "cost": 6000,
+    "move": 6,
+    "movementClass": "sea",
+    "minRange": 0,
+    "maxRange": 0,
+    "canCapture": false,
+    "indirect": false,
+    "cargoCapacity": 1,
+    "cargoMovementClasses": ["foot", "wheel", "tread"]
   }
 ]

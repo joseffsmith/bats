@@ -63,6 +63,12 @@ const UNIT_TYPES: ReadonlyArray<UnitType> = [
   'artillery',
   'copter',
   'transport',
+  'fighter',
+  'bomber',
+  'battleship',
+  'cruiser',
+  'aatank',
+  'lander',
 ];
 
 const TERRAIN_TYPES: ReadonlyArray<TerrainType> = [

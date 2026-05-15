@@ -64,6 +64,12 @@ const UNIT_TYPES: ReadonlyArray<UnitType> = [
   'artillery',
   'copter',
   'transport',
+  'fighter',
+  'bomber',
+  'battleship',
+  'cruiser',
+  'aatank',
+  'lander',
 ];
 
 const PLAYERS: ReadonlyArray<PlayerId> = [0, 1];
@@ -132,6 +138,24 @@ function paintSprite(ctx: Ctx, type: UnitType, owner: PlayerId, variant: SpriteV
       break;
     case 'transport':
       paintTransport(ctx, body, dark, light);
+      break;
+    case 'fighter':
+      paintFighter(ctx, body, dark, light, detail);
+      break;
+    case 'bomber':
+      paintBomber(ctx, body, dark, light, detail);
+      break;
+    case 'battleship':
+      paintBattleship(ctx, body, dark, light);
+      break;
+    case 'cruiser':
+      paintCruiser(ctx, body, dark, light);
+      break;
+    case 'aatank':
+      paintAATank(ctx, body, dark, light);
+      break;
+    case 'lander':
+      paintLander(ctx, body, dark, light);
       break;
   }
   if (variant === 'damaged') paintDents(ctx);
@@ -386,6 +410,309 @@ function paintTransport(ctx: Ctx, body: string, dark: string, light: string): vo
   ctx.lineTo(S * 0.22, S * 0.5);
   ctx.closePath();
   ctx.fill();
+}
+
+function paintFighter(ctx: Ctx, body: string, dark: string, light: string, detail: string): void {
+  const S = SPRITE_SIZE;
+  // Swept-wing fighter pointing right. Wings angled back from a central fuselage.
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  // Nose at (0.88, 0.5); wing tips swept back.
+  ctx.moveTo(S * 0.88, S * 0.5);
+  ctx.lineTo(S * 0.46, S * 0.42);
+  ctx.lineTo(S * 0.18, S * 0.28);
+  ctx.lineTo(S * 0.28, S * 0.5);
+  ctx.lineTo(S * 0.18, S * 0.72);
+  ctx.lineTo(S * 0.46, S * 0.58);
+  ctx.closePath();
+  ctx.fill();
+  // Fuselage centerline highlight.
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.30, S * 0.5);
+  ctx.lineTo(S * 0.86, S * 0.5);
+  ctx.stroke();
+  // Cockpit canopy near the nose.
+  ctx.fillStyle = detail;
+  ctx.beginPath();
+  ctx.ellipse(S * 0.66, S * 0.48, S * 0.06, S * 0.04, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Tail fin.
+  ctx.fillStyle = light;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.30, S * 0.5);
+  ctx.lineTo(S * 0.24, S * 0.36);
+  ctx.lineTo(S * 0.34, S * 0.46);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function paintBomber(ctx: Ctx, body: string, dark: string, _light: string, detail: string): void {
+  const S = SPRITE_SIZE;
+  // Long fuselage pointing right with broader straight wings.
+  ctx.fillStyle = body;
+  // Body — elongated triangle.
+  ctx.beginPath();
+  ctx.moveTo(S * 0.92, S * 0.5);
+  ctx.lineTo(S * 0.16, S * 0.4);
+  ctx.lineTo(S * 0.16, S * 0.6);
+  ctx.closePath();
+  ctx.fill();
+  // Wings — broad straight cross section.
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.42, S * 0.5);
+  ctx.lineTo(S * 0.50, S * 0.18);
+  ctx.lineTo(S * 0.58, S * 0.22);
+  ctx.lineTo(S * 0.54, S * 0.5);
+  ctx.lineTo(S * 0.58, S * 0.78);
+  ctx.lineTo(S * 0.50, S * 0.82);
+  ctx.closePath();
+  ctx.fill();
+  // Two engine dots on the wings.
+  ctx.fillStyle = dark;
+  ctx.beginPath();
+  ctx.arc(S * 0.52, S * 0.28, S * 0.045, 0, Math.PI * 2);
+  ctx.arc(S * 0.52, S * 0.72, S * 0.045, 0, Math.PI * 2);
+  ctx.fill();
+  // Engine inner highlights.
+  ctx.fillStyle = detail;
+  ctx.beginPath();
+  ctx.arc(S * 0.52, S * 0.28, S * 0.02, 0, Math.PI * 2);
+  ctx.arc(S * 0.52, S * 0.72, S * 0.02, 0, Math.PI * 2);
+  ctx.fill();
+  // Cockpit at the nose.
+  ctx.fillStyle = detail;
+  ctx.beginPath();
+  ctx.ellipse(S * 0.78, S * 0.5, S * 0.05, S * 0.035, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Tail.
+  ctx.fillStyle = dark;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.20, S * 0.5);
+  ctx.lineTo(S * 0.14, S * 0.34);
+  ctx.lineTo(S * 0.24, S * 0.46);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function paintBattleship(ctx: Ctx, body: string, dark: string, light: string): void {
+  const S = SPRITE_SIZE;
+  // Water waves below.
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.08, S * 0.84);
+  ctx.quadraticCurveTo(S * 0.22, S * 0.80, S * 0.36, S * 0.84);
+  ctx.quadraticCurveTo(S * 0.50, S * 0.88, S * 0.64, S * 0.84);
+  ctx.quadraticCurveTo(S * 0.78, S * 0.80, S * 0.92, S * 0.84);
+  ctx.stroke();
+  // Long ship hull — pointier prow than the transport.
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.06, S * 0.62);
+  ctx.lineTo(S * 0.82, S * 0.58);
+  ctx.lineTo(S * 0.94, S * 0.66);
+  ctx.lineTo(S * 0.82, S * 0.78);
+  ctx.lineTo(S * 0.12, S * 0.78);
+  ctx.closePath();
+  ctx.fill();
+  // Deck line.
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.06, S * 0.62);
+  ctx.lineTo(S * 0.82, S * 0.58);
+  ctx.stroke();
+  // Three turret blocks along the deck.
+  ctx.fillStyle = dark;
+  roundedRect(ctx, S * 0.16, S * 0.48, S * 0.14, S * 0.12, 2);
+  ctx.fill();
+  roundedRect(ctx, S * 0.40, S * 0.46, S * 0.14, S * 0.12, 2);
+  ctx.fill();
+  roundedRect(ctx, S * 0.64, S * 0.48, S * 0.14, S * 0.12, 2);
+  ctx.fill();
+  // Long gun barrels poking forward from each turret.
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(S * 0.28, S * 0.54);
+  ctx.lineTo(S * 0.40, S * 0.50);
+  ctx.moveTo(S * 0.52, S * 0.52);
+  ctx.lineTo(S * 0.64, S * 0.48);
+  ctx.moveTo(S * 0.76, S * 0.54);
+  ctx.lineTo(S * 0.88, S * 0.50);
+  ctx.stroke();
+  // Central bridge tower.
+  ctx.fillStyle = light;
+  roundedRect(ctx, S * 0.46, S * 0.32, S * 0.10, S * 0.18, 2);
+  ctx.fill();
+  // Smokestack.
+  ctx.fillStyle = dark;
+  roundedRect(ctx, S * 0.58, S * 0.36, S * 0.05, S * 0.18, 1);
+  ctx.fill();
+}
+
+function paintCruiser(ctx: Ctx, body: string, dark: string, light: string): void {
+  const S = SPRITE_SIZE;
+  // Waves.
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.16, S * 0.84);
+  ctx.quadraticCurveTo(S * 0.30, S * 0.80, S * 0.44, S * 0.84);
+  ctx.quadraticCurveTo(S * 0.58, S * 0.88, S * 0.72, S * 0.84);
+  ctx.quadraticCurveTo(S * 0.82, S * 0.82, S * 0.86, S * 0.84);
+  ctx.stroke();
+  // Shorter hull.
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.14, S * 0.62);
+  ctx.lineTo(S * 0.74, S * 0.6);
+  ctx.lineTo(S * 0.86, S * 0.7);
+  ctx.lineTo(S * 0.74, S * 0.78);
+  ctx.lineTo(S * 0.20, S * 0.78);
+  ctx.closePath();
+  ctx.fill();
+  // Deck line.
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.14, S * 0.62);
+  ctx.lineTo(S * 0.74, S * 0.6);
+  ctx.stroke();
+  // Single forward turret.
+  ctx.fillStyle = dark;
+  roundedRect(ctx, S * 0.48, S * 0.48, S * 0.14, S * 0.12, 2);
+  ctx.fill();
+  // Turret barrel.
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(S * 0.60, S * 0.54);
+  ctx.lineTo(S * 0.78, S * 0.50);
+  ctx.stroke();
+  // Bridge.
+  ctx.fillStyle = light;
+  roundedRect(ctx, S * 0.30, S * 0.40, S * 0.14, S * 0.20, 2);
+  ctx.fill();
+  // Tall radar mast.
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.37, S * 0.40);
+  ctx.lineTo(S * 0.37, S * 0.16);
+  ctx.stroke();
+  // Mast cross bars.
+  ctx.beginPath();
+  ctx.moveTo(S * 0.32, S * 0.24);
+  ctx.lineTo(S * 0.42, S * 0.24);
+  ctx.moveTo(S * 0.34, S * 0.20);
+  ctx.lineTo(S * 0.40, S * 0.20);
+  ctx.stroke();
+}
+
+function paintAATank(ctx: Ctx, body: string, dark: string, light: string): void {
+  const S = SPRITE_SIZE;
+  // Tracks (dark slabs).
+  ctx.fillStyle = dark;
+  roundedRect(ctx, S * 0.14, S * 0.66, S * 0.72, S * 0.16, 3);
+  ctx.fill();
+  // Track ticks.
+  ctx.strokeStyle = light;
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 6; i++) {
+    const tx = S * 0.18 + i * S * 0.12;
+    ctx.beginPath();
+    ctx.moveTo(tx, S * 0.7);
+    ctx.lineTo(tx, S * 0.78);
+    ctx.stroke();
+  }
+  // Hull.
+  ctx.fillStyle = body;
+  roundedRect(ctx, S * 0.18, S * 0.5, S * 0.64, S * 0.2, 4);
+  ctx.fill();
+  // Compact AA turret (squarer than tank turret).
+  ctx.fillStyle = body;
+  roundedRect(ctx, S * 0.36, S * 0.34, S * 0.28, S * 0.18, 3);
+  ctx.fill();
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  // Twin barrels pointing up — angled slightly outward.
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(S * 0.44, S * 0.36);
+  ctx.lineTo(S * 0.40, S * 0.10);
+  ctx.moveTo(S * 0.56, S * 0.36);
+  ctx.lineTo(S * 0.60, S * 0.10);
+  ctx.stroke();
+  // Barrel tips (muzzle highlight).
+  ctx.fillStyle = light;
+  ctx.beginPath();
+  ctx.arc(S * 0.40, S * 0.10, S * 0.02, 0, Math.PI * 2);
+  ctx.arc(S * 0.60, S * 0.10, S * 0.02, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function paintLander(ctx: Ctx, body: string, dark: string, light: string): void {
+  const S = SPRITE_SIZE;
+  // Waves.
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.10, S * 0.84);
+  ctx.quadraticCurveTo(S * 0.24, S * 0.80, S * 0.38, S * 0.84);
+  ctx.quadraticCurveTo(S * 0.52, S * 0.88, S * 0.66, S * 0.84);
+  ctx.quadraticCurveTo(S * 0.80, S * 0.80, S * 0.90, S * 0.84);
+  ctx.stroke();
+  // Flat-bottomed boat — wide, low, square open deck.
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.12, S * 0.56);
+  ctx.lineTo(S * 0.88, S * 0.56);
+  ctx.lineTo(S * 0.84, S * 0.78);
+  ctx.lineTo(S * 0.16, S * 0.78);
+  ctx.closePath();
+  ctx.fill();
+  // Deck line.
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.12, S * 0.56);
+  ctx.lineTo(S * 0.88, S * 0.56);
+  ctx.stroke();
+  // Open deck cavity (suggests cargo bay).
+  ctx.fillStyle = dark;
+  roundedRect(ctx, S * 0.22, S * 0.58, S * 0.50, S * 0.14, 2);
+  ctx.fill();
+  // Inner deck floor.
+  ctx.fillStyle = light;
+  roundedRect(ctx, S * 0.26, S * 0.60, S * 0.42, S * 0.06, 1);
+  ctx.fill();
+  // Bow ramp (front end raised slightly).
+  ctx.fillStyle = light;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.72, S * 0.56);
+  ctx.lineTo(S * 0.84, S * 0.50);
+  ctx.lineTo(S * 0.88, S * 0.56);
+  ctx.closePath();
+  ctx.fill();
+  // Small wheelhouse at the stern (left).
+  ctx.fillStyle = body;
+  roundedRect(ctx, S * 0.14, S * 0.44, S * 0.10, S * 0.14, 2);
+  ctx.fill();
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.16, S * 0.50);
+  ctx.lineTo(S * 0.22, S * 0.50);
+  ctx.stroke();
 }
 
 function paintDents(ctx: Ctx): void {
