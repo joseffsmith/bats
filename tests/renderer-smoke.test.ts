@@ -67,6 +67,10 @@ function makeCtxStub(): CanvasRenderingContext2D {
     closePath: noop,
     fill: noop,
     stroke: noop,
+    save: noop,
+    restore: noop,
+    drawImage: noop,
+    createLinearGradient: () => ({ addColorStop: noop }),
   };
   return stub as unknown as CanvasRenderingContext2D;
 }
@@ -155,11 +159,14 @@ describe('renderer smoke', () => {
     expect(input.getState().kind).toBe('idle');
   });
 
-  it('end-turn HUD button advances currentPlayer', () => {
-    const { input, renderer, emitter } = mount();
+  it('end-turn (Enter key) advances currentPlayer', () => {
+    // The end-turn button itself is now a DOM element rendered by chrome.ts
+    // (not the canvas), so the legacy `renderer.getEndTurnRect()` API is
+    // gone. Input still handles Enter as an end-turn shortcut — exercise
+    // that path here.
+    const { emitter } = mount();
     const before = emitter.getState().currentPlayer;
-    const r = renderer.getEndTurnRect();
-    input.click(r.x + r.w / 2, r.y + r.h / 2);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
     expect(emitter.getState().currentPlayer).not.toBe(before);
   });
 
