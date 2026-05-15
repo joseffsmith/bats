@@ -600,6 +600,9 @@ export function objectiveBonus(_state: GameState, _unit: Unit): number {
  *   capturer  : +OBJECTIVE_BONUS if action moves toward nearest unowned capturable
  *   defender  : +OBJECTIVE_BONUS if action moves toward own HQ
  *   support   : +OBJECTIVE_BONUS if action moves AWAY from nearest enemy
+ *   pusher    : +OBJECTIVE_BONUS if action moves toward the enemy HQ
+ *               (objective-target is explicitly the HQ coord, NOT the
+ *               hottest-threat tile — that's the role's whole point).
  *   frontline : +OBJECTIVE_BONUS if action moves toward the highest-threat
  *               concentration WE project against the enemy (i.e. the tile in
  *               our threatMap-from-our-perspective with the largest value),
@@ -639,6 +642,16 @@ function objectiveBonusForRole(
       const dAfter = manhattan(movedUnit.pos, e.pos);
       // Reward retreat: dAfter > dBefore means we got further away.
       return dAfter > dBefore ? OBJECTIVE_BONUS : 0;
+    }
+    case 'pusher': {
+      // Target the enemy HQ directly. The hottest-threat tile is a defensive
+      // concept (it's where enemies project most damage — typically right at
+      // our own line); pusher needs offensive pull, so we use the literal
+      // enemy HQ coord.
+      const enemyHq = before.players[otherPlayer(unit.owner)].hq;
+      const dBefore = manhattan(unit.pos, enemyHq);
+      const dAfter = manhattan(movedUnit.pos, enemyHq);
+      return dAfter < dBefore ? OBJECTIVE_BONUS : 0;
     }
     case 'frontline': {
       // Toward enemy threat concentration if we have a (our) threat map; else
@@ -822,10 +835,22 @@ function enumerateBuilds(
 ): Action[] {
   const out: Action[] = [];
   const myInfantryCount = countOwned(state, player, 'infantry');
+  const myTotalUnits = countOwnedAll(state, player);
   const infantryFloor = policy.infantryFloor ?? 2;
   const avoid = new Set<UnitType>(policy.avoid ?? []);
   const preferred: ReadonlyArray<UnitType> =
     policy.preferred ?? ['tank', 'recon', 'artillery', 'infantry'];
+
+  // Floor activation: a persona with `infantryFloor: 5` would naively keep
+  // building infantry on every factory until it owns 5 infantry — even when
+  // it already has plenty of tanks/recon — meaning `preferred: [tank, ...]`
+  // never fires while the floor is active. Cap the floor by ALSO requiring
+  // the total owned unit count to be low (`< floor + 2`), so once we have a
+  // healthy mixed force the build phase resumes its `preferred` list. The
+  // `+2` tolerance lets a persona with floor=3 still spawn its 4th unit as
+  // infantry if it only has 3 infantry and 1 tank, but stops once it has 3
+  // infantry + 2 tanks.
+  const floorActive = myInfantryCount < infantryFloor && myTotalUnits < infantryFloor + 2;
 
   for (let y = 0; y < state.map.length; y++) {
     const row = state.map[y]!;
@@ -838,9 +863,10 @@ function enumerateBuilds(
       const unowned = unownedCapturables(state, player);
       let pick: UnitType | null = null;
 
-      // Infantry floor — keep capture pressure up.
+      // Infantry floor — keep capture pressure up, but only when our total
+      // unit count is also low (see `floorActive` above).
       if (
-        myInfantryCount < infantryFloor &&
+        floorActive &&
         unowned > 0 &&
         funds >= UNITS.infantry.cost &&
         !avoid.has('infantry')

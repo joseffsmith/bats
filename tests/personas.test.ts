@@ -16,6 +16,9 @@ import {
   PERSONA_NAMES,
 } from '../src/engine/ai/personas';
 import { runMatch } from '../src/cli/run-match';
+import { utilityAI } from '../src/engine/ai/utility';
+import { makeState } from './test-helpers';
+import { createRng } from '../src/engine/core/rng';
 
 const REQUIRED_PERSONAS = ['aggressor', 'turtle', 'economist', 'balanced'];
 
@@ -212,6 +215,121 @@ describe('personaAI dispatch', () => {
     expect(aArtillery.length).toBe(0);
     expect(tRecons.length).toBe(0);
   }, 120_000);
+});
+
+describe('build policy: infantryFloor activation', () => {
+  // Regression for the iter-4 economist bug: a high `infantryFloor` was acting
+  // as a HARD-PREFER-infantry trigger even after the player had built up a
+  // healthy roster of tanks/recon. The fix gates the floor on ALSO having a
+  // low total unit count (`totalMyUnits < floor + 2`), so once we have a
+  // mixed force the `preferred` list (tank-first) takes over.
+  it('high infantryFloor does NOT force infantry build when total roster is large', () => {
+    // Persona-like config: infantryFloor=5, preferred=[tank,...]; 4 infantry +
+    // 3 tanks already on the board (total=7). With the old rule the floor
+    // fires (4 < 5) and infantry is built; with the new rule (4 < 5) && (7 <
+    // 7) is false so the preferred list wins → tank is built.
+    const FUNDS = 8000; // enough for a single tank (7000) and infantry (1000)
+    const state = makeState({
+      width: 10,
+      height: 5,
+      defaultTerrain: 'plain',
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 2 } },
+        { owner: 1, pos: { x: 9, y: 2 } },
+      ],
+      tiles: [
+        // A factory we own at (1,2) — a fresh build will go here.
+        { pos: { x: 1, y: 2 }, terrain: 'factory', owner: 0 },
+        // An unowned city so `unowned > 0` is true (the floor check requires it).
+        { pos: { x: 5, y: 0 }, terrain: 'city', owner: null },
+      ],
+      units: [
+        // 4 infantry + 3 tanks — all positioned out of the way so the factory
+        // is unoccupied. Mark them all as already-acted so the AI's
+        // move/attack loop bails immediately and reaches the BUILD phase.
+        { type: 'infantry', owner: 0, pos: { x: 0, y: 0 }, hp: 100 },
+        { type: 'infantry', owner: 0, pos: { x: 0, y: 1 }, hp: 100 },
+        { type: 'infantry', owner: 0, pos: { x: 0, y: 3 }, hp: 100 },
+        { type: 'infantry', owner: 0, pos: { x: 0, y: 4 }, hp: 100 },
+        { type: 'tank', owner: 0, pos: { x: 2, y: 0 }, hp: 100 },
+        { type: 'tank', owner: 0, pos: { x: 2, y: 1 }, hp: 100 },
+        { type: 'tank', owner: 0, pos: { x: 2, y: 3 }, hp: 100 },
+      ],
+      funds: { 0: FUNDS, 1: 0 },
+    });
+    // Mark all owned units as already moved+acted so the AI doesn't try to
+    // shuffle them before getting to BUILD.
+    for (const u of Object.values(state.units)) {
+      if (u.owner === 0) {
+        u.hasMoved = true;
+        u.hasActed = true;
+      }
+    }
+
+    // Tier-3 utility AI mirroring an "economist-like" persona but with
+    // infantryFloor=5 and tank-first preferred.
+    const ai = utilityAI({
+      name: 'high-floor-test',
+      useThreatMap: true,
+      useRoles: true,
+      buildPolicy: {
+        preferred: ['tank', 'recon', 'infantry'],
+        infantryFloor: 5,
+      },
+    });
+
+    const actions = ai.takeTurn({ state, player: 0, rng: createRng(1) });
+    const builds = actions.filter((a) => a.type === 'BUILD');
+    // Exactly one factory → exactly one build action.
+    expect(builds.length).toBe(1);
+    const b = builds[0]!;
+    if (b.type !== 'BUILD') throw new Error('unreachable');
+    expect(b.unitType).toBe('tank');
+  });
+
+  it('low-roster + below-floor still builds infantry (floor is preserved when it matters)', () => {
+    // Same persona, but only 1 infantry + 0 other units → total=1, floor=5.
+    // 1<5 AND 1<7 → floor active, infantry built (not tank, even though
+    // affordable).
+    const FUNDS = 8000;
+    const state = makeState({
+      width: 10,
+      height: 5,
+      defaultTerrain: 'plain',
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 2 } },
+        { owner: 1, pos: { x: 9, y: 2 } },
+      ],
+      tiles: [
+        { pos: { x: 1, y: 2 }, terrain: 'factory', owner: 0 },
+        { pos: { x: 5, y: 0 }, terrain: 'city', owner: null },
+      ],
+      units: [{ type: 'infantry', owner: 0, pos: { x: 0, y: 0 }, hp: 100 }],
+      funds: { 0: FUNDS, 1: 0 },
+    });
+    for (const u of Object.values(state.units)) {
+      if (u.owner === 0) {
+        u.hasMoved = true;
+        u.hasActed = true;
+      }
+    }
+
+    const ai = utilityAI({
+      name: 'high-floor-test',
+      useThreatMap: true,
+      useRoles: true,
+      buildPolicy: {
+        preferred: ['tank', 'recon', 'infantry'],
+        infantryFloor: 5,
+      },
+    });
+    const actions = ai.takeTurn({ state, player: 0, rng: createRng(1) });
+    const builds = actions.filter((a) => a.type === 'BUILD');
+    expect(builds.length).toBe(1);
+    const b = builds[0]!;
+    if (b.type !== 'BUILD') throw new Error('unreachable');
+    expect(b.unitType).toBe('infantry');
+  });
 });
 
 describe('personaAI runs end-to-end', () => {

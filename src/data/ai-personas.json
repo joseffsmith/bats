@@ -2,7 +2,7 @@
   "personas": [
     {
       "name": "aggressor",
-      "description": "Tank push. Accepts trades but still captures.",
+      "description": "Tank push with HQ-pressing infantry pushers. Accepts trades but still captures.",
       "weights": {
         "damageDealt": 1.2,
         "capture": 0.9,

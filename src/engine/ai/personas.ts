@@ -58,7 +58,7 @@ const WEIGHT_KEYS: ReadonlyArray<keyof AIWeights> = [
   'objective',
 ];
 
-const ROLES: ReadonlyArray<Role> = ['capturer', 'frontline', 'support', 'defender'];
+const ROLES: ReadonlyArray<Role> = ['capturer', 'frontline', 'support', 'defender', 'pusher'];
 
 const UNIT_TYPES_ALL: ReadonlyArray<UnitType> = [
   'infantry',
