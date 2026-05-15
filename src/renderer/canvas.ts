@@ -29,7 +29,14 @@ export { PLAYER_COLOURS };
 export const TILE_SIZE_DESKTOP = 48;
 export const TILE_SIZE_MOBILE = 32;
 export const MOBILE_BREAKPOINT = 768;
-export const HUD_HEIGHT = 56;
+
+/** Vertical space reserved at the top of the canvas for the DOM chrome
+ *  (mirrored player HUDs + turn indicator). */
+export const BOARD_TOP_INSET = 110;
+
+/** Vertical space reserved at the bottom of the canvas for the DOM chrome
+ *  (toolshelf + AI config + end-turn cluster). */
+export const BOARD_BOTTOM_INSET = 110;
 
 const NEUTRAL_HQ_OWNER_FILL = '#555';
 
@@ -142,8 +149,6 @@ export type CanvasRenderer = {
   tileToPixel(c: Coord): { x: number; y: number };
   /** Current viewport metrics from the last resize. */
   getViewport(): Viewport;
-  /** End-turn button hit rect (CSS pixels). */
-  getEndTurnRect(): { x: number; y: number; w: number; h: number };
 };
 
 export function createCanvasRenderer(
@@ -173,8 +178,13 @@ export function createCanvasRenderer(
     const gridW = cols * vp.tileSize;
     const gridH = rows * vp.tileSize;
     const x = Math.floor((vp.width - gridW) / 2);
-    // Push grid down to leave room for the HUD.
-    const y = Math.max(HUD_HEIGHT + 8, Math.floor((vp.height - gridH) / 2));
+    // Centre the grid inside the chrome-bounded area: between BOARD_TOP_INSET
+    // and (height - BOARD_BOTTOM_INSET). Clamp to never overlap the top chrome.
+    const usableH = vp.height - BOARD_TOP_INSET - BOARD_BOTTOM_INSET;
+    const y = Math.max(
+      BOARD_TOP_INSET + 8,
+      BOARD_TOP_INSET + Math.floor((usableH - gridH) / 2),
+    );
     return { x, y };
   }
 
@@ -207,11 +217,9 @@ export function createCanvasRenderer(
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('2D context unavailable');
     ctx.setTransform(vp.dpr, 0, 0, vp.dpr, 0, 0);
+    // Transparent clear — the body background (warm dark + noise) shows
+    // through, unifying the canvas with the DOM chrome.
     ctx.clearRect(0, 0, vp.width, vp.height);
-
-    // Backdrop.
-    ctx.fillStyle = '#1a1a1a';
-    ctx.fillRect(0, 0, vp.width, vp.height);
 
     // Apply camera shake: translate the drawing transform a couple pixels so
     // big-damage hits feel impactful. We add to the dpr-scaled transform.
@@ -227,6 +235,7 @@ export function createCanvasRenderer(
       );
     }
 
+    drawBoardFrame(ctx, state, vp);
     drawTerrain(ctx, state, vp);
     drawOwnerIndicators(ctx, state, vp);
     drawOverlays(ctx, vp, overlay);
@@ -243,20 +252,77 @@ export function createCanvasRenderer(
     getViewport(): Viewport {
       return viewport;
     },
-    getEndTurnRect(): { x: number; y: number; w: number; h: number } {
-      const w = 140;
-      const h = 36;
-      return {
-        x: viewport.width - w - 16,
-        y: viewport.height - h - 16,
-        w,
-        h,
-      };
-    },
   };
 }
 
 // ─────────────────────────── Drawing primitives ──────────────────────────────
+
+/** Warm bezel + corner brackets around the grid bounds. Matches the DOM
+ *  chrome's almanac aesthetic. */
+function drawBoardFrame(
+  ctx: CanvasRenderingContext2D,
+  state: GameState,
+  vp: Viewport,
+): void {
+  const map = state.map;
+  const cols = map[0]?.length ?? 0;
+  const rows = map.length;
+  const gridW = cols * vp.tileSize;
+  const gridH = rows * vp.tileSize;
+  const ox = vp.origin.x;
+  const oy = vp.origin.y;
+  const pad = 14;
+  const fx = ox - pad;
+  const fy = oy - pad;
+  const fw = gridW + pad * 2;
+  const fh = gridH + pad * 2;
+
+  // Drop shadow.
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.6)';
+  ctx.shadowBlur = 30;
+  ctx.shadowOffsetY = 12;
+  // Frame body — warm diagonal gradient.
+  const grad = ctx.createLinearGradient(fx, fy, fx, fy + fh);
+  grad.addColorStop(0, '#3a3024');
+  grad.addColorStop(1, '#2a2419');
+  ctx.fillStyle = grad;
+  ctx.fillRect(fx, fy, fw, fh);
+  ctx.restore();
+
+  // Inner highlight rule (gold).
+  ctx.strokeStyle = 'rgba(212, 168, 87, 0.18)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(fx + 0.5, fy + 0.5, fw - 1, fh - 1);
+
+  // Corner brackets.
+  ctx.strokeStyle = 'rgba(212, 168, 87, 0.55)';
+  ctx.lineWidth = 1;
+  const armLen = 14;
+  const inset = 5;
+  // top-left
+  bracket(ctx, fx + inset, fy + inset, armLen, armLen);
+  // top-right
+  bracket(ctx, fx + fw - inset, fy + inset, -armLen, armLen);
+  // bottom-left
+  bracket(ctx, fx + inset, fy + fh - inset, armLen, -armLen);
+  // bottom-right
+  bracket(ctx, fx + fw - inset, fy + fh - inset, -armLen, -armLen);
+}
+
+function bracket(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+): void {
+  ctx.beginPath();
+  ctx.moveTo(x + dx, y + 0.5);
+  ctx.lineTo(x + 0.5, y + 0.5);
+  ctx.lineTo(x + 0.5, y + dy);
+  ctx.stroke();
+}
 
 function drawTerrain(
   ctx: CanvasRenderingContext2D,
@@ -623,7 +689,7 @@ function drawDamagePreview(
   let by = p.y - h - 6;
   // Keep on-screen.
   if (bx + w > vp.width - 8) bx = p.x - w - 6;
-  if (by < HUD_HEIGHT + 4) by = p.y + ts + 6;
+  if (by < BOARD_TOP_INSET + 4) by = p.y + ts + 6;
   ctx.fillStyle = 'rgba(20,20,20,0.92)';
   ctx.fillRect(bx, by, w, h);
   ctx.strokeStyle = '#ffd84a';

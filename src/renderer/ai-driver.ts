@@ -20,14 +20,36 @@ import type { Rng } from '../engine/core/rng';
 import { previewAttack } from '../engine/systems/combat';
 import { utilityAI } from '../engine/ai/utility';
 import { randomAI } from '../engine/ai/random';
+import { personaAI } from '../engine/ai/personas';
 import type { AI } from '../engine/ai/types';
 import type { Emitter } from './emitter';
 import type { AnimationQueue } from './animations';
 import { log } from '../engine/core/logger';
 
-export type AIChoice = 'human' | 'random' | 'utility';
+export type AIChoice =
+  | 'human'
+  | 'random'
+  | 'utility'
+  | 'aggressor'
+  | 'turtle'
+  | 'economist'
+  | 'balanced';
 
-export const AI_CHOICES: ReadonlyArray<AIChoice> = ['human', 'random', 'utility'];
+/** Persona names exposed via the controller dropdown. Keep in sync with
+ *  `src/data/ai-personas.json` — the other agent maintains that file. */
+export const AI_PERSONA_CHOICES: ReadonlyArray<AIChoice> = [
+  'aggressor',
+  'turtle',
+  'economist',
+  'balanced',
+];
+
+export const AI_CHOICES: ReadonlyArray<AIChoice> = [
+  'human',
+  'random',
+  'utility',
+  ...AI_PERSONA_CHOICES,
+];
 
 export type AIDriverDeps = {
   emitter: Emitter;
@@ -75,7 +97,9 @@ export function createAIDriver(deps: AIDriverDeps): AIDriver {
   function makeAI(choice: AIChoice): AI | null {
     if (choice === 'human') return null;
     if (choice === 'random') return randomAI({ name: 'random' });
-    return utilityAI({ name: 'utility' });
+    if (choice === 'utility') return utilityAI({ name: 'utility' });
+    // Otherwise it's a persona name — defer to the persona factory.
+    return personaAI(choice);
   }
 
   function planTurnIfNeeded(): void {

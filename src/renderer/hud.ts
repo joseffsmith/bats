@@ -1,15 +1,15 @@
-// HUD: top bar (turn + current player + funds), end-turn button, action menu,
-// build menu. All drawn on the same Canvas as the map. No DOM elements.
+// Canvas HUD: tile-anchored popovers only (action menu, build menu).
+//
+// The persistent chrome — top player HUDs, turn indicator, end-turn button,
+// toolshelf — is rendered as DOM in chrome.ts. Anything that needs to anchor
+// to a specific tile coordinate stays on canvas so it scrolls with the board.
 //
 // Hit testing is exposed through helper functions so input.ts can map mouse
 // clicks back to HUD interactions without re-implementing layout.
 
 import type { GameState, PlayerId, UnitType } from '../engine/core/types';
 import { UNITS } from '../engine/data';
-import {
-  HUD_HEIGHT,
-  PLAYER_COLOURS,
-} from './canvas';
+import { BOARD_TOP_INSET } from './canvas';
 import type {
   ActionMenuEntry,
   BuildMenuEntry,
@@ -34,7 +34,6 @@ const BUILDABLE: ReadonlyArray<UnitType> = [
 ];
 
 export type HudHitTarget =
-  | { kind: 'end-turn' }
   | { kind: 'action-menu'; entry: ActionMenuEntry }
   | { kind: 'build-menu'; entry: BuildMenuEntry };
 
@@ -45,11 +44,9 @@ export type Hud = {
 };
 
 export function createHud(renderer: CanvasRenderer): Hud {
-  function draw(state: GameState, overlay: Overlay): void {
+  function draw(_state: GameState, overlay: Overlay): void {
     const ctx = renderer.canvas.getContext('2d');
     if (!ctx) return;
-    drawTopBar(ctx, renderer, state);
-    drawEndTurnButton(ctx, renderer, state);
     if (overlay.actionMenu) drawActionMenu(ctx, renderer, overlay.actionMenu);
     if (overlay.buildMenu) drawBuildMenu(ctx, renderer, overlay.buildMenu);
   }
@@ -79,86 +76,10 @@ export function createHud(renderer: CanvasRenderer): Hud {
         }
       }
     }
-    // End-turn button.
-    const r = renderer.getEndTurnRect();
-    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
-      return { kind: 'end-turn' };
-    }
     return null;
   }
 
   return { draw, hit };
-}
-
-// ─────────────────────────── Top bar ─────────────────────────────────────────
-
-function drawTopBar(
-  ctx: CanvasRenderingContext2D,
-  renderer: CanvasRenderer,
-  state: GameState,
-): void {
-  const vp = renderer.getViewport();
-  ctx.fillStyle = '#121418';
-  ctx.fillRect(0, 0, vp.width, HUD_HEIGHT);
-  ctx.fillStyle = '#222630';
-  ctx.fillRect(0, HUD_HEIGHT - 2, vp.width, 2);
-
-  const player = state.currentPlayer;
-  const palette = PLAYER_COLOURS[player];
-  // Player swatch.
-  ctx.fillStyle = palette.fill;
-  ctx.fillRect(16, 14, 28, 28);
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(16.5, 14.5, 27, 27);
-
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 16px -apple-system, BlinkMacSystemFont, sans-serif';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(`Player ${player + 1}`, 52, 28);
-
-  ctx.font = '12px -apple-system, BlinkMacSystemFont, sans-serif';
-  ctx.fillStyle = '#a8b0c0';
-  ctx.fillText(`Turn ${state.turn}`, 52, 46);
-
-  // Funds.
-  ctx.fillStyle = '#ffd84a';
-  ctx.font = 'bold 16px -apple-system, BlinkMacSystemFont, sans-serif';
-  ctx.fillText(
-    `$${state.players[player].funds.toLocaleString('en-US')}`,
-    160,
-    28,
-  );
-  const other: PlayerId = player === 0 ? 1 : 0;
-  ctx.fillStyle = '#7a8090';
-  ctx.font = '12px -apple-system, BlinkMacSystemFont, sans-serif';
-  ctx.fillText(
-    `opp $${state.players[other].funds.toLocaleString('en-US')}`,
-    160,
-    46,
-  );
-}
-
-// ─────────────────────────── End-turn button ─────────────────────────────────
-
-function drawEndTurnButton(
-  ctx: CanvasRenderingContext2D,
-  renderer: CanvasRenderer,
-  state: GameState,
-): void {
-  const r = renderer.getEndTurnRect();
-  const disabled = state.winner !== null;
-  ctx.fillStyle = disabled ? '#2a2a2a' : '#3a8a40';
-  ctx.fillRect(r.x, r.y, r.w, r.h);
-  ctx.strokeStyle = disabled ? '#3a3a3a' : '#7ec97e';
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(r.x + 0.75, r.y + 0.75, r.w - 1.5, r.h - 1.5);
-  ctx.fillStyle = disabled ? '#666' : '#fff';
-  ctx.font = 'bold 14px -apple-system, BlinkMacSystemFont, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('End Turn ⏎', r.x + r.w / 2, r.y + r.h / 2 + 1);
 }
 
 // ─────────────────────────── Action menu ─────────────────────────────────────
@@ -246,7 +167,7 @@ function buildMenuLayout(
   let y = tilePos.y;
   if (x + w > vp.width - 8) x = tilePos.x - w - 8;
   if (y + h > vp.height - 8) y = vp.height - h - 8;
-  if (y < HUD_HEIGHT + 4) y = HUD_HEIGHT + 4;
+  if (y < BOARD_TOP_INSET + 4) y = BOARD_TOP_INSET + 4;
   const items = menu.entries.map((entry, i) => ({
     entry,
     x: x + 4,

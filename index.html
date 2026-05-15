@@ -4,19 +4,61 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Tactical Engine</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT@0,9..144,300..700,30..100;1,9..144,300..700,30..100&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap"
+      rel="stylesheet"
+    />
     <style>
+      :root {
+        --bg: #14110d;
+        --bg-2: #1c1812;
+        --panel: #211c15;
+        --panel-2: #2a2419;
+        --rule: #3a3024;
+        --rule-strong: #5c4a2e;
+        --ink: #e8dcc0;
+        --ink-dim: #a39780;
+        --ink-faint: #6b6250;
+        --gold: #d4a857;
+        --gold-dim: #8a6f3a;
+        --p1: #d94545;
+        --p1-dim: #7a2828;
+        --p1-glow: rgba(217, 69, 69, 0.16);
+        --p2: #4a8db8;
+        --p2-dim: #2a5670;
+        --p2-glow: rgba(74, 141, 184, 0.16);
+      }
+
       html, body {
         margin: 0;
         padding: 0;
         height: 100%;
-        background: #1a1a1a;
+        background: var(--bg);
+        color: var(--ink);
         overflow: hidden;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-family: 'IBM Plex Mono', ui-monospace, monospace;
+        font-size: 14px;
+        -webkit-font-smoothing: antialiased;
       }
+
+      body {
+        background-image:
+          radial-gradient(ellipse 90% 70% at 50% 45%, rgba(212, 168, 87, 0.04) 0%, transparent 60%),
+          radial-gradient(ellipse 120% 100% at 50% 50%, transparent 0%, rgba(0, 0, 0, 0.55) 100%),
+          url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence baseFrequency='0.85' numOctaves='2' seed='3'/><feColorMatrix values='0 0 0 0 0.9  0 0 0 0 0.85  0 0 0 0 0.75  0 0 0 0.06 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+      }
+
       #app, canvas {
         display: block;
         width: 100vw;
         height: 100vh;
+      }
+
+      canvas {
+        position: absolute;
+        inset: 0;
       }
     </style>
   </head>

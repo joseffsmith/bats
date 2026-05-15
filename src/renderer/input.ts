@@ -267,12 +267,6 @@ export function createInputController(
   }
 
   function onHudClick(target: ReturnType<typeof hud.hit> & object): void {
-    if (target.kind === 'end-turn') {
-      log('render', 'end turn clicked');
-      emitter.dispatch({ type: 'END_TURN' });
-      setState({ kind: 'idle' }, inputState.kind);
-      return;
-    }
     if (target.kind === 'action-menu' && inputState.kind === 'action-menu') {
       const entry = target.entry;
       if (!entry.enabled) return;
