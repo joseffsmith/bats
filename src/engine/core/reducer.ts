@@ -165,12 +165,28 @@ function applyWait(
 }
 
 function applyEndTurn(state: GameState): void {
-  // 1. Income for the player whose turn just ended.
+  // 1. Auto-capture: any infantry of the ending player still standing on a
+  //    non-owned capturable tile that hasn't acted this turn continues its
+  //    capture. Matches genre convention (Advance Wars / Wargroove): once you
+  //    start capturing, you keep capturing unless you move or do something
+  //    else. The player overrides by selecting the unit and choosing another
+  //    action during their turn.
+  for (const u of Object.values(state.units)) {
+    if (u.owner !== state.currentPlayer) continue;
+    if (u.hasActed) continue;
+    if (!UNITS[u.type].canCapture) continue;
+    const tile = tileAt(state.map, u.pos);
+    if (!isCapturable(tile.terrain) || tile.owner === u.owner) continue;
+    resolveCapture(state, u);
+    u.hasMoved = true;
+    u.hasActed = true;
+  }
+  // 2. Income for the player whose turn just ended.
   grantIncome(state, state.currentPlayer);
-  // 2. Advance.
+  // 3. Advance.
   const nextPlayer: PlayerId = otherPlayer(state.currentPlayer);
   state.currentPlayer = nextPlayer;
-  // 3. Reset new currentPlayer's units' flags. Also reset captureProgress on
+  // 4. Reset new currentPlayer's units' flags. Also reset captureProgress on
   //    any of their units NOT standing on a capturable tile they don't own
   //    (defensive — should already be 0 if invariants hold).
   for (const u of Object.values(state.units)) {
@@ -182,7 +198,7 @@ function applyEndTurn(state: GameState): void {
       u.captureProgress = 0;
     }
   }
-  // 4. Bump turn counter (each END_TURN increments; two = a round).
+  // 5. Bump turn counter (each END_TURN increments; two = a round).
   state.turn += 1;
   log('engine', 'turn ended', {
     newCurrentPlayer: state.currentPlayer,

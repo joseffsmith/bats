@@ -331,9 +331,11 @@ export function createInputController(
       }
       case 'unit-selected': {
         const unit = inputState.unit;
-        // Re-clicking own unit cancels.
+        // Re-clicking own unit (stay-in-place) opens the action menu so the
+        // unit can Capture/Attack/Wait without moving. Right-click or Esc to
+        // cancel selection.
         if (occupant && occupant.id === unit.id) {
-          cancel();
+          openActionMenuFor(unit, unit.pos);
           return;
         }
         // Click another own unit -> switch selection.

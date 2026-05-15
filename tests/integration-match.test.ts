@@ -82,11 +82,13 @@ describe('integration: scripted mini-match', () => {
     });
     expect(st.units[p0Tank.id]!.pos).toEqual({ x: 6, y: 2 });
 
-    // END P0 turn → income: P0 owns HQ + factory = 2 × 1000 = 2000.
+    // END P0 turn → auto-capture fires on P0 infantry sitting on neutral
+    // city (2,1) → progress +10. Then income: P0 owns HQ + factory = 2000.
     st = reduce(st, { type: 'END_TURN' });
     expect(st.currentPlayer).toBe(1);
     expect(st.players[0]!.funds).toBe(2000);
     expect(st.turn).toBe(2);
+    expect(st.units[p0Inf.id]!.captureProgress).toBe(10);
 
     // ─────────────── TURN 1 (P1) ───────────────
     // P1 tank attacks P0 tank: tank vs tank on road (0 stars).
@@ -111,21 +113,24 @@ describe('integration: scripted mini-match', () => {
     });
     expect(st.units[p1Inf.id]!.pos).toEqual({ x: 6, y: 1 });
 
-    // END P1 turn → income: HQ + factory = 2000.
+    // END P1 turn → auto-capture fires on P1 infantry on (6,1) → +10.
+    // Income: HQ + factory = 2000. P0 infantry progress preserved.
     st = reduce(st, { type: 'END_TURN' });
     expect(st.players[1]!.funds).toBe(2000);
     expect(st.currentPlayer).toBe(0);
     expect(st.turn).toBe(3);
+    expect(st.units[p1Inf.id]!.captureProgress).toBe(10);
+    expect(st.units[p0Inf.id]!.captureProgress).toBe(10); // preserved
 
     // P0 flags reset.
     expect(st.units[p0Inf.id]!.hasMoved).toBe(false);
     expect(st.units[p0Tank.id]!.hasMoved).toBe(false);
 
     // ─────────────── TURN 2 (P0) ───────────────
-    // P0 infantry CAPTURE city at (2,1): progress += floor(100/10) = 10.
+    // P0 infantry CAPTURE city at (2,1): progress 10 + 10 = 20 → flip.
     st = reduce(st, { type: 'CAPTURE', unitId: p0Inf.id });
-    expect(st.units[p0Inf.id]!.captureProgress).toBe(10);
-    expect(st.map[1]![2]!.owner).toBeNull(); // not yet flipped
+    expect(st.units[p0Inf.id]!.captureProgress).toBe(0);
+    expect(st.map[1]![2]!.owner).toBe(0); // flipped to P0
 
     // P0 tank counter-attacks P1 tank.
     //   P0 tank at (6,2) hp 45 → P1 tank at (7,2) hp 76:
@@ -154,16 +159,18 @@ describe('integration: scripted mini-match', () => {
     expect(built.hasMoved).toBe(true);
     expect(built.hasActed).toBe(true);
 
-    // END P0 turn → income again: HQ + factory = +2000. funds: 1000 + 2000 = 3000.
+    // END P0 turn → income: now P0 owns HQ + factory + city (2,1) = +3000.
+    // funds: 1000 + 3000 = 4000.
     st = reduce(st, { type: 'END_TURN' });
-    expect(st.players[0]!.funds).toBe(3000);
+    expect(st.players[0]!.funds).toBe(4000);
     expect(st.turn).toBe(4);
     expect(st.currentPlayer).toBe(1);
 
     // ─────────────── TURN 2 (P1) ───────────────
-    // P1 infantry CAPTUREs (6,1) city: progress 10.
+    // P1 infantry CAPTUREs (6,1): progress 10 + 10 = 20 → flip.
     st = reduce(st, { type: 'CAPTURE', unitId: p1Inf.id });
-    expect(st.units[p1Inf.id]!.captureProgress).toBe(10);
+    expect(st.units[p1Inf.id]!.captureProgress).toBe(0);
+    expect(st.map[1]![6]!.owner).toBe(1); // flipped to P1
 
     // P1 tank finishes off the wounded P0 tank.
     //   P1 tank (52 HP) → P0 tank (17 HP):
@@ -179,16 +186,16 @@ describe('integration: scripted mini-match', () => {
     // P0 not routed: still has p0Inf + built unit.
     expect(st.winner).toBeNull();
 
-    // END P1 → income.
+    // END P1 → income: HQ + factory + (6,1) = +3000. Total 2000 + 3000 = 5000.
     st = reduce(st, { type: 'END_TURN' });
-    expect(st.players[1]!.funds).toBe(4000); // 2000 + (HQ + factory)
+    expect(st.players[1]!.funds).toBe(5000);
     expect(st.turn).toBe(5);
 
     // ─────────────── TURN 3 (P0) ───────────────
-    // P0 infantry CAPTUREs again — progress hits 20 → flip.
+    // (2,1) is already P0-owned; manual CAPTURE is now illegal → no-op.
     st = reduce(st, { type: 'CAPTURE', unitId: p0Inf.id });
     expect(st.units[p0Inf.id]!.captureProgress).toBe(0);
-    expect(st.map[1]![2]!.owner).toBe(0); // city flipped to P0
+    expect(st.map[1]![2]!.owner).toBe(0);
     expect(st.map[1]![2]!.terrain).toBe('city');
 
     // Built infantry can now move (flags reset by END_TURN).
@@ -209,15 +216,13 @@ describe('integration: scripted mini-match', () => {
 
     // Winner not set yet.
     expect(st.winner).toBeNull();
-    // P0 funds untouched (no END_TURN this turn): 3000.
-    expect(st.players[0]!.funds).toBe(3000);
-    // P1 funds: 4000.
-    expect(st.players[1]!.funds).toBe(4000);
-    // P0 owns city (2,1) and its HQ + factory → 3 income tiles next turn.
+    // P0 funds untouched (no END_TURN this turn): 4000.
+    expect(st.players[0]!.funds).toBe(4000);
+    // P1 funds: 5000.
+    expect(st.players[1]!.funds).toBe(5000);
+    // P0 owns city (2,1), HQ, factory; P1 owns city (6,1), HQ, factory.
     expect(st.map[1]![2]!.owner).toBe(0);
-    // P1 owns its HQ + factory only — neutral (6,1) belongs to P1 still in
-    // progress (captureProgress 10 on P1's infantry).
-    expect(st.units[p1Inf.id]!.captureProgress).toBe(10);
-    expect(st.map[1]![6]!.owner).toBeNull();
+    expect(st.map[1]![6]!.owner).toBe(1);
+    expect(st.units[p1Inf.id]!.captureProgress).toBe(0);
   });
 });
