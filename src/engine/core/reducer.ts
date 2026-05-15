@@ -65,6 +65,12 @@ export function reduce(state: GameState, action: Action): GameState {
     case 'WAIT':
       applyWait(next, action);
       break;
+    case 'LOAD':
+      applyLoad(next, action);
+      break;
+    case 'UNLOAD':
+      applyUnload(next, action);
+      break;
     case 'END_TURN':
       applyEndTurn(next);
       break;
@@ -97,6 +103,13 @@ function applyMove(
   u.pos = { x: dest.x, y: dest.y };
   u.hasMoved = true;
   if (movedOff) resetCapture(u);
+  // Cargo pos tracks the transport's pos for sanity.
+  if (u.cargo && u.cargo.length > 0) {
+    for (const cid of u.cargo) {
+      const c = state.units[cid];
+      if (c) c.pos = { x: dest.x, y: dest.y };
+    }
+  }
   log('engine', 'unit moved', { id: u.id, to: u.pos, cost: r.cost });
 }
 
@@ -108,16 +121,32 @@ function applyAttack(
   const t = state.units[action.targetId];
   if (!a || !t) return;
   const res = resolveAttack(state, a, t);
-  // Remove destroyed units.
+  // Remove destroyed units. When a transport is destroyed, every cargo unit
+  // listed in its manifest is also destroyed (units cannot survive the loss
+  // of their carrier).
   if (res.defenderDestroyed) {
-    delete state.units[t.id];
+    destroyUnit(state, t.id);
   }
   if (res.attackerDestroyed) {
-    delete state.units[a.id];
+    destroyUnit(state, a.id);
     return; // attacker gone, no flag updates needed
   }
   a.hasMoved = true;
   a.hasActed = true;
+}
+
+/** Remove a unit (and its cargo, if it's a transport) from state.units. */
+function destroyUnit(state: GameState, id: UnitId): void {
+  const u = state.units[id];
+  if (!u) return;
+  if (u.cargo && u.cargo.length > 0) {
+    for (const cid of [...u.cargo]) {
+      // Recurse only one level — cargo can't itself carry cargo in v1.
+      delete state.units[cid];
+      log('engine', 'unit destroyed', { id: cid, reason: 'carrier lost' });
+    }
+  }
+  delete state.units[id];
 }
 
 function applyCapture(
@@ -164,6 +193,50 @@ function applyWait(
   log('engine', 'unit waited', { id: u.id });
 }
 
+function applyLoad(
+  state: GameState,
+  action: Extract<Action, { type: 'LOAD' }>,
+): void {
+  const cargo = state.units[action.cargoId];
+  const transport = state.units[action.transportId];
+  if (!cargo || !transport) return;
+  // Cargo moves onto the transport's tile, then is loaded.
+  cargo.pos = { x: transport.pos.x, y: transport.pos.y };
+  cargo.loadedIn = transport.id;
+  cargo.hasMoved = true;
+  cargo.hasActed = true;
+  resetCapture(cargo); // entering a transport breaks any active capture
+  if (!transport.cargo) transport.cargo = [];
+  transport.cargo.push(cargo.id);
+  log('engine', 'unit loaded', { cargo: cargo.id, transport: transport.id });
+}
+
+function applyUnload(
+  state: GameState,
+  action: Extract<Action, { type: 'UNLOAD' }>,
+): void {
+  const transport = state.units[action.transportId];
+  const cargo = state.units[action.cargoId];
+  if (!transport || !cargo) return;
+  // Drop cargo onto destination tile; remove from transport manifest.
+  cargo.pos = { x: action.destination.x, y: action.destination.y };
+  delete cargo.loadedIn;
+  cargo.hasMoved = true;
+  cargo.hasActed = true;
+  if (transport.cargo) {
+    transport.cargo = transport.cargo.filter((id) => id !== cargo.id);
+  }
+  // Standard AW rule: transport itself is marked acted by UNLOAD even if it
+  // hadn't moved this turn — UNLOAD consumes its action.
+  transport.hasMoved = true;
+  transport.hasActed = true;
+  log('engine', 'unit unloaded', {
+    cargo: cargo.id,
+    transport: transport.id,
+    to: cargo.pos,
+  });
+}
+
 function applyEndTurn(state: GameState): void {
   // 1. Auto-capture: any infantry of the ending player still standing on a
   //    non-owned capturable tile that hasn't acted this turn continues its
@@ -174,6 +247,7 @@ function applyEndTurn(state: GameState): void {
   for (const u of Object.values(state.units)) {
     if (u.owner !== state.currentPlayer) continue;
     if (u.hasActed) continue;
+    if (u.loadedIn !== undefined) continue; // loaded units never auto-capture
     if (!UNITS[u.type].canCapture) continue;
     const tile = tileAt(state.map, u.pos);
     if (!isCapturable(tile.terrain) || tile.owner === u.owner) continue;

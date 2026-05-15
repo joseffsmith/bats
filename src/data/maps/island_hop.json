@@ -34,6 +34,10 @@
   },
   "units": [
     { "type": "infantry", "owner": 0, "pos": { "x": 3, "y": 3 } },
-    { "type": "infantry", "owner": 1, "pos": { "x": 12, "y": 3 } }
+    { "type": "infantry", "owner": 0, "pos": { "x": 7, "y": 2 } },
+    { "type": "transport", "owner": 0, "pos": { "x": 8, "y": 2 } },
+    { "type": "infantry", "owner": 1, "pos": { "x": 12, "y": 3 } },
+    { "type": "infantry", "owner": 1, "pos": { "x": 10, "y": 2 } },
+    { "type": "transport", "owner": 1, "pos": { "x": 9, "y": 2 } }
   ]
 }

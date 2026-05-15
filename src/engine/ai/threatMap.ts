@@ -110,8 +110,10 @@ export function computeThreatMap(
 
   for (const enemy of Object.values(state.units)) {
     if (enemy.owner !== attackerPlayer) continue;
-    const reach = bfsReachIgnoringEnemyBlockers(state, enemy);
+    if (enemy.loadedIn !== undefined) continue; // cargo can't threaten
     const stats = UNITS[enemy.type];
+    if (stats.maxRange <= 0) continue; // non-combat (transports)
+    const reach = bfsReachIgnoringEnemyBlockers(state, enemy);
 
     for (const reachKey of reach) {
       const [rxs, rys] = reachKey.split(',');

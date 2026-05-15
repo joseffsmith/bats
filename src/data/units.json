@@ -48,5 +48,17 @@
     "maxRange": 1,
     "canCapture": false,
     "indirect": false
+  },
+  {
+    "type": "transport",
+    "cost": 5000,
+    "move": 6,
+    "movementClass": "sea",
+    "minRange": 0,
+    "maxRange": 0,
+    "canCapture": false,
+    "indirect": false,
+    "cargoCapacity": 1,
+    "cargoMovementClasses": ["foot"]
   }
 ]

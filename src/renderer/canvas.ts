@@ -85,6 +85,7 @@ const UNIT_LETTER: Record<UnitType, string> = {
   tank: 'T',
   artillery: 'A',
   copter: 'C',
+  transport: 'X',
 };
 
 // ─────────────────────────── View state ──────────────────────────────────────
@@ -111,7 +112,7 @@ export type Overlay = {
 };
 
 export type ActionMenuEntry = {
-  label: 'Attack' | 'Capture' | 'Wait';
+  label: 'Attack' | 'Capture' | 'Wait' | 'Unload';
   enabled: boolean;
 };
 
@@ -474,6 +475,9 @@ function drawUnits(
   }
 
   for (const unit of Object.values(state.units)) {
+    // Loaded cargo isn't drawn separately — its carrier renders a cargo
+    // badge instead.
+    if (unit.loadedIn !== undefined) continue;
     drawUnit(
       ctx,
       state,
@@ -652,6 +656,24 @@ function drawUnit(
     const filled = Math.max(0, (displayHp / 100) * barW);
     ctx.fillStyle = segments >= 6 ? '#7ed957' : segments >= 3 ? '#ffd84a' : '#ff5050';
     ctx.fillRect(renderX + 3, barY, filled, barH);
+  }
+
+  // Cargo indicator: small filled dot on the top-right when a transport is
+  // carrying at least one unit. Renders inside the unit cell so it's visible
+  // even when sprites are missing (tests use blank sprites).
+  if (unit.cargo && unit.cargo.length > 0) {
+    const dotR = Math.max(3, Math.floor(ts * 0.10));
+    const cx = renderX + ts - dotR - 4;
+    const cy = renderY + dotR + 4;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#222';
+    ctx.font = `bold ${Math.floor(ts * 0.18)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(unit.cargo.length), cx, cy + 1);
   }
 
   // Capture progress: tiny coloured pip on top-left.

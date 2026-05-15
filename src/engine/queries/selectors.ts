@@ -36,12 +36,17 @@ export function tilesInRange(
  * Enemy units that `unit` can attack from its current position. For direct
  * units this is adjacent enemies. For indirect (artillery) this is enemies at
  * Manhattan distance ∈ [2, 3].
+ *
+ * Loaded units (cargo aboard a transport) are NOT targetable: combat sees only
+ * free-standing units.
  */
 export function attackableTargets(state: GameState, unit: Unit): Unit[] {
   const stats = UNITS[unit.type];
+  if (stats.maxRange <= 0) return []; // transports / non-combat
   const out: Unit[] = [];
   for (const other of Object.values(state.units)) {
     if (other.owner === unit.owner) continue;
+    if (other.loadedIn !== undefined) continue;
     const d = manhattan(unit.pos, other.pos);
     if (d >= stats.minRange && d <= stats.maxRange) out.push(other);
   }

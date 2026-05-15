@@ -138,3 +138,16 @@ Questions and assumptions logged during autonomous execution. Resolved questions
   copter). All matchups degenerate into capture grinds with whoever
   builds a copter first walking to the enemy HQ. Re-include once
   transports land.
+- **Transports landed; AI integration deferred.** The engine now has a
+  `transport` unit type with LOAD/UNLOAD actions and island_hop ships
+  starting transports + factory-buildable transport. The utility AI
+  (Tiers 1–3) currently IGNORES transports for decision-making: it
+  skips loaded cargo when ordering units, transports themselves have
+  no useful candidate actions (minRange=0 → no attacks; no capture;
+  no LOAD/UNLOAD enumeration in `generateCandidates`), so the AI will
+  WAIT them out. The random AI may BUILD transports randomly; that's
+  acceptable for engine sanity. A follow-up task is to teach the
+  utility AI to (a) ferry an infantry across the sea on island_hop,
+  and (b) include transports in `enumerateBuilds` with a coastal-
+  factory heuristic. Until then, re-adding island_hop to the tournament
+  is gated on AI behaviour, not engine support.

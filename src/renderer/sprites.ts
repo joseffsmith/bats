@@ -63,6 +63,7 @@ const UNIT_TYPES: ReadonlyArray<UnitType> = [
   'tank',
   'artillery',
   'copter',
+  'transport',
 ];
 
 const PLAYERS: ReadonlyArray<PlayerId> = [0, 1];
@@ -128,6 +129,9 @@ function paintSprite(ctx: Ctx, type: UnitType, owner: PlayerId, variant: SpriteV
       break;
     case 'copter':
       paintCopter(ctx, body, dark, light, detail);
+      break;
+    case 'transport':
+      paintTransport(ctx, body, dark, light);
       break;
   }
   if (variant === 'damaged') paintDents(ctx);
@@ -326,6 +330,61 @@ function paintCopter(ctx: Ctx, body: string, dark: string, _light: string, detai
   ctx.fillStyle = body;
   ctx.beginPath();
   ctx.arc(S * 0.5, S * 0.34, S * 0.04, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function paintTransport(ctx: Ctx, body: string, dark: string, light: string): void {
+  const S = SPRITE_SIZE;
+  // Water hint: faint waves below the hull.
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.18, S * 0.82);
+  ctx.quadraticCurveTo(S * 0.3, S * 0.78, S * 0.42, S * 0.82);
+  ctx.quadraticCurveTo(S * 0.54, S * 0.86, S * 0.66, S * 0.82);
+  ctx.quadraticCurveTo(S * 0.78, S * 0.78, S * 0.82, S * 0.82);
+  ctx.stroke();
+  // Hull: trapezoid pointing right.
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.16, S * 0.6);
+  ctx.lineTo(S * 0.78, S * 0.6);
+  ctx.lineTo(S * 0.86, S * 0.74);
+  ctx.lineTo(S * 0.22, S * 0.74);
+  ctx.closePath();
+  ctx.fill();
+  // Deckline.
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.16, S * 0.6);
+  ctx.lineTo(S * 0.78, S * 0.6);
+  ctx.stroke();
+  // Cabin block.
+  ctx.fillStyle = light;
+  roundedRect(ctx, S * 0.34, S * 0.4, S * 0.26, S * 0.18, 3);
+  ctx.fill();
+  // Cabin window strip.
+  ctx.fillStyle = dark;
+  ctx.fillRect(S * 0.38, S * 0.46, S * 0.18, S * 0.04);
+  // Stack.
+  ctx.fillStyle = dark;
+  roundedRect(ctx, S * 0.6, S * 0.34, S * 0.08, S * 0.18, 1);
+  ctx.fill();
+  // Bow flag mast.
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.22, S * 0.6);
+  ctx.lineTo(S * 0.22, S * 0.42);
+  ctx.stroke();
+  // Flag.
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.22, S * 0.42);
+  ctx.lineTo(S * 0.3, S * 0.46);
+  ctx.lineTo(S * 0.22, S * 0.5);
+  ctx.closePath();
   ctx.fill();
 }
 

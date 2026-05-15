@@ -116,7 +116,9 @@ function collectCandidates(state: GameState, unit: Unit): Array<{
 function ownedUnits(state: GameState, player: number): Unit[] {
   const out: Unit[] = [];
   for (const u of Object.values(state.units)) {
-    if (u.owner === player) out.push(u);
+    if (u.owner !== player) continue;
+    if (u.loadedIn !== undefined) continue; // cargo can't act
+    out.push(u);
   }
   return out;
 }
@@ -168,6 +170,7 @@ function enumerateBuilds(state: GameState, player: number): Action[] {
 
 function occupied(state: GameState, x: number, y: number): boolean {
   for (const u of Object.values(state.units)) {
+    if (u.loadedIn !== undefined) continue;
     if (u.pos.x === x && u.pos.y === y) return true;
   }
   return false;

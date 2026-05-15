@@ -79,6 +79,19 @@ describe('map data', () => {
     expect(state.map[2]![14]!.owner).toBe(1);
   });
 
+  it('island_hop ships each player a starting transport on the sea band', () => {
+    const state = loadMap(islandHopMap as unknown);
+    const transports = Object.values(state.units).filter((u) => u.type === 'transport');
+    expect(transports).toHaveLength(2);
+    // Each transport sits on a sea tile.
+    for (const t of transports) {
+      expect(state.map[t.pos.y]![t.pos.x]!.terrain).toBe('sea');
+    }
+    // One per player.
+    const owners = transports.map((t) => t.owner).sort();
+    expect(owners).toEqual([0, 1]);
+  });
+
   it('canyon has the mountain spine and roads along the edges', () => {
     const state = loadMap(canyonMap as unknown);
     expect(state.map[0]!.every((t) => t.terrain === 'road')).toBe(true);

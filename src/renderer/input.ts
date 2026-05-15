@@ -39,8 +39,8 @@ import type {
   PlayerId,
   Unit,
 } from '../engine/core/types';
-import { coordEq, isCapturable, tileAt, unitAt } from '../engine/core/types';
-import { UNITS } from '../engine/data';
+import { coordEq, inBounds, isCapturable, tileAt, unitAt } from '../engine/core/types';
+import { TERRAIN, UNITS } from '../engine/data';
 import {
   attackableTargets,
   reachableTiles,
@@ -80,6 +80,15 @@ export type InputState =
       unit: Unit;
       targets: Unit[];
       hover: Unit | null;
+    }
+  | {
+      // Transport's UNLOAD-target picker: like attack-targeting but the
+      // targets are adjacent tiles into which the (single, for now) cargo
+      // unit can disembark.
+      kind: 'unload-targeting';
+      transport: Unit;
+      cargo: Unit;
+      destinations: Coord[];
     }
   | {
       kind: 'build-menu-open';
@@ -162,6 +171,14 @@ export function createInputController(
             received: dmg.counterReceived,
           };
         }
+        break;
+      }
+      case 'unload-targeting': {
+        ov.selected = inputState.transport.pos;
+        // Re-use the moveRange overlay (blue tint) for unload destinations —
+        // visually distinct from the red attack-range and the player's eye
+        // is already trained to read blue as "where this unit acts".
+        ov.moveRange = inputState.destinations;
         break;
       }
       case 'build-menu-open':
@@ -283,6 +300,23 @@ export function createInputController(
       } else if (entry.label === 'Wait') {
         commit({ type: 'WAIT', unitId: unit.id });
         setState({ kind: 'idle' }, 'action-menu');
+      } else if (entry.label === 'Unload') {
+        // Transport with cargo. For v1 we only support cargoCapacity=1, so
+        // there is at most one cargo unit and the picker just chooses an
+        // adjacent destination tile. The cargo to UNLOAD is the first in
+        // the manifest.
+        const state = emitter.getState();
+        const carrier = state.units[unit.id];
+        const cargoId = carrier?.cargo?.[0];
+        if (!carrier || !cargoId) return;
+        const cargo = state.units[cargoId];
+        if (!cargo) return;
+        const destinations = adjacentUnloadDestinations(state, carrier, cargo);
+        if (destinations.length === 0) return;
+        setState(
+          { kind: 'unload-targeting', transport: carrier, cargo, destinations },
+          'action-menu',
+        );
       }
       return;
     }
@@ -331,6 +365,26 @@ export function createInputController(
         if (occupant && occupant.id === unit.id) {
           openActionMenuFor(unit, unit.pos);
           return;
+        }
+        // Click a friendly transport-with-capacity that's in our reach ->
+        // dispatch a LOAD (single action that absorbs the MOVE).
+        if (
+          occupant &&
+          occupant.owner === state.currentPlayer &&
+          occupant.id !== unit.id &&
+          isLoadable(occupant, unit)
+        ) {
+          const reach = inputState.reachable.find((r) => coordEq(r.coord, tile));
+          if (reach && reach.path.length > 0) {
+            commit({
+              type: 'LOAD',
+              cargoId: unit.id,
+              transportId: occupant.id,
+              path: reach.path,
+            });
+            setState({ kind: 'idle' }, 'unit-selected');
+            return;
+          }
         }
         // Click another own unit -> switch selection.
         if (occupant && occupant.owner === state.currentPlayer) {
@@ -401,6 +455,21 @@ export function createInputController(
         }
         commit({ type: 'ATTACK', attackerId: inputState.unit.id, targetId: enemy.id });
         setState({ kind: 'idle' }, 'attack-targeting');
+        return;
+      }
+      case 'unload-targeting': {
+        const dest = inputState.destinations.find((c) => coordEq(c, tile));
+        if (!dest) {
+          cancel();
+          return;
+        }
+        commit({
+          type: 'UNLOAD',
+          transportId: inputState.transport.id,
+          cargoId: inputState.cargo.id,
+          destination: dest,
+        });
+        setState({ kind: 'idle' }, 'unload-targeting');
         return;
       }
       case 'build-menu-open':
@@ -496,6 +565,7 @@ function computeActionMenuEntries(
   const stats = UNITS[unit.type];
   const canAttack =
     !unit.hasActed &&
+    stats.maxRange > 0 &&
     (!stats.indirect || !unit.hasMoved) &&
     attackableTargets(state, unit).length > 0;
   if (canAttack) entries.push({ label: 'Attack', enabled: true });
@@ -508,11 +578,67 @@ function computeActionMenuEntries(
     }
   }
 
+  // Unload: transports carrying cargo, with at least one valid adjacent
+  // destination tile. Per AW convention this is offered after the
+  // transport's MOVE (or in place of a MOVE if it stays put).
+  if (!unit.hasActed && stats.cargoCapacity > 0 && unit.cargo && unit.cargo.length > 0) {
+    const cargoId = unit.cargo[0];
+    const cargo = cargoId ? state.units[cargoId] : undefined;
+    if (cargo) {
+      const dests = adjacentUnloadDestinations(state, unit, cargo);
+      if (dests.length > 0) entries.push({ label: 'Unload', enabled: true });
+    }
+  }
+
   // Wait: always available so the player can park the unit.
   entries.push({ label: 'Wait', enabled: !unit.hasActed });
   return entries;
 }
 
+/**
+ * True if `cargo` can legally LOAD into `transport`:
+ *   - transport has capacity,
+ *   - transport accepts cargo's movement class.
+ */
+function isLoadable(transport: Unit, cargo: Unit): boolean {
+  const tStats = UNITS[transport.type];
+  if (tStats.cargoCapacity <= 0) return false;
+  const cStats = UNITS[cargo.type];
+  if (!tStats.cargoMovementClasses.includes(cStats.movementClass)) return false;
+  const carried = transport.cargo?.length ?? 0;
+  return carried < tStats.cargoCapacity;
+}
+
+/**
+ * Adjacent tiles (4-neighbour) onto which `cargo` can disembark from
+ * `transport`. A tile is valid if it's in-bounds, unoccupied, and passable
+ * for the cargo's movement class.
+ */
+function adjacentUnloadDestinations(
+  state: GameState,
+  transport: Unit,
+  cargo: Unit,
+): Coord[] {
+  const out: Coord[] = [];
+  const cls = UNITS[cargo.type].movementClass;
+  const deltas: ReadonlyArray<Coord> = [
+    { x: 0, y: -1 },
+    { x: 1, y: 0 },
+    { x: 0, y: 1 },
+    { x: -1, y: 0 },
+  ];
+  for (const d of deltas) {
+    const c: Coord = { x: transport.pos.x + d.x, y: transport.pos.y + d.y };
+    if (!inBounds(state.map, c)) continue;
+    if (unitAt(state, c)) continue;
+    const tile = tileAt(state.map, c);
+    const cost = TERRAIN[tile.terrain].moveCost[cls];
+    if (!Number.isFinite(cost)) continue;
+    out.push(c);
+  }
+  return out;
+}
+
 // Expose the helper for tests.
-export const __test = { computeActionMenuEntries };
+export const __test = { computeActionMenuEntries, isLoadable, adjacentUnloadDestinations };
 export type { PlayerId };

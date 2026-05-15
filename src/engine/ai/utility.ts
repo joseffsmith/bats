@@ -801,7 +801,11 @@ function bfsReachIgnoringUnits(state: GameState, unit: Unit): Set<string> {
 function orderedOwnedUnits(state: GameState, player: PlayerId): string[] {
   const mine: Unit[] = [];
   for (const u of Object.values(state.units)) {
-    if (u.owner === player) mine.push(u);
+    if (u.owner !== player) continue;
+    // Loaded cargo can't act this turn — skip. Transports themselves may
+    // still WAIT but the utility AI ignores them (scope-cut; QUESTIONS.md).
+    if (u.loadedIn !== undefined) continue;
+    mine.push(u);
   }
   mine.sort((a, b) => {
     const costA = UNITS[a.type].cost;
@@ -926,6 +930,7 @@ function unownedCapturables(state: GameState, player: PlayerId): number {
 
 function occupied(state: GameState, x: number, y: number): boolean {
   for (const u of Object.values(state.units)) {
+    if (u.loadedIn !== undefined) continue;
     if (u.pos.x === x && u.pos.y === y) return true;
   }
   return false;

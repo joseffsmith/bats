@@ -33,6 +33,10 @@ export type UnitDef = {
   maxRange: number;
   canCapture: boolean;
   indirect: boolean;
+  /** Maximum number of units this transport can carry. 0 = not a transport. */
+  cargoCapacity: number;
+  /** Movement classes accepted as cargo. Empty = not a transport. */
+  cargoMovementClasses: ReadonlyArray<MovementClass>;
 };
 
 export type TerrainDef = {
@@ -58,6 +62,7 @@ const UNIT_TYPES: ReadonlyArray<UnitType> = [
   'tank',
   'artillery',
   'copter',
+  'transport',
 ];
 
 const TERRAIN_TYPES: ReadonlyArray<TerrainType> = [
@@ -183,6 +188,18 @@ export function loadUnits(json: unknown): Record<UnitType, UnitDef> {
     const type = asEnum(o.type, UNIT_TYPES, `${path}.type`);
     if (seen.has(type)) fail(`${path}.type`, `duplicate unit type "${type}"`);
     seen.add(type);
+    // Cargo fields are optional; default to non-transport (0 / []).
+    let cargoCapacity = 0;
+    let cargoMovementClasses: ReadonlyArray<MovementClass> = [];
+    if ('cargoCapacity' in o && o.cargoCapacity !== undefined) {
+      cargoCapacity = asNonNegInt(o.cargoCapacity, `${path}.cargoCapacity`);
+    }
+    if ('cargoMovementClasses' in o && o.cargoMovementClasses !== undefined) {
+      const arrCm = asArray(o.cargoMovementClasses, `${path}.cargoMovementClasses`);
+      cargoMovementClasses = arrCm.map((v, j) =>
+        asEnum(v, MOVEMENT_CLASSES, `${path}.cargoMovementClasses[${j}]`),
+      );
+    }
     const def: UnitDef = {
       cost: asNonNegInt(o.cost, `${path}.cost`),
       move: asPositiveInt(o.move, `${path}.move`),
@@ -191,10 +208,14 @@ export function loadUnits(json: unknown): Record<UnitType, UnitDef> {
         MOVEMENT_CLASSES,
         `${path}.movementClass`,
       ),
-      minRange: asPositiveInt(o.minRange, `${path}.minRange`),
-      maxRange: asPositiveInt(o.maxRange, `${path}.maxRange`),
+      // Transports are non-combat (minRange=maxRange=0); attack validators
+      // gate on `maxRange > 0` so we allow 0 here.
+      minRange: asNonNegInt(o.minRange, `${path}.minRange`),
+      maxRange: asNonNegInt(o.maxRange, `${path}.maxRange`),
       canCapture: asBool(o.canCapture, `${path}.canCapture`),
       indirect: asBool(o.indirect, `${path}.indirect`),
+      cargoCapacity,
+      cargoMovementClasses,
     };
     if (def.minRange > def.maxRange) {
       fail(path, `minRange (${def.minRange}) > maxRange (${def.maxRange})`);

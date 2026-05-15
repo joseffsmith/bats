@@ -23,14 +23,19 @@ const UNIT_LETTER: Record<UnitType, string> = {
   tank: 'T',
   artillery: 'A',
   copter: 'C',
+  transport: 'X',
 };
 
+// Transports are buildable from any factory in this first pass. A future
+// iteration may restrict transports to coastal factories (factories with a
+// sea tile within Manhattan distance 1) so they can actually launch.
 const BUILDABLE: ReadonlyArray<UnitType> = [
   'infantry',
   'recon',
   'tank',
   'artillery',
   'copter',
+  'transport',
 ];
 
 export type HudHitTarget =
