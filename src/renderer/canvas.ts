@@ -11,6 +11,7 @@
 import type {
   Coord,
   GameState,
+  PlayerId,
   Unit,
   UnitType,
 } from '../engine/core/types';
