@@ -2,7 +2,7 @@
   "personas": [
     {
       "name": "aggressor",
-      "description": "Tank push with HQ-pressing infantry pushers. Adds bombers/fighters for air-heavy maps, cruisers/submarines for sea-heavy maps. Accepts trades but still captures.",
+      "description": "Tank push with HQ-pressing infantry pushers. Adds bombers/fighters for air-heavy maps, cruisers/submarines for sea-heavy maps. Now ferries infantry on amphibious maps via the starting transports/landers. Accepts trades but still captures.",
       "weights": {
         "damageDealt": 1.2,
         "capture": 0.9,
@@ -16,13 +16,13 @@
       },
       "buildPolicy": {
         "preferred": ["bomber", "cruiser", "tank", "fighter", "recon", "infantry"],
-        "avoid": ["artillery", "submarine", "carrier", "transport", "lander"],
+        "avoid": ["artillery", "carrier"],
         "infantryFloor": 3
       }
     },
     {
       "name": "turtle",
-      "description": "Tank + infantry walls on terrain. Slow push; ignores recon. Adds aatank for air defence and cruiser/battleship for sea defence.",
+      "description": "Tank + infantry walls on terrain. Slow push; ignores recon. Adds aatank for air defence and cruiser/battleship for sea defence. Uses starting submarines on naval maps.",
       "weights": {
         "damageDealt": 1.0,
         "capture": 1.6,
@@ -43,7 +43,7 @@
     },
     {
       "name": "economist",
-      "description": "Cheap-units swarm; captures fast and supports with a tank or two. Adds cruiser as a mid-cost sea fighter; avoids expensive air/sea capships and transports the AI can't yet operate.",
+      "description": "Cheap-units swarm; captures fast and supports with a tank or two. Adds cruiser as a mid-cost sea fighter. Uses starting transports/landers to ferry infantry but doesn't build new ones.",
       "weights": {
         "damageDealt": 1.0,
         "capture": 1.8,
@@ -58,13 +58,13 @@
       },
       "buildPolicy": {
         "preferred": ["cruiser", "tank", "infantry", "recon", "aatank", "infantry"],
-        "avoid": ["copter", "bomber", "battleship", "submarine", "carrier", "fighter", "lander", "transport"],
+        "avoid": ["copter", "bomber", "battleship", "submarine", "carrier", "fighter"],
         "infantryFloor": 2
       }
     },
     {
       "name": "balanced",
-      "description": "Tuned tier3 baseline — no major weight changes, control persona. Lightly extended with a representative mix of new unit types.",
+      "description": "Tuned tier3 baseline — no major weight changes, control persona. Lightly extended with a representative mix of new unit types; uses starting amphibious units via the new candidate generator.",
       "weights": {
         "damageDealt": 1.0,
         "capture": 1.5,
