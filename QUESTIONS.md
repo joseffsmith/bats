@@ -217,13 +217,17 @@ Questions and assumptions logged during autonomous execution. Resolved questions
   0.55. AW uses a half-strength dim for "explored once, currently
   dark" to communicate that terrain is known even if current vision
   is gone. Deferred to v1.1.
-- **Last-known-position ghosts.** When an enemy unit leaves vision,
-  render a faded sprite at the last visible tile. Big strategic-feel
-  upgrade for little code; deferred to v1.1.
-- **Forest-hides-ground / mountain vision bonus.** AW gives forest
-  tiles a "hide ground units from observers >1 away" rule and
-  mountain tiles +3 vision. Both deferred to v1.1 — see
-  `plans/fog-of-war.md`.
+- **Last-known-position ghosts.** Shipped in fog v1.1. Memory lives
+  on `players[p].seenEnemies`; the renderer draws half-opacity
+  silhouettes for ghosts whose tile is currently dark. Pruning rule
+  is positive disproof only (the observer scouts the tile and sees
+  it empty); no time-based aging.
+- **Forest-hides-ground / mountain vision bonus.** Both shipped in
+  fog v1.1. Mountain is a single `MOUNTAIN_VISION_BONUS = 3` constant
+  in selectors.ts; forest-hides applies only to foot/wheel/tread
+  classes under fog, with an adjacent-spotter reveal (mirrors the
+  existing submerged-sub stealth pattern in `viewStateForPlayer` and
+  `isVisibleTo`).
 - **Hot-seat view-swap on END_TURN.** The renderer pins viewer to
   `state.currentPlayer` or the `?view=p0|p1` override. The plan
   suggested an optional fade on viewer change for hot-seat play,
@@ -234,4 +238,33 @@ Questions and assumptions logged during autonomous execution. Resolved questions
   vs tier1-fog wins ≥7/10 on duel at this value; crossroads / armada
   / island_hop / canyon / highlands haven't been measured under fog.
   Open: do they hold without re-tuning?
+
+## Fog v1.1 (builder)
+
+- **`PHANTOM_SENTINEL` deviation.** The plan called for stamping
+  phantoms with `loadedIn = PHANTOM_SENTINEL` mirroring the
+  `FOG_HIDDEN_SENTINEL` trick, but the cargo-skip pattern is shared
+  by threat-map + futureThreat + a dozen other call sites, so the
+  sentinel would hide phantoms from the threat map — defeating the
+  point. Implemented with `phantom?: boolean` on Unit instead.
+  `unitAt` and `attackableTargets` skip phantoms; threat-map naturally
+  picks them up. Documented in code.
+- **Phantom + ghost-of-destroyed-unit edge case.** If an enemy is
+  destroyed while the viewer has a stale ghost AND the viewer never
+  observes the destruction, the ghost persists as a phantom in
+  `viewStateForPlayer` indefinitely — until the viewer scouts the
+  tile and proves it empty. Matches AW-DS behaviour (you don't know
+  the unit is dead). Could surprise players in long games.
+- **Aggressive AI numbers on non-duel maps.** Fog-acceptance still
+  holds tier3-fog ≥7/10 on duel after Aggressive ghost consumption
+  landed. Crossroads / armada / island_hop / canyon / highlands
+  not yet measured under fog v1.1 — same gap as v1.0 noted above.
+- **Mountain bonus + air units.** Bonus applies to ANY unit on a
+  mountain tile, including air units that happen to end a turn there.
+  In practice the terrain table makes mountain impassable to
+  wheel/tread/sea, so the only mountain-standers are foot and air.
+  Air units ignore ground-terrain movement costs, so they CAN end
+  on mountains; bonus stacks. Probably fine — air recon at altitude
+  + mountain peak is intuitive. Flagged in case it shows up in
+  tournament balance.
 

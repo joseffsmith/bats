@@ -282,8 +282,20 @@ Fog of war shipped behind the `?fog=on` URL param + toolshelf toggle (see
 `plans/fog-of-war.md`). Per-unit `visionRange` lives in `src/data/units.json`;
 `visibleTiles` and `viewStateForPlayer` in `src/engine/queries/selectors.ts`
 do the actual masking. The AI plans against the filtered state when fog is
-on; tier3-fog still beats tier1-fog ≥7/10 on duel. Last-known-position
-ghosts, forest-hides-ground, and mountain vision bonus are deferred to v1.1.
+on; tier3-fog still beats tier1-fog ≥7/10 on duel.
+
+Fog v1.1 (see `plans/fog-v1.1.md`) added the three deferred AW rules:
+mountain vision bonus (+3, `MOUNTAIN_VISION_BONUS` in selectors.ts),
+forest-hides-ground (foot/wheel/tread on forest is hidden unless an
+observer is at Manhattan-1), and last-known-position ghosts. Ghost
+memory lives on `players[p].seenEnemies` (initialised by
+`enableFogMemory` and bookkept by `updateSeenEnemies` after every legal
+action — positive disproof only, no time cap). The fog-aware AI consumes
+ghosts as phantoms via `viewStateForPlayer`: hidden enemies with a
+ghost are reified at the last-known position with `phantom: true`, so
+the threat map plans around them while `unitAt` and `attackableTargets`
+ignore them. Acceptance: tier3-fog still beats tier1-fog ≥7/10 on duel
+under Aggressive ghost consumption.
 
 ---
 
