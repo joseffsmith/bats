@@ -128,7 +128,7 @@ export function drawTerrain(
           drawHQ(ctx, px, py, ts, tile.owner);
           break;
         case 'factory':
-          drawFactory(ctx, px, py, ts, tile.owner);
+          drawFactory(ctx, px, py, ts, tile.owner, seed);
           break;
       }
 
@@ -273,11 +273,16 @@ function drawForest(
   ];
   trees.sort((a, b) => a.y - b.y);
 
+  // Subtle sway: each tree gets its own slow horizontal sine, phased by the
+  // tile seed + tree index. Amplitude is a fraction of a pixel × tile-size.
+  const now = performance.now() / 1000;
   for (let i = 0; i < trees.length; i++) {
     const t = trees[i]!;
     const jitterX = (hashAt(seed, i + 1) - 0.5) * 0.05;
     const jitterY = (hashAt(seed, i + 5) - 0.5) * 0.05;
-    const tx = px + ts * (t.x + jitterX);
+    const swayPhase = now * 0.45 + (seed * Math.PI * 2) + i * 0.7;
+    const sway = Math.sin(swayPhase) * 0.012; // ±1.2% of tile
+    const tx = px + ts * (t.x + jitterX + sway);
     const ty = py + ts * (t.y + jitterY);
     const sz = ts * t.size;
     drawPine(ctx, tx, ty, sz, t.shade);
@@ -395,25 +400,31 @@ function drawSea(
   ctx.strokeStyle = SEA.crest;
   ctx.lineWidth = 1;
   ctx.lineCap = 'round';
+  // Slow per-tile wave phase: 0.6Hz, phased by tile hash so neighbours don't
+  // breathe in lockstep. Amplitude is a tiny fraction of the tile so the
+  // waves "ripple" rather than thrash.
+  const t = performance.now() / 1000;
+  const phase = (t * 0.6 + seed * Math.PI * 2) % (Math.PI * 2);
+  const ripple = Math.sin(phase) * ts * 0.012;
   const wave = (cy: number): void => {
     ctx.beginPath();
-    ctx.moveTo(px + ts * 0.12, cy);
-    ctx.quadraticCurveTo(px + ts * 0.30, cy - ts * 0.04, px + ts * 0.5, cy);
-    ctx.quadraticCurveTo(px + ts * 0.70, cy + ts * 0.04, px + ts * 0.88, cy);
+    ctx.moveTo(px + ts * 0.12, cy + ripple);
+    ctx.quadraticCurveTo(px + ts * 0.30, cy - ts * 0.04 + ripple, px + ts * 0.5, cy - ripple);
+    ctx.quadraticCurveTo(px + ts * 0.70, cy + ts * 0.04 - ripple, px + ts * 0.88, cy + ripple);
     ctx.stroke();
   };
   wave(py + ts * (0.30 + hashAt(seed, 1) * 0.10));
   wave(py + ts * (0.62 + hashAt(seed, 2) * 0.10));
 
-  // Cyan glint on one of the wave crests.
-  ctx.fillStyle = SEA.glint;
-  if (hashAt(seed, 7) > 0.55) {
-    ctx.fillRect(
-      px + ts * (0.30 + hashAt(seed, 8) * 0.40),
-      py + ts * (0.30 + hashAt(seed, 9) * 0.30),
-      ts * 0.10,
-      1,
-    );
+  // Animated glint: blinks on/off at a per-tile-phased ~0.4Hz so the surface
+  // sparkles without any single point being a constant bright dot.
+  const glintT = (t * 0.4 + seed * 7) % 1;
+  if (glintT < 0.18 && hashAt(seed, 7) > 0.35) {
+    const a = (1 - glintT / 0.18); // fade out over the visible window
+    ctx.fillStyle = `rgba(180, 230, 250, ${0.7 * a})`;
+    const gx = px + ts * (0.30 + hashAt(seed, 8) * 0.40);
+    const gy = py + ts * (0.30 + hashAt(seed, 9) * 0.30);
+    ctx.fillRect(gx, gy, ts * 0.12, 1);
   }
 }
 
@@ -574,6 +585,7 @@ function drawFactory(
   py: number,
   ts: number,
   owner: PlayerId | null,
+  seed: number,
 ): void {
   // Concrete pad.
   ctx.fillStyle = FACTORY.ground;
@@ -634,13 +646,32 @@ function drawFactory(
   ctx.fillStyle = FACTORY.towerCap;
   ctx.fillRect(towerX - ts * 0.02, towerY - ts * 0.02, towerW + ts * 0.04, ts * 0.04);
 
-  // Steam plume rising from the tower.
-  ctx.fillStyle = FACTORY.steam;
-  ctx.beginPath();
-  ctx.arc(towerX + towerW * 0.5, towerY - ts * 0.06, ts * 0.07, 0, Math.PI * 2);
-  ctx.arc(towerX + towerW * 0.3, towerY - ts * 0.14, ts * 0.06, 0, Math.PI * 2);
-  ctx.arc(towerX + towerW * 0.7, towerY - ts * 0.16, ts * 0.05, 0, Math.PI * 2);
-  ctx.fill();
+  // Steam plume rising from the tower — three blobs that loop independently,
+  // each with its own offset within a 3.6s cycle. They rise, drift sideways,
+  // and dissipate (alpha → 0) before respawning at the source.
+  const now = performance.now() / 1000;
+  const period = 3.6;
+  const blobCount = 3;
+  for (let i = 0; i < blobCount; i++) {
+    // Stagger each blob by 1/blobCount of the period, plus a per-tile phase
+    // offset so neighbouring factories don't puff in lockstep.
+    const local = (now + (i / blobCount) * period + seed * period) % period;
+    const t = local / period; // 0..1
+    const lift = ts * 0.32 * t;
+    const drift = Math.sin((seed + i) * 7.3) * ts * 0.04 + (t - 0.5) * ts * 0.06;
+    const r = ts * (0.05 + t * 0.04);
+    const alpha = 0.55 * Math.sin(Math.PI * t); // ramp up + dissipate
+    ctx.fillStyle = `rgba(225, 225, 225, ${alpha.toFixed(3)})`;
+    ctx.beginPath();
+    ctx.arc(
+      towerX + towerW * 0.5 + drift,
+      towerY - ts * 0.04 - lift,
+      r,
+      0,
+      Math.PI * 2,
+    );
+    ctx.fill();
+  }
 
   // Small storage tank between hangar and tower.
   ctx.fillStyle = FACTORY.tank;

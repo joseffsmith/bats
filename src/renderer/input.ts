@@ -51,6 +51,7 @@ import { log } from '../engine/core/logger';
 import type { CanvasRenderer, Overlay } from './canvas';
 import type { Emitter } from './emitter';
 import type { AnimationQueue } from './animations';
+import { enqueueAttackEffects } from './attack-effects';
 import { buildMenuEntries, createHud } from './hud';
 import type { ActionMenuEntry, BuildMenuEntry } from './canvas';
 
@@ -510,29 +511,21 @@ export function createInputController(
       return;
     }
     if (action.type === 'ATTACK') {
-      animQueue.enqueueAttack(action.attackerId, action.targetId);
       const target = state.units[action.targetId];
       const attacker = state.units[action.attackerId];
       if (!target || !attacker) return;
-      // Predict death + HP tween + camera shake so the renderer can react.
-      const dmg = previewAttack(state, action.attackerId, action.targetId);
-      const targetFinalHp = Math.max(0, target.hp - dmg.dealt);
-      const attackerFinalHp = Math.max(0, attacker.hp - dmg.counterReceived);
-      // Camera shake when either side takes a >40 HP hit.
-      if (dmg.dealt > 40 || dmg.counterReceived > 40) {
-        animQueue.enqueueShake();
-      }
-      // HP tween for survivors; the death fade replaces the bar for the fallen.
-      if (targetFinalHp > 0) {
-        animQueue.enqueueHpTween(target.id, target.hp, targetFinalHp);
-      }
-      if (attackerFinalHp > 0 && dmg.counterReceived > 0) {
-        animQueue.enqueueHpTween(attacker.id, attacker.hp, attackerFinalHp);
-      }
-      if (targetFinalHp <= 0) {
-        animQueue.enqueueDeath(target.id, target.pos);
-      } else if (attackerFinalHp <= 0) {
-        animQueue.enqueueDeath(attacker.id, attacker.pos);
+      enqueueAttackEffects(animQueue, state, action.attackerId, action.targetId);
+    }
+    if (action.type === 'CAPTURE') {
+      // Predict whether THIS capture flips the tile so we can flash on commit.
+      const u = state.units[action.unitId];
+      if (!u) return;
+      const tile = state.map[u.pos.y]?.[u.pos.x];
+      if (!tile) return;
+      const progressGain = Math.floor(u.hp / 10);
+      const willFlip = u.captureProgress + progressGain >= 20;
+      if (willFlip) {
+        animQueue.enqueueCaptureFlash(u.pos, u.owner);
       }
     }
   }

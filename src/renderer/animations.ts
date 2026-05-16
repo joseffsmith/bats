@@ -41,6 +41,15 @@ export type AttackAnim = {
   kind: 'attack';
   attackerId: UnitId;
   targetId: UnitId;
+  /** Frozen at enqueue time so the projectile arc survives mid-flight deaths. */
+  attackerPos?: Coord;
+  targetPos?: Coord;
+  /** Predicted damage values, used by the floating damage labels. */
+  damageDealt?: number;
+  counterReceived?: number;
+  /** True for indirect-fire units (artillery). Renderer draws a parabolic arc
+   *  and we use a longer duration so the projectile has time to travel. */
+  arc?: boolean;
   startMs: number;
   durationMs: number;
 };
@@ -80,12 +89,47 @@ export type CameraShakeAnim = {
   durationMs: number;
 };
 
+/** Visual-less sentinel that blocks the queue cursor for a short beat after a
+ *  big hit. Renderer ignores it; its only effect is delaying subsequent
+ *  blocking anims (death, next attack). */
+export type HitPauseAnim = {
+  kind: 'hitPause';
+  startMs: number;
+  durationMs: number;
+};
+
+/** Floating "-NN" label that rises and fades over the defender's tile. */
+export type DamageLabelAnim = {
+  kind: 'damageLabel';
+  /** Tile the label spawns from. */
+  pos: Coord;
+  /** Absolute damage value to display (positive integer). */
+  value: number;
+  /** Heavy hits use a different colour treatment. */
+  big: boolean;
+  startMs: number;
+  durationMs: number;
+};
+
+/** Radial pulse over a capturable tile when ownership flips. */
+export type CaptureFlashAnim = {
+  kind: 'captureFlash';
+  pos: Coord;
+  /** New owner; renderer pulses in their palette colour. */
+  newOwner: 0 | 1;
+  startMs: number;
+  durationMs: number;
+};
+
 export type Anim =
   | MoveAnim
   | AttackAnim
   | DeathAnim
   | HpTweenAnim
-  | CameraShakeAnim;
+  | CameraShakeAnim
+  | HitPauseAnim
+  | DamageLabelAnim
+  | CaptureFlashAnim;
 
 export type AnimationQueueDeps = {
   /** Called when the queue transitions from empty -> active or active -> empty. */
@@ -102,20 +146,60 @@ export type AnimationQueueDeps = {
 
 export const MOVE_MS = 300;
 export const ATTACK_MS = 250;
+/** Longer duration for indirect-fire attacks so the parabolic projectile has
+ *  time to arc visibly. */
+export const ATTACK_ARC_MS = 420;
 export const DEATH_MS = 400;
 export const HP_TWEEN_MS = 200;
 export const SHAKE_MS = 150;
 export const SHAKE_THRESHOLD_HP = 40;
 export const SHAKE_MAGNITUDE_PX = 2;
 export const DEATH_PARTICLE_COUNT = 10;
+/** Projectile flight time as a fraction of the parent AttackAnim duration. The
+ *  remaining window is spent on impact + flash. */
+export const PROJECTILE_FRACTION = 0.45;
+/** Muzzle flash duration as a fraction of the parent AttackAnim duration. */
+export const MUZZLE_FLASH_FRACTION = 0.18;
+/** Beat of silence after a big hit before death/next anim plays. */
+export const HIT_PAUSE_MS = 80;
+/** Damage threshold (HP) for triggering a hit pause + big-impact visuals. */
+export const HIT_PAUSE_THRESHOLD_HP = 30;
+/** Floating damage-label lifespan. */
+export const DAMAGE_LABEL_MS = 650;
+/** Capture-flash radial pulse lifespan. */
+export const CAPTURE_FLASH_MS = 520;
+
+export type AttackEnqueueOpts = {
+  /** Attacker tile at attack time (renderer needs the launch point). */
+  attackerPos?: Coord;
+  /** Target tile at attack time (renderer needs the impact point). */
+  targetPos?: Coord;
+  /** Predicted damage dealt to target. Drives the floating "-NN" label. */
+  damageDealt?: number;
+  /** Predicted counter damage received by attacker. Drives a label on the
+   *  attacker's tile too. */
+  counterReceived?: number;
+  /** Indirect-fire unit (artillery, battleship): projectile follows a
+   *  parabolic arc and the anim lasts longer. */
+  arc?: boolean;
+};
 
 export type AnimationQueue = {
   enqueueMove(unitId: UnitId, path: Coord[]): void;
-  enqueueAttack(attackerId: UnitId, targetId: UnitId): void;
+  enqueueAttack(attackerId: UnitId, targetId: UnitId, opts?: AttackEnqueueOpts): void;
   enqueueDeath(unitId: UnitId, pos: Coord): void;
-  enqueueHpTween(unitId: UnitId, fromHp: number, toHp: number): void;
-  /** Enqueue a camera-shake parallel to the in-flight ATTACK (does not block). */
-  enqueueShake(magnitudePx?: number): void;
+  /** HP bar tween. `delayMs` lets the caller align the slide with the impact
+   *  moment of a preceding attack (rather than the swing). */
+  enqueueHpTween(unitId: UnitId, fromHp: number, toHp: number, delayMs?: number): void;
+  /** Enqueue a camera-shake parallel to the in-flight ATTACK (does not block).
+   *  `delayMs` aligns the shake with the impact moment. */
+  enqueueShake(magnitudePx?: number, delayMs?: number): void;
+  /** Block the queue cursor for `durationMs` after the current chain. */
+  enqueueHitPause(durationMs?: number): void;
+  /** Floating damage label that rises + fades over `pos`. */
+  enqueueDamageLabel(pos: Coord, value: number, big: boolean, delayMs?: number): void;
+  /** Radial pulse over a tile when it flips ownership. */
+  enqueueCaptureFlash(pos: Coord, newOwner: 0 | 1): void;
   /** Active animations (still running at `now()`). */
   active(): Anim[];
   /** True if any *blocking* animation is in progress or scheduled in the future. */
@@ -171,9 +255,15 @@ export function createAnimationQueue(deps: AnimationQueueDeps = {}): AnimationQu
   const ended = new WeakSet<Anim>();
 
   function isBlocking(kind: Anim['kind']): boolean {
-    // HP tween + camera shake run alongside the main animation chain; they do
-    // not gate input or advance the cursor.
-    return kind !== 'hpTween' && kind !== 'shake';
+    // HP tween, camera shake, damage labels, and capture flashes run alongside
+    // the main animation chain; they do not gate input or advance the cursor.
+    // hitPause IS blocking — it exists to delay the chain.
+    return (
+      kind !== 'hpTween' &&
+      kind !== 'shake' &&
+      kind !== 'damageLabel' &&
+      kind !== 'captureFlash'
+    );
   }
 
   function setBusy(b: boolean): void {
@@ -194,9 +284,11 @@ export function createAnimationQueue(deps: AnimationQueueDeps = {}): AnimationQu
     deps.onTick?.();
   }
 
-  function scheduleParallel(anim: Anim): void {
-    // Parallel anims start as soon as possible (now) and don't push the cursor.
-    const t = now();
+  function scheduleParallel(anim: Anim, delayMs: number = 0): void {
+    // Parallel anims start as soon as possible (now + delay) and don't push
+    // the cursor. `delayMs` lets the caller align with the impact moment of a
+    // preceding attack.
+    const t = now() + Math.max(0, delayMs);
     anim.startMs = t;
     queue.push(anim);
     log('render', 'animation enqueued (parallel)', { kind: anim.kind, start: t });
@@ -240,14 +332,21 @@ export function createAnimationQueue(deps: AnimationQueueDeps = {}): AnimationQu
         durationMs: MOVE_MS,
       });
     },
-    enqueueAttack(attackerId, targetId): void {
-      scheduleBlocking({
+    enqueueAttack(attackerId, targetId, opts): void {
+      const arc = opts?.arc ?? false;
+      const anim: AttackAnim = {
         kind: 'attack',
         attackerId,
         targetId,
+        arc,
         startMs: 0,
-        durationMs: ATTACK_MS,
-      });
+        durationMs: arc ? ATTACK_ARC_MS : ATTACK_MS,
+      };
+      if (opts?.attackerPos) anim.attackerPos = opts.attackerPos;
+      if (opts?.targetPos) anim.targetPos = opts.targetPos;
+      if (opts?.damageDealt !== undefined) anim.damageDealt = opts.damageDealt;
+      if (opts?.counterReceived !== undefined) anim.counterReceived = opts.counterReceived;
+      scheduleBlocking(anim);
     },
     enqueueDeath(unitId, pos): void {
       scheduleBlocking({
@@ -259,24 +358,59 @@ export function createAnimationQueue(deps: AnimationQueueDeps = {}): AnimationQu
         particles: createDeathParticles(random),
       });
     },
-    enqueueHpTween(unitId, fromHp, toHp): void {
+    enqueueHpTween(unitId, fromHp, toHp, delayMs = 0): void {
       // Skip no-ops.
       if (fromHp === toHp) return;
-      scheduleParallel({
-        kind: 'hpTween',
-        unitId,
-        fromHp,
-        toHp,
+      scheduleParallel(
+        {
+          kind: 'hpTween',
+          unitId,
+          fromHp,
+          toHp,
+          startMs: 0,
+          durationMs: HP_TWEEN_MS,
+        },
+        delayMs,
+      );
+    },
+    enqueueShake(magnitudePx = SHAKE_MAGNITUDE_PX, delayMs = 0): void {
+      scheduleParallel(
+        {
+          kind: 'shake',
+          magnitudePx,
+          startMs: 0,
+          durationMs: SHAKE_MS,
+        },
+        delayMs,
+      );
+    },
+    enqueueHitPause(durationMs = HIT_PAUSE_MS): void {
+      scheduleBlocking({
+        kind: 'hitPause',
         startMs: 0,
-        durationMs: HP_TWEEN_MS,
+        durationMs,
       });
     },
-    enqueueShake(magnitudePx = SHAKE_MAGNITUDE_PX): void {
+    enqueueDamageLabel(pos, value, big, delayMs = 0): void {
+      scheduleParallel(
+        {
+          kind: 'damageLabel',
+          pos,
+          value,
+          big,
+          startMs: 0,
+          durationMs: DAMAGE_LABEL_MS,
+        },
+        delayMs,
+      );
+    },
+    enqueueCaptureFlash(pos, newOwner): void {
       scheduleParallel({
-        kind: 'shake',
-        magnitudePx,
+        kind: 'captureFlash',
+        pos,
+        newOwner,
         startMs: 0,
-        durationMs: SHAKE_MS,
+        durationMs: CAPTURE_FLASH_MS,
       });
     },
     active(): Anim[] {

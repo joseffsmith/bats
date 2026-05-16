@@ -225,6 +225,7 @@ export function createCanvasRenderer(
     drawOverlays(ctx, vp, overlay);
     drawUnits(ctx, state, vp, anim, overlay, deps.sprites, fog.on ? viewer : null);
     if (fog.on) drawFogMask(ctx, state, vp, viewer);
+    drawVignette(ctx, vp);
     drawWinnerBanner(ctx, state, vp);
   }
 
@@ -331,14 +332,45 @@ function drawOverlays(
   for (const c of overlay.movePath ?? []) {
     fillTile(ctx, vp, c, 'rgba(255, 220, 80, 0.45)');
   }
-  // Selected unit border.
+  // Selected unit: animated dashed ring instead of a static border.
   if (overlay.selected) {
     const px = vp.origin.x + overlay.selected.x * ts;
     const py = vp.origin.y + overlay.selected.y * ts;
-    ctx.lineWidth = 3;
+    ctx.save();
+    ctx.lineWidth = 2.5;
     ctx.strokeStyle = '#ffd84a';
-    ctx.strokeRect(px + 2, py + 2, ts - 4, ts - 4);
+    // Dash pattern: 4 dashes per cycle, ~6deg/cycle phase per ms.
+    const phase = (performance.now() / 1000) * 30; // deg/s
+    ctx.setLineDash([Math.max(6, ts * 0.18), Math.max(4, ts * 0.12)]);
+    ctx.lineDashOffset = -phase;
+    // Slightly inset rounded square — easier on the eye than a hard corner.
+    const inset = 2;
+    const r = Math.max(3, ts * 0.10);
+    roundedStroke(ctx, px + inset, py + inset, ts - inset * 2, ts - inset * 2, r);
+    ctx.restore();
   }
+}
+
+function roundedStroke(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+): void {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+  ctx.stroke();
 }
 
 function fillTile(
@@ -448,6 +480,25 @@ function drawUnits(
     drawGhosts(ctx, state, vp, observer, fogVisible, sprites);
   }
 
+  // Attack effects (muzzle flash + projectile + impact) — drawn on top of
+  // units (and any fog ghosts) so the flash and explosion read clearly.
+  for (const a of active) {
+    if (a.kind !== 'attack') continue;
+    drawAttackEffects(ctx, vp, a);
+  }
+
+  // Capture flashes — radial pulse when a tile flips ownership.
+  for (const a of active) {
+    if (a.kind !== 'captureFlash') continue;
+    drawCaptureFlash(ctx, vp, a);
+  }
+
+  // Floating damage labels — drawn last so they read above everything.
+  for (const a of active) {
+    if (a.kind !== 'damageLabel') continue;
+    drawDamageLabel(ctx, vp, a);
+  }
+
   // Damage preview tooltip.
   if (overlay.damagePreview) {
     drawDamagePreview(ctx, vp, overlay.damagePreview);
@@ -547,6 +598,14 @@ function drawUnit(
     const p = tileTopLeft(vp, unit.pos);
     renderX = p.x;
     renderY = p.y;
+    // Idle bob — subtle ±1px vertical sine wobble, phase per-unit so the
+    // platoon doesn't breathe in lockstep. Greyed-out (acted) units don't
+    // bob; mid-MOVE units don't either (handled above).
+    if (!(unit.hasMoved && unit.hasActed)) {
+      const hash = idleHash(unit.id);
+      const wobble = Math.sin(performance.now() / 600 + hash * Math.PI * 2);
+      renderY += wobble * Math.max(0.7, ts * 0.025);
+    }
   }
 
   // Attack lunge: short horizontal jitter for the attacker. The amplitude is
@@ -679,6 +738,246 @@ function tileTopLeft(vp: Viewport, c: Coord): { x: number; y: number } {
     x: vp.origin.x + c.x * vp.tileSize,
     y: vp.origin.y + c.y * vp.tileSize,
   };
+}
+
+/**
+ * Subtle dark vignette around the viewport edges, plus a tiny warm overlay
+ * to give the board a cinematic frame without obscuring tiles. Drawn after
+ * everything else; the fog mask is unaffected because the radial gradient
+ * is mostly transparent in the centre.
+ */
+function drawVignette(ctx: CanvasRenderingContext2D, vp: Viewport): void {
+  const w = vp.width;
+  const h = vp.height;
+  ctx.save();
+  ctx.globalCompositeOperation = 'multiply';
+  const cx = w / 2;
+  const cy = h / 2;
+  const r0 = Math.min(w, h) * 0.45;
+  const r1 = Math.hypot(w, h) * 0.6;
+  const grad = ctx.createRadialGradient(cx, cy, r0, cx, cy, r1);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(1, 'rgba(180,165,135,1)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+  ctx.restore();
+}
+
+/** Stable [0,1) hash from a unit id for per-unit animation phase offsets. */
+function idleHash(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 10000) / 10000;
+}
+
+/**
+ * Draw the in-flight effects derived from an AttackAnim: muzzle flash at the
+ * attacker, projectile flying toward the target (straight line or parabolic
+ * arc), and an impact burst on the target.
+ *
+ * All three effects share the AttackAnim's start time and duration. Phases:
+ *   [0 .. PROJECTILE_FRACTION]            projectile flies
+ *   [0 .. MUZZLE_FLASH_FRACTION]          muzzle flash visible
+ *   [PROJECTILE_FRACTION .. 1.0]          impact burst
+ *
+ * Positions live on the anim record (frozen at enqueue time) so an attacker
+ * or target dying mid-attack doesn't leave a dangling projectile.
+ */
+function drawAttackEffects(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  anim: import('./animations').AttackAnim,
+): void {
+  if (!anim.attackerPos || !anim.targetPos) return;
+  const ts = vp.tileSize;
+  const t = (performance.now() - anim.startMs) / anim.durationMs;
+  if (t < 0 || t > 1) return;
+  const a = tileTopLeft(vp, anim.attackerPos);
+  const b = tileTopLeft(vp, anim.targetPos);
+  const ax = a.x + ts / 2;
+  const ay = a.y + ts / 2;
+  const bx = b.x + ts / 2;
+  const by = b.y + ts / 2;
+  const projFrac = (
+    anim.arc ? 0.7 : 0.45 // arcs land slightly later in their own window
+  );
+  const dx = bx - ax;
+  const dy = by - ay;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  // ── Muzzle flash (first ~18% of attack window) ──────────────────────────
+  if (t < 0.18) {
+    const flashT = t / 0.18;
+    const r = ts * 0.30 * (1 - flashT);
+    if (r > 0.5 && dist > 0) {
+      const nx = dx / dist;
+      const ny = dy / dist;
+      // Position the flash just off the attacker's centre toward the target.
+      const fx = ax + nx * ts * 0.18;
+      const fy = ay + ny * ts * 0.18;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const grad = ctx.createRadialGradient(fx, fy, 0, fx, fy, r);
+      grad.addColorStop(0, 'rgba(255,240,180,0.95)');
+      grad.addColorStop(0.4, 'rgba(255,180,60,0.55)');
+      grad.addColorStop(1, 'rgba(255,80,20,0.0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(fx, fy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+  // ── Projectile (first projFrac of window) ───────────────────────────────
+  if (t < projFrac) {
+    const p = t / projFrac;
+    let px = ax + dx * p;
+    let py = ay + dy * p;
+    if (anim.arc) {
+      // Parabolic arc: deflect upward by an amount proportional to distance.
+      const arcHeight = Math.min(ts * 1.6, dist * 0.45);
+      py -= Math.sin(Math.PI * p) * arcHeight;
+    }
+    ctx.save();
+    if (anim.arc) {
+      // Shell: small dark dot with a soft glow.
+      ctx.fillStyle = 'rgba(40,40,40,0.85)';
+      ctx.beginPath();
+      ctx.arc(px, py, Math.max(2, ts * 0.06), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    } else {
+      // Tracer: short streak from a few px behind to the projectile head.
+      const back = Math.max(0, p - 0.18);
+      const ex = ax + dx * back;
+      const ey = ay + dy * back;
+      ctx.strokeStyle = 'rgba(255,230,150,0.95)';
+      ctx.lineWidth = Math.max(2, ts * 0.06);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(ex, ey);
+      ctx.lineTo(px, py);
+      ctx.stroke();
+      // Bright head dot.
+      ctx.fillStyle = 'rgba(255,250,210,1)';
+      ctx.beginPath();
+      ctx.arc(px, py, Math.max(1.5, ts * 0.04), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+  // ── Impact (after the projectile lands) ─────────────────────────────────
+  if (t >= projFrac) {
+    const big = (anim.damageDealt ?? 0) > 30;
+    const impactT = (t - projFrac) / (1 - projFrac); // 0..1
+    const r = ts * (big ? 0.55 : 0.32) * Math.min(1, impactT * 2);
+    const fade = 1 - impactT;
+    if (r > 0.5 && fade > 0) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const grad = ctx.createRadialGradient(bx, by, 0, bx, by, r);
+      grad.addColorStop(0, `rgba(255,240,180,${0.95 * fade})`);
+      grad.addColorStop(0.45, `rgba(255,150,60,${0.55 * fade})`);
+      grad.addColorStop(1, 'rgba(180,40,20,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(bx, by, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      // Soot ring on big hits — short-lived dark ring outside the fireball.
+      if (big && impactT > 0.25 && impactT < 0.9) {
+        const ringR = r * 0.95;
+        ctx.save();
+        ctx.strokeStyle = `rgba(40,20,10,${0.35 * (1 - impactT)})`;
+        ctx.lineWidth = Math.max(1, ts * 0.04);
+        ctx.beginPath();
+        ctx.arc(bx, by, ringR, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+}
+
+/**
+ * Floating damage number on the defender's tile. Rises, fades, and snaps
+ * larger for big hits.
+ */
+function drawDamageLabel(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  anim: import('./animations').DamageLabelAnim,
+): void {
+  const ts = vp.tileSize;
+  const elapsed = performance.now() - anim.startMs;
+  if (elapsed < 0) return;
+  const t = Math.min(1, elapsed / anim.durationMs);
+  const p = tileTopLeft(vp, anim.pos);
+  const rise = ts * 0.55 * t;
+  const cx = p.x + ts / 2;
+  const cy = p.y + ts * 0.4 - rise;
+  // Pop-in: scale 0.6 → 1.15 → 1.0 over the first ~25% of life.
+  const pop = t < 0.25 ? 0.6 + (t / 0.25) * 0.55 : 1.15 - Math.min(1, (t - 0.25) / 0.25) * 0.15;
+  const fade = t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3;
+  const size = Math.floor(ts * (anim.big ? 0.42 : 0.32) * pop);
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, fade);
+  ctx.font = `900 ${size}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  // Black outline so the number reads against any terrain.
+  ctx.lineWidth = Math.max(2, size * 0.18);
+  ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+  ctx.strokeText(`-${anim.value}`, cx, cy);
+  ctx.fillStyle = anim.big ? '#ffd14a' : '#ffffff';
+  ctx.fillText(`-${anim.value}`, cx, cy);
+  ctx.restore();
+}
+
+/**
+ * Radial pulse over a tile when its ownership flips. The pulse expands from
+ * the tile centre and fades, tinted with the new owner's palette colour.
+ */
+function drawCaptureFlash(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  anim: import('./animations').CaptureFlashAnim,
+): void {
+  const ts = vp.tileSize;
+  const elapsed = performance.now() - anim.startMs;
+  if (elapsed < 0) return;
+  const t = Math.min(1, elapsed / anim.durationMs);
+  const p = tileTopLeft(vp, anim.pos);
+  const cx = p.x + ts / 2;
+  const cy = p.y + ts / 2;
+  const palette = PLAYER_COLOURS[anim.newOwner];
+  // Two concentric rings expanding at different rates.
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 2; i++) {
+    const rt = Math.min(1, (t + i * 0.18));
+    const r = ts * 0.45 + rt * ts * 1.1;
+    const alpha = (1 - rt) * 0.55;
+    if (alpha <= 0) continue;
+    ctx.strokeStyle = palette.fill;
+    ctx.globalAlpha = alpha;
+    ctx.lineWidth = Math.max(2, ts * 0.10 * (1 - rt));
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  // Soft inner tint over the tile during the first half of the flash.
+  if (t < 0.5) {
+    const innerT = t / 0.5;
+    ctx.globalAlpha = (1 - innerT) * 0.45;
+    ctx.fillStyle = palette.fill;
+    ctx.fillRect(p.x, p.y, ts, ts);
+  }
+  ctx.restore();
 }
 
 function drawDamagePreview(

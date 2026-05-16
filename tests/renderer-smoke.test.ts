@@ -71,6 +71,16 @@ function makeCtxStub(): CanvasRenderingContext2D {
     restore: noop,
     drawImage: noop,
     createLinearGradient: () => ({ addColorStop: noop }),
+    createRadialGradient: () => ({ addColorStop: noop }),
+    quadraticCurveTo: noop,
+    strokeText: noop,
+    setLineDash: noop,
+    lineDashOffset: 0,
+    lineCap: 'butt',
+    globalCompositeOperation: 'source-over',
+    shadowColor: '#000',
+    shadowBlur: 0,
+    shadowOffsetY: 0,
   };
   return stub as unknown as CanvasRenderingContext2D;
 }

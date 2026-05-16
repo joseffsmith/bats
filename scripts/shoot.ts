@@ -43,6 +43,7 @@ type Args = {
   waitMs: number;
   fog?: string;
   view?: string;
+  slowmo?: number;
 };
 
 function parseArgs(): Args {
@@ -64,6 +65,7 @@ function parseArgs(): Args {
     else if (k === 'wait-ms') out.waitMs = Number(v);
     else if (k === 'fog') out.fog = v;
     else if (k === 'view') out.view = v;
+    else if (k === 'slowmo') out.slowmo = Number(v);
   }
   if (!out.out) {
     console.error('--out=PATH is required');
@@ -104,6 +106,7 @@ function buildUrl(args: Args): string {
   if (args.p1) u.searchParams.set('p1', args.p1);
   if (args.fog) u.searchParams.set('fog', args.fog);
   if (args.view) u.searchParams.set('view', args.view);
+  if (args.slowmo) u.searchParams.set('slowmo', String(args.slowmo));
   return u.toString();
 }
 
@@ -136,12 +139,17 @@ async function main(): Promise<void> {
 
   let browser: Browser | undefined;
   try {
-    browser = await puppeteer.launch({ headless: true });
+    browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    });
     const page = await browser.newPage();
     await page.setViewport({ width: args.width, height: args.height });
     const url = buildUrl(args);
     process.stderr.write(`[shoot] navigating ${url}\n`);
-    await page.goto(url, { waitUntil: 'networkidle0' });
+    // Use 'load' (DOM + module imports complete) rather than 'networkidle0' —
+    // Vite's HMR keeps a WebSocket open, so networkidle0 can hang.
+    await page.goto(url, { waitUntil: 'load' });
     // Page-load settle (canvas first paint).
     await new Promise((r) => setTimeout(r, args.waitMs));
     if (args.turn && args.turn > 0) {
