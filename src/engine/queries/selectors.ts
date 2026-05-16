@@ -365,3 +365,4 @@ export function getUnit(state: GameState, id: UnitId): Unit | undefined {
 export function occupantAt(state: GameState, c: Coord): Unit | undefined {
   return unitAt(state, c);
 }
+

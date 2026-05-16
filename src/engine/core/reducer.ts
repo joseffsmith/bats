@@ -32,6 +32,7 @@ import { validatePath } from '../systems/pathfinding';
 import { resolveAttack } from '../systems/combat';
 import { resetCapture, resolveCapture } from '../systems/capture';
 import { grantIncome } from '../systems/economy';
+import { updateSeenEnemies } from '../systems/memory';
 import { checkWinner } from '../systems/win';
 import { UNITS } from '../data';
 
@@ -88,7 +89,11 @@ export function reduce(state: GameState, action: Action): GameState {
     next.winner = winner;
     log('engine', 'winner set', { winner });
   }
-  return next;
+
+  // Fog memory bookkeeping: refresh the active player's last-known enemy
+  // snapshots after the action settles. Skip when fog memory isn't enabled
+  // (i.e. non-fog games leave players[p].seenEnemies === undefined).
+  return updateSeenEnemies(next, next.currentPlayer);
 }
 
 function applyMove(

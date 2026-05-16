@@ -21,6 +21,8 @@ import {
   visibleTiles,
   visibleUnitAt,
 } from '../src/engine/queries/selectors';
+import { enableFogMemory } from '../src/engine/systems/memory';
+import { reduce } from '../src/engine/core/reducer';
 import duelMap from '../src/data/maps/duel.json';
 import { runMatch } from '../src/cli/run-match';
 
@@ -340,6 +342,205 @@ describe('fog-of-war: forest hides ground', () => {
     });
     const own = Object.values(s.units)[0]!;
     expect(isVisibleTo(s, own, 0, /* fog */ true)).toBe(true);
+  });
+});
+
+describe('fog-of-war: ghost memory', () => {
+  it('seenEnemies is undefined by default (non-fog games)', () => {
+    const s = makeState({
+      width: 5,
+      height: 1,
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 4, y: 0 } },
+      ],
+    });
+    expect(s.players[0].seenEnemies).toBeUndefined();
+    expect(s.players[1].seenEnemies).toBeUndefined();
+    // Reducer does not introduce the field on a non-fog game.
+    const after = reduce(s, { type: 'END_TURN' });
+    expect(after.players[0].seenEnemies).toBeUndefined();
+    expect(after.players[1].seenEnemies).toBeUndefined();
+  });
+
+  it('enableFogMemory initialises both players to {}', () => {
+    const s = enableFogMemory(
+      makeState({
+        width: 5,
+        height: 1,
+        hqs: [
+          { owner: 0, pos: { x: 0, y: 0 } },
+          { owner: 1, pos: { x: 4, y: 0 } },
+        ],
+      }),
+    );
+    expect(s.players[0].seenEnemies).toEqual({});
+    expect(s.players[1].seenEnemies).toEqual({});
+  });
+
+  it('records a snapshot of every visible enemy after an action', () => {
+    const base = makeState({
+      width: 9,
+      height: 1,
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 8, y: 0 } },
+      ],
+      units: [
+        { type: 'recon', owner: 0, pos: { x: 1, y: 0 } }, // vision 5
+        { type: 'infantry', owner: 1, pos: { x: 5, y: 0 } }, // distance 4 — visible
+        { type: 'infantry', owner: 1, pos: { x: 8, y: 0 } }, // distance 7 — hidden
+      ],
+    });
+    const s = enableFogMemory(base);
+    // Any legal no-op action triggers the bookkeeping; WAIT on the recon.
+    const recon = Object.values(s.units).find((u) => u.type === 'recon')!;
+    const after = reduce(s, { type: 'WAIT', unitId: recon.id });
+    const mem = after.players[0].seenEnemies!;
+    const visible = Object.values(s.units).find((u) => u.pos.x === 5)!;
+    const hidden = Object.values(s.units).find((u) => u.pos.x === 8)!;
+    expect(mem[visible.id]).toMatchObject({
+      unitId: visible.id,
+      type: 'infantry',
+      owner: 1,
+      pos: { x: 5, y: 0 },
+    });
+    expect(mem[hidden.id]).toBeUndefined();
+  });
+
+  it('a ghost persists when the observer loses sight of the seed tile', () => {
+    const base = makeState({
+      width: 11,
+      height: 1,
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 10, y: 0 } },
+      ],
+      units: [
+        { type: 'infantry', owner: 0, pos: { x: 4, y: 0 } }, // vision 2 → cols 2-6
+        { type: 'infantry', owner: 1, pos: { x: 6, y: 0 } }, // distance 2 — visible
+      ],
+    });
+    const s = enableFogMemory(base);
+    const ownInf = Object.values(s.units).find((u) => u.owner === 0)!;
+    const enemyInf = Object.values(s.units).find((u) => u.owner === 1)!;
+    // Seed P0's memory with the enemy at (6,0).
+    let cur = reduce(s, { type: 'WAIT', unitId: ownInf.id });
+    expect(cur.players[0].seenEnemies![enemyInf.id]!.pos).toEqual({ x: 6, y: 0 });
+    // P1's turn — enemy just sits.
+    cur = reduce(cur, { type: 'END_TURN' });
+    cur = reduce(cur, { type: 'WAIT', unitId: enemyInf.id });
+    cur = reduce(cur, { type: 'END_TURN' });
+    // P0 moves their infantry the other way (col 4 → col 1, 3 tiles). Vision
+    // now covers cols -1..3, so col 6 is dark. The seed-tile is no longer
+    // observed — the ghost must persist with its old (6,0) snapshot.
+    cur = reduce(cur, {
+      type: 'MOVE',
+      unitId: ownInf.id,
+      path: [
+        { x: 3, y: 0 },
+        { x: 2, y: 0 },
+        { x: 1, y: 0 },
+      ],
+    });
+    const ghost = cur.players[0].seenEnemies![enemyInf.id]!;
+    expect(ghost.pos).toEqual({ x: 6, y: 0 });
+  });
+
+  it('a ghost is deleted when its last-seen tile is observed empty', () => {
+    const base = makeState({
+      width: 13,
+      height: 1,
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 12, y: 0 } },
+      ],
+      units: [
+        // Recon with vision 5 starts at column 0, so col 5 is the edge of its disk.
+        { type: 'recon', owner: 0, pos: { x: 0, y: 0 } },
+        { type: 'infantry', owner: 1, pos: { x: 5, y: 0 } },
+      ],
+    });
+    const s = enableFogMemory(base);
+    const recon = Object.values(s.units).find((u) => u.type === 'recon')!;
+    const enemy = Object.values(s.units).find((u) => u.owner === 1)!;
+    // P0 sees the enemy → seeds memory.
+    let cur = reduce(s, { type: 'WAIT', unitId: recon.id });
+    expect(cur.players[0].seenEnemies![enemy.id]).toBeDefined();
+    // P1's turn: walk the enemy away to col 9 (out of recon vision).
+    cur = reduce(cur, { type: 'END_TURN' });
+    cur = reduce(cur, {
+      type: 'MOVE',
+      unitId: enemy.id,
+      path: [
+        { x: 6, y: 0 },
+        { x: 7, y: 0 },
+        { x: 8, y: 0 },
+      ],
+    });
+    cur = reduce(cur, { type: 'WAIT', unitId: enemy.id });
+    cur = reduce(cur, { type: 'END_TURN' });
+    // P0's turn. Ghost still at (5,0). (5,0) IS in vision (distance 5),
+    // and it's empty now — bookkeeping at end of WAIT should prune.
+    // Trigger bookkeeping with any WAIT.
+    expect(cur.players[0].seenEnemies![enemy.id]).toBeUndefined();
+  });
+
+  it('re-spotting overwrites the ghost with truth (fresh hp/pos)', () => {
+    const base = makeState({
+      width: 9,
+      height: 1,
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 8, y: 0 } },
+      ],
+      units: [
+        { type: 'recon', owner: 0, pos: { x: 0, y: 0 } },
+        { type: 'infantry', owner: 1, pos: { x: 4, y: 0 } },
+      ],
+    });
+    const s = enableFogMemory(base);
+    const recon = Object.values(s.units).find((u) => u.type === 'recon')!;
+    const enemy = Object.values(s.units).find((u) => u.owner === 1)!;
+    let cur = reduce(s, { type: 'WAIT', unitId: recon.id });
+    const initialGhost = cur.players[0].seenEnemies![enemy.id]!;
+    expect(initialGhost.pos).toEqual({ x: 4, y: 0 });
+    expect(initialGhost.hp).toBe(100);
+    // P1 moves the enemy one tile closer to P0, simulating fresh sighting.
+    cur = reduce(cur, { type: 'END_TURN' });
+    cur = reduce(cur, {
+      type: 'MOVE',
+      unitId: enemy.id,
+      path: [{ x: 3, y: 0 }],
+    });
+    cur = reduce(cur, { type: 'WAIT', unitId: enemy.id });
+    cur = reduce(cur, { type: 'END_TURN' });
+    // Re-spotted at (3,0) — within recon vision.
+    const updated = cur.players[0].seenEnemies![enemy.id]!;
+    expect(updated.pos).toEqual({ x: 3, y: 0 });
+  });
+
+  it('save/load round-trips a populated seenEnemies', async () => {
+    const { serialize, deserialize } = await import('../src/engine/save');
+    const base = makeState({
+      width: 5,
+      height: 1,
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 4, y: 0 } },
+      ],
+      units: [
+        { type: 'infantry', owner: 0, pos: { x: 0, y: 0 } },
+        { type: 'infantry', owner: 1, pos: { x: 2, y: 0 } },
+      ],
+    });
+    const s = enableFogMemory(base);
+    const ownInf = Object.values(s.units).find((u) => u.owner === 0)!;
+    const after = reduce(s, { type: 'WAIT', unitId: ownInf.id });
+    expect(after.players[0].seenEnemies).not.toEqual({});
+    const round = deserialize(serialize(after));
+    expect(round.players[0].seenEnemies).toEqual(after.players[0].seenEnemies);
+    expect(round.players[1].seenEnemies).toEqual(after.players[1].seenEnemies);
   });
 });
 

@@ -67,7 +67,34 @@ export type Tile = {
   owner: PlayerId | null; // for capturable tiles
 };
 
-export type PlayerState = { funds: number; hq: Coord };
+/**
+ * A snapshot of an enemy unit observed at some past moment, retained by the
+ * viewing player as "last-known position". Used to render ghost markers and
+ * to inject phantom threats into the fog-aware AI's planning state.
+ *
+ * `lastSeenTurn` is the engine turn counter at the moment of observation;
+ * useful for diagnostics but not currently consulted by the rules.
+ */
+export type SeenEnemy = {
+  unitId: UnitId;
+  type: UnitType;
+  owner: PlayerId;
+  pos: Coord;
+  hp: number;
+  lastSeenTurn: number;
+};
+
+export type PlayerState = {
+  funds: number;
+  hq: Coord;
+  /**
+   * Per-player memory of last-known enemy positions. Absent on non-fog
+   * games (signals "fog memory disabled" to the reducer + selectors).
+   * Initialised to `{}` by `enableFogMemory` when the game starts under
+   * fog. Round-trips through save/load as plain JSON.
+   */
+  seenEnemies?: Record<UnitId, SeenEnemy>;
+};
 
 export type GameState = {
   turn: number;
