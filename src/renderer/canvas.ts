@@ -449,6 +449,13 @@ function drawUnits(
     ctx.restore();
   }
 
+  // Attack effects (muzzle flash + projectile + impact) — drawn on top of
+  // units so the flash and explosion read clearly.
+  for (const a of active) {
+    if (a.kind !== 'attack') continue;
+    drawAttackEffects(ctx, vp, a);
+  }
+
   // Damage preview tooltip.
   if (overlay.damagePreview) {
     drawDamagePreview(ctx, vp, overlay.damagePreview);
@@ -637,6 +644,136 @@ function tileTopLeft(vp: Viewport, c: Coord): { x: number; y: number } {
     x: vp.origin.x + c.x * vp.tileSize,
     y: vp.origin.y + c.y * vp.tileSize,
   };
+}
+
+/**
+ * Draw the in-flight effects derived from an AttackAnim: muzzle flash at the
+ * attacker, projectile flying toward the target (straight line or parabolic
+ * arc), and an impact burst on the target.
+ *
+ * All three effects share the AttackAnim's start time and duration. Phases:
+ *   [0 .. PROJECTILE_FRACTION]            projectile flies
+ *   [0 .. MUZZLE_FLASH_FRACTION]          muzzle flash visible
+ *   [PROJECTILE_FRACTION .. 1.0]          impact burst
+ *
+ * Positions live on the anim record (frozen at enqueue time) so an attacker
+ * or target dying mid-attack doesn't leave a dangling projectile.
+ */
+function drawAttackEffects(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  anim: import('./animations').AttackAnim,
+): void {
+  if (!anim.attackerPos || !anim.targetPos) return;
+  const ts = vp.tileSize;
+  const t = (performance.now() - anim.startMs) / anim.durationMs;
+  if (t < 0 || t > 1) return;
+  const a = tileTopLeft(vp, anim.attackerPos);
+  const b = tileTopLeft(vp, anim.targetPos);
+  const ax = a.x + ts / 2;
+  const ay = a.y + ts / 2;
+  const bx = b.x + ts / 2;
+  const by = b.y + ts / 2;
+  const projFrac = (
+    anim.arc ? 0.7 : 0.45 // arcs land slightly later in their own window
+  );
+  const dx = bx - ax;
+  const dy = by - ay;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  // ── Muzzle flash (first ~18% of attack window) ──────────────────────────
+  if (t < 0.18) {
+    const flashT = t / 0.18;
+    const r = ts * 0.30 * (1 - flashT);
+    if (r > 0.5 && dist > 0) {
+      const nx = dx / dist;
+      const ny = dy / dist;
+      // Position the flash just off the attacker's centre toward the target.
+      const fx = ax + nx * ts * 0.18;
+      const fy = ay + ny * ts * 0.18;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const grad = ctx.createRadialGradient(fx, fy, 0, fx, fy, r);
+      grad.addColorStop(0, 'rgba(255,240,180,0.95)');
+      grad.addColorStop(0.4, 'rgba(255,180,60,0.55)');
+      grad.addColorStop(1, 'rgba(255,80,20,0.0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(fx, fy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+  // ── Projectile (first projFrac of window) ───────────────────────────────
+  if (t < projFrac) {
+    const p = t / projFrac;
+    let px = ax + dx * p;
+    let py = ay + dy * p;
+    if (anim.arc) {
+      // Parabolic arc: deflect upward by an amount proportional to distance.
+      const arcHeight = Math.min(ts * 1.6, dist * 0.45);
+      py -= Math.sin(Math.PI * p) * arcHeight;
+    }
+    ctx.save();
+    if (anim.arc) {
+      // Shell: small dark dot with a soft glow.
+      ctx.fillStyle = 'rgba(40,40,40,0.85)';
+      ctx.beginPath();
+      ctx.arc(px, py, Math.max(2, ts * 0.06), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    } else {
+      // Tracer: short streak from a few px behind to the projectile head.
+      const back = Math.max(0, p - 0.18);
+      const ex = ax + dx * back;
+      const ey = ay + dy * back;
+      ctx.strokeStyle = 'rgba(255,230,150,0.95)';
+      ctx.lineWidth = Math.max(2, ts * 0.06);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(ex, ey);
+      ctx.lineTo(px, py);
+      ctx.stroke();
+      // Bright head dot.
+      ctx.fillStyle = 'rgba(255,250,210,1)';
+      ctx.beginPath();
+      ctx.arc(px, py, Math.max(1.5, ts * 0.04), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+  // ── Impact (after the projectile lands) ─────────────────────────────────
+  if (t >= projFrac) {
+    const big = (anim.damageDealt ?? 0) > 30;
+    const impactT = (t - projFrac) / (1 - projFrac); // 0..1
+    const r = ts * (big ? 0.55 : 0.32) * Math.min(1, impactT * 2);
+    const fade = 1 - impactT;
+    if (r > 0.5 && fade > 0) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const grad = ctx.createRadialGradient(bx, by, 0, bx, by, r);
+      grad.addColorStop(0, `rgba(255,240,180,${0.95 * fade})`);
+      grad.addColorStop(0.45, `rgba(255,150,60,${0.55 * fade})`);
+      grad.addColorStop(1, 'rgba(180,40,20,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(bx, by, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      // Soot ring on big hits — short-lived dark ring outside the fireball.
+      if (big && impactT > 0.25 && impactT < 0.9) {
+        const ringR = r * 0.95;
+        ctx.save();
+        ctx.strokeStyle = `rgba(40,20,10,${0.35 * (1 - impactT)})`;
+        ctx.lineWidth = Math.max(1, ts * 0.04);
+        ctx.beginPath();
+        ctx.arc(bx, by, ringR, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
 }
 
 function drawDamagePreview(

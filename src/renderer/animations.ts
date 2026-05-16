@@ -41,6 +41,15 @@ export type AttackAnim = {
   kind: 'attack';
   attackerId: UnitId;
   targetId: UnitId;
+  /** Frozen at enqueue time so the projectile arc survives mid-flight deaths. */
+  attackerPos?: Coord;
+  targetPos?: Coord;
+  /** Predicted damage values, used by the floating damage labels. */
+  damageDealt?: number;
+  counterReceived?: number;
+  /** True for indirect-fire units (artillery). Renderer draws a parabolic arc
+   *  and we use a longer duration so the projectile has time to travel. */
+  arc?: boolean;
   startMs: number;
   durationMs: number;
 };
@@ -102,16 +111,39 @@ export type AnimationQueueDeps = {
 
 export const MOVE_MS = 300;
 export const ATTACK_MS = 250;
+/** Longer duration for indirect-fire attacks so the parabolic projectile has
+ *  time to arc visibly. */
+export const ATTACK_ARC_MS = 420;
 export const DEATH_MS = 400;
 export const HP_TWEEN_MS = 200;
 export const SHAKE_MS = 150;
 export const SHAKE_THRESHOLD_HP = 40;
 export const SHAKE_MAGNITUDE_PX = 2;
 export const DEATH_PARTICLE_COUNT = 10;
+/** Projectile flight time as a fraction of the parent AttackAnim duration. The
+ *  remaining window is spent on impact + flash. */
+export const PROJECTILE_FRACTION = 0.45;
+/** Muzzle flash duration as a fraction of the parent AttackAnim duration. */
+export const MUZZLE_FLASH_FRACTION = 0.18;
+
+export type AttackEnqueueOpts = {
+  /** Attacker tile at attack time (renderer needs the launch point). */
+  attackerPos?: Coord;
+  /** Target tile at attack time (renderer needs the impact point). */
+  targetPos?: Coord;
+  /** Predicted damage dealt to target. Drives the floating "-NN" label. */
+  damageDealt?: number;
+  /** Predicted counter damage received by attacker. Drives a label on the
+   *  attacker's tile too. */
+  counterReceived?: number;
+  /** Indirect-fire unit (artillery, battleship): projectile follows a
+   *  parabolic arc and the anim lasts longer. */
+  arc?: boolean;
+};
 
 export type AnimationQueue = {
   enqueueMove(unitId: UnitId, path: Coord[]): void;
-  enqueueAttack(attackerId: UnitId, targetId: UnitId): void;
+  enqueueAttack(attackerId: UnitId, targetId: UnitId, opts?: AttackEnqueueOpts): void;
   enqueueDeath(unitId: UnitId, pos: Coord): void;
   enqueueHpTween(unitId: UnitId, fromHp: number, toHp: number): void;
   /** Enqueue a camera-shake parallel to the in-flight ATTACK (does not block). */
@@ -240,14 +272,21 @@ export function createAnimationQueue(deps: AnimationQueueDeps = {}): AnimationQu
         durationMs: MOVE_MS,
       });
     },
-    enqueueAttack(attackerId, targetId): void {
-      scheduleBlocking({
+    enqueueAttack(attackerId, targetId, opts): void {
+      const arc = opts?.arc ?? false;
+      const anim: AttackAnim = {
         kind: 'attack',
         attackerId,
         targetId,
+        arc,
         startMs: 0,
-        durationMs: ATTACK_MS,
-      });
+        durationMs: arc ? ATTACK_ARC_MS : ATTACK_MS,
+      };
+      if (opts?.attackerPos) anim.attackerPos = opts.attackerPos;
+      if (opts?.targetPos) anim.targetPos = opts.targetPos;
+      if (opts?.damageDealt !== undefined) anim.damageDealt = opts.damageDealt;
+      if (opts?.counterReceived !== undefined) anim.counterReceived = opts.counterReceived;
+      scheduleBlocking(anim);
     },
     enqueueDeath(unitId, pos): void {
       scheduleBlocking({

@@ -510,12 +510,18 @@ export function createInputController(
       return;
     }
     if (action.type === 'ATTACK') {
-      animQueue.enqueueAttack(action.attackerId, action.targetId);
       const target = state.units[action.targetId];
       const attacker = state.units[action.attackerId];
       if (!target || !attacker) return;
       // Predict death + HP tween + camera shake so the renderer can react.
       const dmg = previewAttack(state, action.attackerId, action.targetId);
+      animQueue.enqueueAttack(action.attackerId, action.targetId, {
+        attackerPos: attacker.pos,
+        targetPos: target.pos,
+        damageDealt: dmg.dealt,
+        counterReceived: dmg.counterReceived,
+        arc: UNITS[attacker.type].indirect,
+      });
       const targetFinalHp = Math.max(0, target.hp - dmg.dealt);
       const attackerFinalHp = Math.max(0, attacker.hp - dmg.counterReceived);
       // Camera shake when either side takes a >40 HP hit.

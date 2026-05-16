@@ -18,6 +18,7 @@ import type { Action, GameState, PlayerId } from '../engine/core/types';
 import { createRng } from '../engine/core/rng';
 import type { Rng } from '../engine/core/rng';
 import { previewAttack } from '../engine/systems/combat';
+import { UNITS } from '../engine/data';
 import { utilityAI } from '../engine/ai/utility';
 import { randomAI } from '../engine/ai/random';
 import { personaAI } from '../engine/ai/personas';
@@ -148,11 +149,17 @@ export function createAIDriver(deps: AIDriverDeps): AIDriver {
       return;
     }
     if (action.type === 'ATTACK') {
-      deps.animQueue.enqueueAttack(action.attackerId, action.targetId);
       const attacker = state.units[action.attackerId];
       const target = state.units[action.targetId];
       if (!attacker || !target) return;
       const dmg = previewAttack(state, action.attackerId, action.targetId);
+      deps.animQueue.enqueueAttack(action.attackerId, action.targetId, {
+        attackerPos: attacker.pos,
+        targetPos: target.pos,
+        damageDealt: dmg.dealt,
+        counterReceived: dmg.counterReceived,
+        arc: UNITS[attacker.type].indirect,
+      });
       if (target.hp - dmg.dealt <= 0) {
         deps.animQueue.enqueueDeath(target.id, target.pos);
       } else if (attacker.hp - dmg.counterReceived <= 0) {

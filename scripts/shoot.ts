@@ -136,7 +136,10 @@ async function main(): Promise<void> {
 
   let browser: Browser | undefined;
   try {
-    browser = await puppeteer.launch({ headless: true });
+    browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    });
     const page = await browser.newPage();
     await page.setViewport({ width: args.width, height: args.height });
     const url = buildUrl(args);
