@@ -36,9 +36,9 @@ export type RoundRobinOptions = {
   personas?: ReadonlyArray<string>;
   /** Map names — defaults to ['duel','crossroads','canyon']. */
   maps?: ReadonlyArray<string>;
-  /** Matches per pair per map. Halved into side-A and side-B. Default 50. */
+  /** Matches per pair per map. Halved into side-A and side-B. Default 3. */
   matches?: number;
-  /** Max turns per match. Default 200. */
+  /** Max turns per match. Default 120. */
   maxTurns?: number;
   /** Seed-mixing salt; lets the user re-roll without changing other knobs. */
   seedSalt?: number;
@@ -253,8 +253,8 @@ export async function runRoundRobin(opts: RoundRobinOptions): Promise<RoundRobin
   const maps = opts.maps && opts.maps.length > 0
     ? [...opts.maps]
     : ['duel', 'crossroads', 'canyon'];
-  const matchesPerPairPerMap = opts.matches ?? 50;
-  const maxTurns = opts.maxTurns ?? 200;
+  const matchesPerPairPerMap = opts.matches ?? 3;
+  const maxTurns = opts.maxTurns ?? 120;
   const seedSalt = opts.seedSalt ?? 0;
   const concurrency = opts.concurrency ?? 8;
 
@@ -574,8 +574,15 @@ function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
   const out: ParsedArgs = {
     personas: [...PERSONA_NAMES],
     maps: ['duel', 'crossroads', 'canyon'],
-    matches: 50,
-    maxTurns: 200,
+    // Tuned-down defaults for the iterate-fast tuning loop. The original
+    // CLI ran 50 × 200 turns per pair per map which made one round-robin
+    // last minutes and yielded noise-smoothed numbers. For *tuning*, the
+    // analyzer/trace is the primary signal — 3 × 120 keeps the round-robin
+    // fast and forces the AI to commit (no more "win because clock ran
+    // out"). Override with --matches / --max-turns when you want sharper
+    // numbers.
+    matches: 3,
+    maxTurns: 120,
     seedSalt: 0,
     concurrency: 8,
     quiet: true,
@@ -645,8 +652,8 @@ function printHelp(): void {
       '',
       `  --personas <a,b,c>    persona names (default: all loaded)`,
       `  --maps <m1,m2,...>    map names (default: duel,crossroads,canyon)`,
-      `  --matches <N>         matches per pair per map (default: 50)`,
-      `  --max-turns <N>       turn cap per match (default: 200)`,
+      `  --matches <N>         matches per pair per map (default: 3)`,
+      `  --max-turns <N>       turn cap per match (default: 120)`,
       `  --seed-salt <N>       seed-mix salt for re-rolls (default: 0)`,
       `  --concurrency <N>     parallel matches (default: 8)`,
       `  --out <path>          override the log/report directory`,

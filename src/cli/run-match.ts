@@ -332,6 +332,8 @@ type ParsedArgs = {
   p1: AIName;
   p0WeightsPath?: string;
   p1WeightsPath?: string;
+  /** When > 0, enable ai-trace and emit top-K candidates per unit per turn. */
+  traceTopK: number;
 };
 
 function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
@@ -342,6 +344,7 @@ function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
     quiet: false,
     p0: 'utility',
     p1: 'random',
+    traceTopK: 0,
   };
   const out: ParsedArgs = { ...defaults };
   for (let i = 0; i < argv.length; i++) {
@@ -380,6 +383,28 @@ function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
       out.p1WeightsPath = v;
     } else if (a === '--quiet') {
       out.quiet = true;
+    } else if (a === '--trace' || a?.startsWith('--trace=')) {
+      // --trace            → top-3 candidates per unit per turn
+      // --trace=K          → top-K
+      let k = 3;
+      const eq = a.indexOf('=');
+      if (eq >= 0) {
+        const v = a.slice(eq + 1);
+        const n = Number.parseInt(v, 10);
+        if (!Number.isFinite(n) || n <= 0) throw new Error(`bad --trace value: ${v}`);
+        k = n;
+      } else {
+        // Allow `--trace 5` form too.
+        const next = argv[i + 1];
+        if (next && !next.startsWith('--')) {
+          const n = Number.parseInt(next, 10);
+          if (Number.isFinite(n) && n > 0) {
+            k = n;
+            i += 1;
+          }
+        }
+      }
+      out.traceTopK = k;
     } else if (a === '--help' || a === '-h') {
       printHelp();
       process.exit(0);
@@ -404,6 +429,9 @@ function printHelp(): void {
       '  --p0-weights <path>   JSON file of utility weights for player 0',
       '  --p1-weights <path>   JSON file of utility weights for player 1',
       '  --quiet               suppress per-action log lines',
+      '  --trace[=K]           enable ai-trace: emit top-K (default 3) scored',
+      '                         candidates per unit per turn with per-component',
+      '                         breakdown. Use AI_TRACE_K env var to override K.',
       '  --help, -h            show this help',
     ].join('\n'),
   );
@@ -434,6 +462,10 @@ async function main(argv: ReadonlyArray<string>): Promise<void> {
     setLogEnabled('ai', false);
   } else {
     setLogEnabled('engine', false);
+  }
+  if (args.traceTopK > 0) {
+    setLogEnabled('ai-trace', true);
+    process.env.AI_TRACE_K = String(args.traceTopK);
   }
 
   const p0Weights = await loadWeights(args.p0WeightsPath);

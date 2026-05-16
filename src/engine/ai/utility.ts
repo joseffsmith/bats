@@ -51,6 +51,83 @@ import type { Role, RoleMultipliers } from './roles';
 // Soft cap on actions per turn so a bug can't infinite-loop the runner.
 const ACTION_STEP_CAP = 200;
 
+/**
+ * Bonus added to LOAD when the cargo cannot reach the enemy HQ overland —
+ * boarding the transport is its only viable route. Sized to beat the
+ * pusher-role WAIT-toward-HQ score (~6.5 on armada with objective×2×3 bonus),
+ * so an infantry stuck on its starting island chooses LOAD instead of
+ * marching uselessly along the coast.
+ */
+const BARRIER_BONUS = 5;
+
+/**
+ * Penalty applied to UNLOAD when the drop tile is in our OWN home land
+ * component. Dumping cargo at home undoes the previous turn's work and
+ * traps the transport in a load/unload loop. Sized so own-land UNLOAD
+ * loses to a frontline transport's WAIT-toward-objective (~3 points).
+ */
+const OWN_LAND_UNLOAD_PENALTY = 8;
+
+/**
+ * Risk-aversion scale applied to a LOADED transport's counterRisk and
+ * futureThreat terms. A loaded transport is on a mission — the cargo's
+ * potential to capture the enemy HQ outweighs the transport's own value.
+ * `futureThreatFromMap` cost-scales by the transport's cost (5000 → ×5
+ * multiplier), making any threatened tile look catastrophic; we zero out
+ * the threat term so the boat sails into enemy waters to deliver its
+ * cargo even if it dies in transit. Empty transports keep full caution.
+ */
+const LOADED_TRANSPORT_RISK_SCALE = 0;
+
+/**
+ * Score per Manhattan step that a SEA-going combat unit (cruiser,
+ * battleship, submarine) moves toward the nearest enemy unit. The frontline
+ * objective targets the *hottest threat tile*, which is "where the enemy
+ * hits us hardest" — a defensive concept that pulls naval units back to
+ * their own coast rather than out to engage. This per-unit nearest-enemy
+ * pull is layered on top of the role objective and applies only to ships
+ * with attack range, so tanks/recon on land keep their tuned defensive
+ * positioning unchanged.
+ */
+const NAVAL_ENGAGEMENT_BONUS = 4;
+
+/**
+ * Connected component of tiles walkable by a representative ground unit
+ * (infantry — `foot` movement class) reachable from `start`. We use this to
+ * decide whether a ground cargo can ever reach the enemy HQ over land; if not,
+ * LOAD is its only path forward and `scoreLoad` boosts accordingly.
+ *
+ * Walks unowned tiles only by terrain — units in the way don't block (they
+ * could move). Cheap: 4-neighbour BFS over an ~N×M map.
+ */
+function floodFillGround(state: GameState, start: Coord): Set<string> {
+  const out = new Set<string>();
+  if (!inBounds(state.map, start)) return out;
+  const startKey = `${start.x},${start.y}`;
+  out.add(startKey);
+  const stack: Coord[] = [start];
+  // Movement cost from TERRAIN for the `foot` (infantry) class. Anything with
+  // finite cost is land-walkable; Infinity means impassable (sea, etc.).
+  const passable = (c: Coord): boolean => {
+    if (!inBounds(state.map, c)) return false;
+    const t = tileAt(state.map, c);
+    const cost = TERRAIN[t.terrain].moveCost.foot;
+    return Number.isFinite(cost);
+  };
+  while (stack.length > 0) {
+    const here = stack.pop()!;
+    for (const d of [{ x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }]) {
+      const next: Coord = { x: here.x + d.x, y: here.y + d.y };
+      const k = `${next.x},${next.y}`;
+      if (out.has(k)) continue;
+      if (!passable(next)) continue;
+      out.add(k);
+      stack.push(next);
+    }
+  }
+  return out;
+}
+
 /** Re-export for callers that want the default. */
 export const DEFAULT_AI_WEIGHTS: AIWeights = AI_WEIGHTS;
 
@@ -69,6 +146,12 @@ const OBJECTIVE_BONUS = 3;
  * 16×10 map blows past 200ms even with the precomputed maps in place. The
  * AI still replenishes losses (the cap floats with kills) so it doesn't
  * shrivel up after a bad exchange.
+ *
+ * Tested 18 on armada — gave naval combat more roster but tipped land-map
+ * win rates (balanced 78%→11%; economist's swarm benefits disproportionately
+ * from larger rosters). Reverted to 12 to preserve land balance; armada
+ * cap-stalemate is a strategic-design issue that needs a different lever
+ * than raising this cap.
  */
 const TIER3_UNIT_CAP = 12;
 
@@ -205,6 +288,8 @@ function planUtilityTurn(
   let valueMapCache: ValueMap | null = null;
   let roleCache: Map<UnitId, Role> | null = null;
   let frontlineTargetCache: Coord | null = null;
+  let enemyHqLandCache: Set<string> | null = null;
+  let ownHomeLandCache: Set<string> | null = null;
   const invalidateEnemyReach = (): void => {
     enemyReachCache = null;
   };
@@ -251,6 +336,30 @@ function planUtilityTurn(
     frontlineTargetCache = hottestThreatTile(getThreatMap(s));
     return frontlineTargetCache;
   };
+  /**
+   * Connected component of ground-walkable tiles containing the enemy HQ.
+   * Used by `scoreLoad` to detect cargo that is land-locked vs the enemy HQ
+   * (i.e. cannot walk there) — those cargo units should strongly prefer to
+   * board a transport because LOAD is their only path forward.
+   */
+  const getEnemyHqLandComponent = (s: GameState): Set<string> => {
+    if (enemyHqLandCache) return enemyHqLandCache;
+    enemyHqLandCache = floodFillGround(s, s.players[otherPlayer(player)].hq);
+    return enemyHqLandCache;
+  };
+  /**
+   * Ground component containing the OWN HQ. The barrier bonus on LOAD only
+   * fires when the cargo is in this component AND the enemy HQ is not — i.e.
+   * the cargo is on its starting island with no overland route to the enemy.
+   * Without this restriction, cargo dropped on a neutral mid-sea island
+   * (which is also disconnected from the enemy HQ) would keep re-boarding
+   * the transport in a load/unload loop instead of capturing the local city.
+   */
+  const getOwnHomeLandComponent = (s: GameState): Set<string> => {
+    if (ownHomeLandCache) return ownHomeLandCache;
+    ownHomeLandCache = floodFillGround(s, s.players[player].hq);
+    return ownHomeLandCache;
+  };
 
   // Optional one-shot log of the threat map (very noisy — gated by ai-trace).
   if (planOpts.useThreatMap && isLogEnabled('ai-trace')) {
@@ -286,6 +395,8 @@ function planUtilityTurn(
         valueMap: planOpts.useThreatMap ? getValueMap(state) : null,
         role,
         frontlineTarget: tm ? getFrontlineTarget(state) : null,
+        enemyHqLand: getEnemyHqLandComponent(state),
+        ownHomeLand: getOwnHomeLandComponent(state),
       };
       const pick = pickBestCandidate(state, unit, ctx2);
       if (!pick) continue;
@@ -361,28 +472,81 @@ export type ScoreContext = {
    *  (hottest threatMap tile). Saves a full map scan per candidate. Null when
    *  no useful target exists. */
   frontlineTarget: Coord | null;
+  /**
+   * Connected component of ground-walkable tiles containing the enemy HQ.
+   * Used by `scoreLoad` to give cargo a strong push to board when its own
+   * tile is NOT in this set — i.e. it cannot walk to the enemy HQ overland.
+   * On purely-land maps every ground tile is in the component, so the bonus
+   * never fires; on amphibious maps it's the dominant signal that LOAD is
+   * the only path forward.
+   */
+  enemyHqLand: Set<string> | null;
+  /**
+   * Connected component of ground-walkable tiles containing the OWN HQ.
+   * `scoreLoad` requires the cargo to be in this set (plus NOT in
+   * `enemyHqLand`) before firing the barrier bonus — otherwise cargo that
+   * has already been ferried to a mid-sea island would re-board the
+   * transport instead of capturing the local city.
+   */
+  ownHomeLand: Set<string> | null;
 };
+
+/** How many top-scoring candidates per unit to emit when ai-trace is on. */
+const AI_TRACE_TOP_K_DEFAULT = 3;
+
+function getTraceTopK(): number {
+  if (typeof process === 'undefined') return AI_TRACE_TOP_K_DEFAULT;
+  const raw = process.env?.AI_TRACE_K;
+  if (!raw) return AI_TRACE_TOP_K_DEFAULT;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : AI_TRACE_TOP_K_DEFAULT;
+}
 
 function pickBestCandidate(
   state: GameState,
   unit: Unit,
   sctx: ScoreContext,
 ): Scored | null {
+  const trace = isLogEnabled('ai-trace');
+  const all: Array<Scored> = [];
   let best: Scored | null = null;
   for (const c of generateCandidates(state, unit)) {
     const score = scoreAction(state, c, unit, sctx);
-    if (isLogEnabled('ai-trace')) {
-      log('ai-trace', 'candidate', {
-        unit: unit.id,
-        dest: c.destination,
-        followUp: c.followUp.type,
-        score: Number(score.toFixed(3)),
-        role: sctx.role,
-      });
-    }
+    if (trace) all.push({ candidate: c, score });
     if (best === null || score > best.score) {
       best = { candidate: c, score };
     }
+  }
+  if (trace && all.length > 0) {
+    const k = Math.min(getTraceTopK(), all.length);
+    all.sort((a, b) => b.score - a.score);
+    const top = all.slice(0, k).map(({ candidate }) => {
+      const parts: Record<string, number> = {};
+      const total = scoreAction(state, candidate, unit, sctx, parts);
+      return {
+        followUp: candidate.followUp.type,
+        dest: candidate.destination,
+        score: Number(total.toFixed(3)),
+        parts: Object.fromEntries(
+          Object.entries(parts).map(([k2, v]) => [k2, Number(v.toFixed(3))]),
+        ),
+      };
+    });
+    // Use a JSON string so console.log doesn't truncate nested `parts` to
+    // `[Object]`. The trace stream is meant to be redirected to a file and
+    // parsed/grepped, so plain text is fine.
+    log(
+      'ai-trace',
+      'unit candidates ' +
+        JSON.stringify({
+          unit: unit.id,
+          type: unit.type,
+          pos: unit.pos,
+          role: sctx.role,
+          considered: all.length,
+          top,
+        }),
+    );
   }
   return best;
 }
@@ -408,6 +572,12 @@ export function scoreAction(
   candidate: Candidate,
   unit: Unit,
   sctx: ScoreContext,
+  /**
+   * Optional. When provided, each scoring term is written into this object
+   * keyed by its label (e.g. `damageDealt`, `unload.hqPull`). Only used in
+   * ai-trace mode — the hot path passes nothing.
+   */
+  out?: Record<string, number>,
 ): number {
   // Amphibious follow-ups have bespoke scoring branches: the generic
   // damageDealt / capture / counter-risk terms are mostly 0 for these
@@ -415,13 +585,13 @@ export function scoreAction(
   // strategic intent (deny detection, ferry cargo, beach assault).
   switch (candidate.followUp.type) {
     case 'DIVE':
-      return scoreDive(state, candidate, unit, sctx);
+      return scoreDive(state, candidate, unit, sctx, out);
     case 'SURFACE':
-      return scoreSurface(state, candidate, unit, sctx);
+      return scoreSurface(state, candidate, unit, sctx, out);
     case 'LOAD':
-      return scoreLoad(state, candidate, unit, sctx);
+      return scoreLoad(state, candidate, unit, sctx, out);
     case 'UNLOAD':
-      return scoreUnload(state, candidate, unit, sctx);
+      return scoreUnload(state, candidate, unit, sctx, out);
     default:
       break;
   }
@@ -433,11 +603,14 @@ export function scoreAction(
   // The unit may have been killed by a counter-attack — treat as a heavy
   // negative so the AI never elects to suicide.
   if (!movedUnit) {
-    return (
-      damageDealt(state, after, unit.owner) * w.damageDealt -
-      (unit.hp * (UNITS[unit.type].cost / 1000)) * w.counterRisk -
-      50 // self-death penalty
-    );
+    const dd = damageDealt(state, after, unit.owner) * w.damageDealt;
+    const sd = (unit.hp * (UNITS[unit.type].cost / 1000)) * w.counterRisk;
+    if (out) {
+      out.damageDealt = dd;
+      out.counterRisk = -sd;
+      out.selfDeath = -50;
+    }
+    return dd - sd - 50;
   }
 
   // Future-threat term: O(1) lookup when a threat map is available, otherwise
@@ -452,19 +625,63 @@ export function scoreAction(
     ? positionalValueFromMaps(after, movedUnit, sctx.valueMap)
     : positionalValue(after, movedUnit);
 
-  // Objective bonus depends on role.
-  const ob = sctx.role
-    ? objectiveBonusForRole(state, unit, movedUnit, sctx.role, sctx.frontlineTarget)
-    : objectiveBonus(after, movedUnit);
+  // Objective bonus: loaded transports REPLACE the role-based objective
+  // (which points at the hottest threat tile — often behind the boat) with
+  // a strict step-toward-enemy-HQ pull. Otherwise role-driven objective.
+  const isLoadedTransport =
+    UNITS[unit.type].cargoCapacity > 0 &&
+    !!unit.cargo &&
+    unit.cargo.length > 0;
+  let ob: number;
+  if (isLoadedTransport) {
+    const enemyHq = state.players[otherPlayer(unit.owner)].hq;
+    const stepDelta = manhattan(unit.pos, enemyHq) - manhattan(movedUnit.pos, enemyHq);
+    ob = stepDelta * OBJECTIVE_BONUS;
+  } else if (sctx.role) {
+    ob = objectiveBonusForRole(state, unit, movedUnit, sctx.role, sctx.frontlineTarget);
+  } else {
+    ob = objectiveBonus(after, movedUnit);
+  }
 
-  return (
-    damageDealt(state, after, unit.owner) * w.damageDealt +
-    captureProgressScore(state, after, movedUnit, candidate.followUp) * w.capture -
-    counterAttackDamage(state, after, unit) * w.counterRisk -
-    ft * w.futureThreat +
-    pv * w.positional +
-    ob * w.objective
-  );
+  // Loaded transports are "on mission" — delivering cargo is a higher-value
+  // objective than preserving the boat. The default futureThreat/counterRisk
+  // weights are sized for combat units; for a loaded transport they make
+  // every step into enemy waters score deeply negative and the boat just
+  // sits at home. Halve both terms (mirrors the pusher role's risk-tolerance
+  // but with a smaller cut, since losing a transport also drowns the cargo).
+  const riskScale = isLoadedTransport ? LOADED_TRANSPORT_RISK_SCALE : 1;
+
+  // Naval engagement pull — see NAVAL_ENGAGEMENT_BONUS comment. Per-unit
+  // nearest-enemy pull for sea-going combat units only; tanks on land are
+  // untouched.
+  const stats = UNITS[unit.type];
+  const isSeaCombatant = stats.movementClass === 'sea' && stats.maxRange > 0;
+  let navalPull = 0;
+  if (isSeaCombatant) {
+    const ne = nearestEnemy(state, unit.owner, unit.pos);
+    if (ne) {
+      const dBefore = manhattan(unit.pos, ne.pos);
+      const dAfter = manhattan(movedUnit.pos, ne.pos);
+      navalPull = (dBefore - dAfter) * NAVAL_ENGAGEMENT_BONUS;
+    }
+  }
+
+  const dd = damageDealt(state, after, unit.owner) * w.damageDealt;
+  const cp = captureProgressScore(state, after, movedUnit, candidate.followUp) * w.capture;
+  const ca = counterAttackDamage(state, after, unit) * w.counterRisk * riskScale;
+  const ftw = ft * w.futureThreat * riskScale;
+  const pvw = pv * w.positional;
+  const obw = ob * w.objective;
+  if (out) {
+    out.damageDealt = dd;
+    out.capture = cp;
+    out.counterRisk = -ca;
+    out.futureThreat = -ftw;
+    out.positional = pvw;
+    out.objective = obw;
+    if (navalPull !== 0) out.naval = navalPull;
+  }
+  return dd + cp - ca - ftw + pvw + obw + navalPull;
 }
 
 // ─────────────────────────── Amphibious scorers ──────────────────────────────
@@ -480,25 +697,38 @@ function scoreDive(
   candidate: Candidate,
   unit: Unit,
   sctx: ScoreContext,
+  out?: Record<string, number>,
 ): number {
   const after = candidate.finalState;
   const sub = after.units[unit.id];
-  if (!sub) return -50;
+  if (!sub) {
+    if (out) out['dive.dead'] = -50;
+    return -50;
+  }
   // Spotter check: any enemy cruiser/sub adjacent un-masks the dive, so the
   // stealth gain is illusory.
   for (const e of Object.values(after.units)) {
     if (e.owner === unit.owner) continue;
     if (e.loadedIn !== undefined) continue;
     if (e.type !== 'cruiser' && e.type !== 'submarine') continue;
-    if (manhattan(e.pos, sub.pos) <= 1) return -2;
+    if (manhattan(e.pos, sub.pos) <= 1) {
+      if (out) out['dive.spotter'] = -2;
+      return -2;
+    }
   }
   // Threat-driven dive value: the precomputed threatMap encodes "max damage
   // an enemy could project here next turn" without modelling stealth, which
   // is exactly the danger DIVE neutralises. We use raw cell value.
   const raw = sctx.threatMap?.[sub.pos.y]?.[sub.pos.x] ?? 0;
-  if (raw > 0) return 5 + raw * 0.1;
-  // No threat: prefer to keep attacking. Small negative so DIVE only fires
-  // when nothing more useful is available.
+  if (raw > 0) {
+    const v = 5 + raw * 0.1;
+    if (out) {
+      out['dive.base'] = 5;
+      out['dive.threat'] = raw * 0.1;
+    }
+    return v;
+  }
+  if (out) out['dive.idle'] = -1;
   return -1;
 }
 
@@ -512,16 +742,23 @@ function scoreSurface(
   candidate: Candidate,
   unit: Unit,
   _sctx: ScoreContext,
+  out?: Record<string, number>,
 ): number {
   const after = candidate.finalState;
   const sub = after.units[unit.id];
-  if (!sub) return -50;
+  if (!sub) {
+    if (out) out['surface.dead'] = -50;
+    return -50;
+  }
   // Penalty if a spotter is adjacent.
   for (const e of Object.values(after.units)) {
     if (e.owner === unit.owner) continue;
     if (e.loadedIn !== undefined) continue;
     if (e.type !== 'cruiser' && e.type !== 'submarine') continue;
-    if (manhattan(e.pos, sub.pos) <= 1) return -3;
+    if (manhattan(e.pos, sub.pos) <= 1) {
+      if (out) out['surface.spotter'] = -3;
+      return -3;
+    }
   }
   // Any in-range enemy?
   let hasTarget = false;
@@ -533,7 +770,11 @@ function scoreSurface(
       break;
     }
   }
-  if (hasTarget) return 4;
+  if (hasTarget) {
+    if (out) out['surface.target'] = 4;
+    return 4;
+  }
+  if (out) out['surface.idle'] = -3;
   return -3;
 }
 
@@ -550,23 +791,59 @@ function scoreLoad(
   candidate: Candidate,
   unit: Unit,
   sctx: ScoreContext,
+  out?: Record<string, number>,
 ): number {
   const action = candidate.followUp as Extract<Action, { type: 'LOAD' }>;
   const transport = state.units[action.transportId];
-  if (!transport) return -50;
+  if (!transport) {
+    if (out) out['load.dead'] = -50;
+    return -50;
+  }
   // Cap with a positional pull toward the enemy HQ — cargo on a transport
   // that points the wrong way isn't useful.
   const enemyHq = state.players[otherPlayer(unit.owner)].hq;
   const cargoDist = manhattan(unit.pos, enemyHq);
   const transportDist = manhattan(transport.pos, enemyHq);
   const delta = cargoDist - transportDist;
-  if (delta <= 0) return -1; // boat is farther from the goal than we are
-  let score = 2 + delta * 0.5;
+  if (delta <= 0) {
+    if (out) out['load.wrongWay'] = -1;
+    return -1; // boat is farther from the goal than we are
+  }
+  // Base + barrier are gated on the cargo being on its OWN home land mass
+  // AND that land mass NOT containing the enemy HQ. This is the "stuck at
+  // home behind a sea wall, must ferry" case. Without this gate the cargo
+  // would also LOAD when sitting on a neutral mid-sea island or an enemy
+  // beachhead — both already-delivered states where re-boarding undoes
+  // the previous turn's work.
+  const cargoKey = `${unit.pos.x},${unit.pos.y}`;
+  const homeBound =
+    !!sctx.enemyHqLand &&
+    !!sctx.ownHomeLand &&
+    sctx.ownHomeLand.has(cargoKey) &&
+    !sctx.enemyHqLand.has(cargoKey);
+
+  let score = delta * 0.5;
+  if (out) out['load.delta'] = delta * 0.5;
+  if (homeBound) {
+    score += 2 + BARRIER_BONUS;
+    if (out) {
+      out['load.base'] = 2;
+      out['load.barrier'] = BARRIER_BONUS;
+    }
+  } else {
+    // Not homebound (cargo already on a neutral/enemy land mass): boarding
+    // is a step backward unless the ferry route is substantial. A flat -1
+    // pushes the small-delta LOAD score below WAIT, breaking the "drop on
+    // mid-sea island → re-board → re-drop" loop that's otherwise stable.
+    score -= 1;
+    if (out) out['load.redundant'] = -1;
+  }
   // Mild bonus when the transport sits on a high-value valueMap tile (close
   // to enemy HQ ramp) to break ties between two boats.
   if (sctx.valueMap) {
     const v = sctx.valueMap[transport.pos.y]?.[transport.pos.x] ?? 0;
     score += v * 0.05;
+    if (out) out['load.valueMap'] = v * 0.05;
   }
   return score;
 }
@@ -583,22 +860,36 @@ function scoreUnload(
   candidate: Candidate,
   unit: Unit,
   sctx: ScoreContext,
+  out?: Record<string, number>,
 ): number {
   const action = candidate.followUp as Extract<Action, { type: 'UNLOAD' }>;
   const after = candidate.finalState;
   const cargo = after.units[action.cargoId];
-  if (!cargo) return -50;
+  if (!cargo) {
+    if (out) out['unload.dead'] = -50;
+    return -50;
+  }
   const dst = action.destination;
   let score = 4; // base — committing to the assault is good
+  if (out) out['unload.base'] = 4;
 
-  // Closer-to-HQ pull from the drop tile.
+  // Closer-to-HQ pull from the drop tile. STRICTLY monotonic: each tile
+  // farther from the enemy HQ shaves score, so the transport is pushed to
+  // move toward the front before dropping. (The previous formula clamped
+  // to 0 above 12 tiles, which on armada/island_hop made every drop on the
+  // home shore score-tie with every drop near enemy land → transport
+  // dumped cargo in place and never ferried.)
   const enemyHq = state.players[otherPlayer(unit.owner)].hq;
   const hqDist = manhattan(dst, enemyHq);
-  score += Math.max(0, 12 - hqDist) * 0.4;
+  const hqPull = (12 - hqDist) * 0.4;
+  score += hqPull;
+  if (out) out['unload.hqPull'] = hqPull;
 
   // Adjacent-capturable bonus: an unloaded infantry that lands ON or NEXT TO
   // an unowned capturable can start/continue a capture next turn. Scan dst
   // and its 4-neighbours.
+  let capturableBonus = 0;
+  let hqBonus = 0;
   if (UNITS[cargo.type].canCapture) {
     const candidates: Coord[] = [dst, ...NEIGHBOURS.map((n) => ({ x: dst.x + n.x, y: dst.y + n.y }))];
     for (const c of candidates) {
@@ -609,17 +900,36 @@ function scoreUnload(
       const onTile = coordEq(c, dst);
       // ON a capturable is strictly better than adjacent (we can begin
       // capturing immediately on the cargo's next turn).
-      score += onTile ? 6 : 2;
+      capturableBonus += onTile ? 6 : 2;
       // Land on the enemy HQ tile = win-condition pressure.
-      if (tile.terrain === 'hq') score += 8;
+      if (tile.terrain === 'hq') hqBonus += 8;
     }
+  }
+  score += capturableBonus + hqBonus;
+  if (out) {
+    out['unload.capturable'] = capturableBonus;
+    out['unload.hqTile'] = hqBonus;
   }
 
   // Threat penalty: cargo gets dropped surfaced. If the destination is heavily
   // threatened, we may lose the cargo before it can act.
   if (sctx.threatMap) {
     const raw = sctx.threatMap[dst.y]?.[dst.x] ?? 0;
-    score -= raw * 0.04;
+    const pen = raw * 0.04;
+    score -= pen;
+    if (out) out['unload.threat'] = -pen;
+  }
+
+  // Own-land penalty: dumping cargo back onto our starting island is the
+  // antipattern that lets a transport stuck near its home shore (no enemy
+  // tiles in MOVE+UNLOAD reach) repeatedly drop the cargo at home → cargo
+  // re-LOADs via the barrier bonus → infinite loop. Sized to push UNLOAD
+  // well below a frontline transport's WAIT (~3) so the transport WAITs
+  // and drifts toward the front instead.
+  const dstKey = `${dst.x},${dst.y}`;
+  if (sctx.ownHomeLand && sctx.ownHomeLand.has(dstKey)) {
+    score -= OWN_LAND_UNLOAD_PENALTY;
+    if (out) out['unload.ownLand'] = -OWN_LAND_UNLOAD_PENALTY;
   }
 
   return score;

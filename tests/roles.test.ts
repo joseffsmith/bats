@@ -203,6 +203,8 @@ describe('role assignment', () => {
       valueMap: null,
       role: 'pusher',
       frontlineTarget: null,
+      enemyHqLand: null,
+      ownHomeLand: null,
     };
     // Apply role multipliers to the weights, mirroring planUtilityTurn's
     // pre-multiplication.
