@@ -14,6 +14,7 @@
 
 import { MAPS, resolveMapName } from './renderer/maps';
 import { loadMap } from './engine/data/loader';
+import { enableFogMemory } from './engine/systems/memory';
 import { createEmitter } from './renderer/emitter';
 import { createCanvasRenderer } from './renderer/canvas';
 import { createInputController } from './renderer/input';
@@ -81,10 +82,10 @@ function main(): void {
   }
   const canvas = setupCanvas();
   const mapName = resolveMapName(params.get('map'));
-  const initialState = loadMap(MAPS[mapName]);
-  const emitter = createEmitter(initialState);
-
   const fogConfig = parseFogConfig();
+  const baseState = loadMap(MAPS[mapName]);
+  const initialState = fogConfig.on ? enableFogMemory(baseState) : baseState;
+  const emitter = createEmitter(initialState);
   const sprites = createSpriteCache();
   const renderer = createCanvasRenderer(canvas, { sprites, fog: fogConfig });
   renderer.resize();

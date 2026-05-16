@@ -33,6 +33,12 @@ Each plan has these sections, in order:
   hit pause, damage numbers, capture flash, vignette). Stays on plain
   Canvas — no Phaser/Pixi.
 
+## Shipped
+
+- [`fog-v1.1.md`](fog-v1.1.md) — mountain vision bonus, forest-hides-ground,
+  and last-known-position ghosts (with Aggressive AI phantom injection).
+  See PLAN.md's fog section for the runtime entry points.
+
 ## Working in a worktree
 
 Every plan should be executed in its own git worktree off `main`, so the

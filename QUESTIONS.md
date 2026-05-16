@@ -209,6 +209,13 @@ Questions and assumptions logged during autonomous execution. Resolved questions
   list entries should be removed from the personas that fit
   (aggressor wants submarines; economist might want landers for
   cheap amphibious push).
+  - **Round 7 update.** Resolved for `submarine`, `transport`, and
+    `lander`: candidate generator now yields DIVE/SURFACE/LOAD/UNLOAD,
+    and `aggressor` + `economist` removed the relevant avoid entries.
+    `carrier` (LOAD/UNLOAD of air) is also implemented but stays on
+    every persona's avoid list pending a map that ships one as a
+    starting unit (none currently do, and the build picker won't
+    spend 22k unprompted).
 
 ## Fog-of-war (shipped `?fog=on` behind toolshelf toggle)
 
@@ -217,13 +224,17 @@ Questions and assumptions logged during autonomous execution. Resolved questions
   0.55. AW uses a half-strength dim for "explored once, currently
   dark" to communicate that terrain is known even if current vision
   is gone. Deferred to v1.1.
-- **Last-known-position ghosts.** When an enemy unit leaves vision,
-  render a faded sprite at the last visible tile. Big strategic-feel
-  upgrade for little code; deferred to v1.1.
-- **Forest-hides-ground / mountain vision bonus.** AW gives forest
-  tiles a "hide ground units from observers >1 away" rule and
-  mountain tiles +3 vision. Both deferred to v1.1 — see
-  `plans/fog-of-war.md`.
+- **Last-known-position ghosts.** Shipped in fog v1.1. Memory lives
+  on `players[p].seenEnemies`; the renderer draws half-opacity
+  silhouettes for ghosts whose tile is currently dark. Pruning rule
+  is positive disproof only (the observer scouts the tile and sees
+  it empty); no time-based aging.
+- **Forest-hides-ground / mountain vision bonus.** Both shipped in
+  fog v1.1. Mountain is a single `MOUNTAIN_VISION_BONUS = 3` constant
+  in selectors.ts; forest-hides applies only to foot/wheel/tread
+  classes under fog, with an adjacent-spotter reveal (mirrors the
+  existing submerged-sub stealth pattern in `viewStateForPlayer` and
+  `isVisibleTo`).
 - **Hot-seat view-swap on END_TURN.** The renderer pins viewer to
   `state.currentPlayer` or the `?view=p0|p1` override. The plan
   suggested an optional fade on viewer change for hot-seat play,
@@ -235,3 +246,67 @@ Questions and assumptions logged during autonomous execution. Resolved questions
   / island_hop / canyon / highlands haven't been measured under fog.
   Open: do they hold without re-tuning?
 
+## Phase 7 round 7 — amphibious AI
+
+- **Cap-stalemate on `armada` / `island_hop`.** Genuine draws went
+  from 12 → 0 (every match resolves to a tie-break winner) but
+  matches still hit the 200-turn cap on these two maps. The AI
+  ferries cargo and captures cities, but doesn't push hard enough
+  on the enemy HQ within 200 turns. Two diagnostic threads:
+  - Does `scoreUnload`'s `+8` HQ bonus need to dominate the
+    "+capturable" bonus? Right now if an enemy city is 1 tile from
+    the drop and the HQ is 4, the AI drops at the city.
+  - Should we add a `pusher` role override that fires specifically
+    for ferried infantry (i.e. infantry that just disembarked) so
+    they march toward HQ even past nearer capturables?
+- **`economist vs turtle` floor regressed 25 % → 0 %.** Turtle's
+  defender role has `capture: 0` which suppresses HQ-side reactive
+  captures; on sea maps that previously stalemated, economist's
+  amphibious flow now wins those by tiebreak. Fix candidate: tune
+  turtle's `defender` override to allow non-zero capture, or boost
+  its amphibious-build leaning so the new transport play is
+  reciprocated. Hard to do well without a tuning loop.
+- **Submarine stealth is underused outside opportunistic dives.**
+  The starting subs on `armada` engage in surface combat (cruisers,
+  battleships) but rarely DIVE proactively. The scorer fires DIVE
+  only when `threatMap[cell] > 0` AND no spotter adjacent. Refine
+  by computing an effective-threat that EXCLUDES non-spotter
+  attackers (since they can't hit a dived sub) — that would make
+  DIVE more attractive to subs threatened by, say, an artillery.
+- **Multi-turn LOAD planning.** Out-of-scope per the plan but worth
+  flagging: today the AI loads reactively (cargo happens to be
+  next to a transport). On a generic naval map, the cargo and
+  transport often start far apart; the AI doesn't currently route
+  a foot unit toward a friendly transport intentionally. A simple
+  improvement: when a `pusher`-role infantry's path to the enemy
+  HQ crosses water, bias its MOVE objective toward the nearest
+  friendly transport instead of straight at the HQ.
+
+## Fog v1.1 (builder)
+
+- **`PHANTOM_SENTINEL` deviation.** The plan called for stamping
+  phantoms with `loadedIn = PHANTOM_SENTINEL` mirroring the
+  `FOG_HIDDEN_SENTINEL` trick, but the cargo-skip pattern is shared
+  by threat-map + futureThreat + a dozen other call sites, so the
+  sentinel would hide phantoms from the threat map — defeating the
+  point. Implemented with `phantom?: boolean` on Unit instead.
+  `unitAt` and `attackableTargets` skip phantoms; threat-map naturally
+  picks them up. Documented in code.
+- **Phantom + ghost-of-destroyed-unit edge case.** If an enemy is
+  destroyed while the viewer has a stale ghost AND the viewer never
+  observes the destruction, the ghost persists as a phantom in
+  `viewStateForPlayer` indefinitely — until the viewer scouts the
+  tile and proves it empty. Matches AW-DS behaviour (you don't know
+  the unit is dead). Could surprise players in long games.
+- **Aggressive AI numbers on non-duel maps.** Fog-acceptance still
+  holds tier3-fog ≥7/10 on duel after Aggressive ghost consumption
+  landed. Crossroads / armada / island_hop / canyon / highlands
+  not yet measured under fog v1.1 — same gap as v1.0 noted above.
+- **Mountain bonus + air units.** Bonus applies to ANY unit on a
+  mountain tile, including air units that happen to end a turn there.
+  In practice the terrain table makes mountain impassable to
+  wheel/tread/sea, so the only mountain-standers are foot and air.
+  Air units ignore ground-terrain movement costs, so they CAN end
+  on mountains; bonus stacks. Probably fine — air recon at altitude
+  + mountain peak is intuitive. Flagged in case it shows up in
+  tournament balance.
