@@ -15,8 +15,8 @@ import type {
   Unit,
   UnitType,
 } from '../engine/core/types';
-import { manhattan, tileAt, unitAt } from '../engine/core/types';
-import { visibleTiles } from '../engine/queries/selectors';
+import { tileAt, unitAt } from '../engine/core/types';
+import { isVisibleTo, visibleTiles } from '../engine/queries/selectors';
 import type { AnimationQueue, Anim } from './animations';
 import { easeInOutCubic } from './easing';
 import type { SpriteCache } from './sprites';
@@ -379,27 +379,19 @@ function drawUnits(
   }
   // Pre-compute the viewer's visibility set once per frame when fog is on.
   const fogVisible = fogViewer !== null ? visibleTiles(state, fogViewer) : null;
+  const observer: PlayerId = fogViewer ?? state.currentPlayer;
+  const fogOn = fogVisible !== null;
 
   for (const unit of Object.values(state.units)) {
     // Loaded cargo isn't drawn separately — its carrier renders a cargo
     // badge instead.
     if (unit.loadedIn !== undefined) continue;
-    // Fog-of-war: enemy units (relative to the viewer) on hidden tiles aren't
-    // drawn at all. Friendlies and the viewer's own units always render.
-    if (fogVisible !== null && fogViewer !== null && unit.owner !== fogViewer) {
-      if (!fogVisible.has(`${unit.pos.x},${unit.pos.y}`)) continue;
-    }
-    // Submerged-submarine stealth: skip rendering an enemy submerged sub
-    // unless the current viewer has a cruiser/submarine adjacent. (Own
-    // submerged subs always render; for ground-truth debugging the
-    // viewer-aware lookup is in selectors.visibleUnitAt.)
-    if (
-      unit.type === 'submarine' &&
-      unit.submerged === true &&
-      unit.owner !== state.currentPlayer
-    ) {
-      if (!hasAdjacentSpotter(state, unit.pos, state.currentPlayer)) continue;
-    }
+    // Single masking pass via the selectors. Covers:
+    //   - own units (always visible)
+    //   - submerged-submarine stealth (always — independent of fog)
+    //   - fog disk (when fog is on)
+    //   - forest-hides-ground (when fog is on)
+    if (!isVisibleTo(state, unit, observer, fogOn)) continue;
     drawUnit(
       ctx,
       state,
@@ -731,21 +723,3 @@ export function isUnitAt(state: GameState, c: Coord): Unit | undefined {
   return unitAt(state, c);
 }
 
-/**
- * True if `viewer` has a cruiser or submarine within Manhattan distance 1 of
- * `at`. Used by the renderer to decide whether to draw an enemy submerged
- * submarine. Mirrors the `isVisibleTo` rule in `selectors.ts`.
- */
-function hasAdjacentSpotter(
-  state: GameState,
-  at: Coord,
-  viewer: PlayerId,
-): boolean {
-  for (const u of Object.values(state.units)) {
-    if (u.owner !== viewer) continue;
-    if (u.loadedIn !== undefined) continue;
-    if (u.type !== 'cruiser' && u.type !== 'submarine') continue;
-    if (manhattan(u.pos, at) <= 1) return true;
-  }
-  return false;
-}

@@ -33,6 +33,31 @@ const SUBMERGED_VISION_RANGE = 1;
  */
 const MOUNTAIN_VISION_BONUS = 3;
 
+/**
+ * Forest-hides-ground (fog only): an enemy ground unit (movement class
+ * foot/wheel/tread) on a `forest` tile is invisible UNLESS the observer has
+ * any non-cargo unit at Manhattan distance ≤ 1 of the forest tile — the
+ * canonical "adjacent reveal" rule.
+ *
+ * Air and sea units are unaffected (a copter over trees isn't hidden by
+ * them). Returns `true` when the unit is concealed and should be masked.
+ */
+function isHiddenByForest(
+  state: GameState,
+  unit: Unit,
+  observer: PlayerId,
+): boolean {
+  const cls = UNITS[unit.type].movementClass;
+  if (cls !== 'foot' && cls !== 'wheel' && cls !== 'tread') return false;
+  if (state.map[unit.pos.y]?.[unit.pos.x]?.terrain !== 'forest') return false;
+  for (const other of Object.values(state.units)) {
+    if (other.owner !== observer) continue;
+    if (other.loadedIn !== undefined) continue;
+    if (manhattan(other.pos, unit.pos) <= 1) return false;
+  }
+  return true;
+}
+
 /** Per-state, per-player visibleTiles cache. Cleared via state identity. */
 const visibleTilesCache = new WeakMap<GameState, Map<PlayerId, Set<string>>>();
 
@@ -182,6 +207,7 @@ export function viewStateForPlayer(
       }
       if (!spotted) hidden = true;
     }
+    if (!hidden && isHiddenByForest(state, u, player)) hidden = true;
     filtered[u.id] = hidden ? { ...u, loadedIn: FOG_HIDDEN_SENTINEL } : u;
   }
   return { ...state, units: filtered };
@@ -278,9 +304,9 @@ export function attackableTargets(state: GameState, unit: Unit): Unit[] {
  *   - Own units → always visible.
  *   - Submerged enemy submarines (existing rule) → visible only if observer
  *     owns a cruiser/submarine within Manhattan distance 1 of the sub.
- *   - Otherwise: when `fog` is false, always visible (omniscience — current
- *     pre-fog behaviour). When `fog` is true, visible iff the unit's tile is
- *     in `visibleTiles(state, observer)`.
+ *   - Under fog: visible iff the unit's tile is in `visibleTiles` AND the
+ *     forest-hides-ground layer doesn't conceal it.
+ *   - Without fog: always visible (omniscience — pre-fog behaviour).
  */
 export function isVisibleTo(
   state: GameState,
@@ -300,7 +326,9 @@ export function isVisibleTo(
     return false;
   }
   if (!fog) return true;
-  return isTileVisible(state, unit.pos, observer);
+  if (!isTileVisible(state, unit.pos, observer)) return false;
+  if (isHiddenByForest(state, unit, observer)) return false;
+  return true;
 }
 
 /**

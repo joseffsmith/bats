@@ -236,6 +236,113 @@ describe('fog-of-war: visibleTiles matrix', () => {
   });
 });
 
+describe('fog-of-war: forest hides ground', () => {
+  it('enemy ground unit on forest is hidden under fog without an adjacent spotter', () => {
+    const s = makeState({
+      width: 9,
+      height: 1,
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 8, y: 0 } },
+      ],
+      tiles: [{ pos: { x: 4, y: 0 }, terrain: 'forest' }],
+      units: [
+        // Recon at column 2 sees the forest tile (distance 2, within vision 5).
+        { type: 'recon', owner: 0, pos: { x: 2, y: 0 } },
+        // Enemy infantry hiding on the forest tile.
+        { type: 'infantry', owner: 1, pos: { x: 4, y: 0 } },
+      ],
+    });
+    const enemy = Object.values(s.units).find((u) => u.owner === 1)!;
+    // Tile is in the vision disk, but the unit is masked by forest cover.
+    expect(isTileVisible(s, enemy.pos, 0)).toBe(true);
+    expect(isVisibleTo(s, enemy, 0, /* fog */ true)).toBe(false);
+    expect(visibleUnitAt(s, enemy.pos, 0, /* fog */ true)).toBeUndefined();
+    // viewStateForPlayer stamps it as hidden too.
+    const view = viewStateForPlayer(s, 0);
+    const viewed = view.units[enemy.id]!;
+    expect(viewed.loadedIn).toBeDefined(); // FOG_HIDDEN_SENTINEL
+  });
+
+  it('adjacent friendly reveals an enemy ground unit on forest', () => {
+    const s = makeState({
+      width: 9,
+      height: 1,
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 8, y: 0 } },
+      ],
+      tiles: [{ pos: { x: 4, y: 0 }, terrain: 'forest' }],
+      units: [
+        // Scout adjacent (Manhattan-1) to the forest tile.
+        { type: 'infantry', owner: 0, pos: { x: 3, y: 0 } },
+        // Enemy infantry on the forest tile.
+        { type: 'infantry', owner: 1, pos: { x: 4, y: 0 } },
+      ],
+    });
+    const enemy = Object.values(s.units).find((u) => u.owner === 1)!;
+    expect(isVisibleTo(s, enemy, 0, /* fog */ true)).toBe(true);
+    expect(visibleUnitAt(s, enemy.pos, 0, /* fog */ true)).toBeDefined();
+    const view = viewStateForPlayer(s, 0);
+    expect(view.units[enemy.id]!.loadedIn).toBeUndefined();
+  });
+
+  it('air units on forest are NOT hidden (rule applies to ground only)', () => {
+    const s = makeState({
+      width: 9,
+      height: 1,
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 8, y: 0 } },
+      ],
+      tiles: [{ pos: { x: 4, y: 0 }, terrain: 'forest' }],
+      units: [
+        // Recon at column 2 — sees the forest tile.
+        { type: 'recon', owner: 0, pos: { x: 2, y: 0 } },
+        // Enemy copter (air class) on the forest tile.
+        { type: 'copter', owner: 1, pos: { x: 4, y: 0 } },
+      ],
+    });
+    const enemy = Object.values(s.units).find((u) => u.owner === 1)!;
+    expect(isVisibleTo(s, enemy, 0, /* fog */ true)).toBe(true);
+  });
+
+  it('forest does NOT hide ground when fog is off', () => {
+    const s = makeState({
+      width: 9,
+      height: 1,
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 8, y: 0 } },
+      ],
+      tiles: [{ pos: { x: 4, y: 0 }, terrain: 'forest' }],
+      units: [
+        { type: 'recon', owner: 0, pos: { x: 2, y: 0 } },
+        { type: 'infantry', owner: 1, pos: { x: 4, y: 0 } },
+      ],
+    });
+    const enemy = Object.values(s.units).find((u) => u.owner === 1)!;
+    // No fog → forest is a visual decoration only.
+    expect(isVisibleTo(s, enemy, 0, /* fog */ false)).toBe(true);
+    expect(visibleUnitAt(s, enemy.pos, 0, /* fog */ false)).toBeDefined();
+  });
+
+  it('own ground unit on forest stays visible to its owner', () => {
+    const s = makeState({
+      width: 5,
+      height: 1,
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 4, y: 0 } },
+      ],
+      tiles: [{ pos: { x: 2, y: 0 }, terrain: 'forest' }],
+      units: [{ type: 'infantry', owner: 0, pos: { x: 2, y: 0 } }],
+    });
+    const own = Object.values(s.units)[0]!;
+    expect(isVisibleTo(s, own, 0, /* fog */ true)).toBe(true);
+  });
+});
+
 describe('fog-of-war: viewStateForPlayer', () => {
   it('keeps own + visible enemies as-is; stamps hidden enemies with fog sentinel', async () => {
     const { FOG_HIDDEN_SENTINEL } = await import('../src/engine/queries/selectors');
