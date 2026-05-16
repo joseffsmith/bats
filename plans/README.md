@@ -28,6 +28,10 @@ Each plan has these sections, in order:
 - [`amphibious-ai.md`](amphibious-ai.md) — teach the AI to use transports,
   landers, carriers, and submarines, so `armada` and `island_hop` become
   contested games.
+- [`visual-polish.md`](visual-polish.md) — pixel-art unit sprites,
+  autotiled terrain, and a juice pass (projectile arcs, muzzle flash,
+  hit pause, damage numbers, capture flash, vignette). Stays on plain
+  Canvas — no Phaser/Pixi.
 
 ## Working in a worktree
 
