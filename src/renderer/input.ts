@@ -149,6 +149,14 @@ export function createInputController(
         ov.moveRange = sel.reachable
           .filter((r) => r.path.length > 0 || coordEq(r.coord, sel.unit.pos))
           .map((r) => r.coord);
+        // Attack-range preview: show every tile this unit could hit this turn,
+        // so the player can see at a glance whether a target is reachable.
+        // Indirect units (artillery, battleship) can't move-and-attack so the
+        // ring is anchored at their current position; direct units union the
+        // attack arc across every reachable tile.
+        if (!sel.unit.hasActed) {
+          ov.attackRange = computeAttackArea(state, sel.unit, sel.reachable);
+        }
         break;
       }
       case 'move-previewed':
@@ -558,6 +566,37 @@ export function createInputController(
 }
 
 // ─────────────────────────── Helpers ─────────────────────────────────────────
+
+function computeAttackArea(
+  state: GameState,
+  unit: Unit,
+  reachable: ReachableTile[],
+): Coord[] {
+  const stats = UNITS[unit.type];
+  if (stats.maxRange <= 0) return [];
+  const firingPositions: Coord[] = stats.indirect
+    ? [unit.pos]
+    : reachable.map((r) => r.coord);
+  const seen = new Set<string>();
+  const out: Coord[] = [];
+  for (const p of firingPositions) {
+    for (let dy = -stats.maxRange; dy <= stats.maxRange; dy++) {
+      const absdy = Math.abs(dy);
+      const dxMax = stats.maxRange - absdy;
+      for (let dx = -dxMax; dx <= dxMax; dx++) {
+        const d = absdy + Math.abs(dx);
+        if (d < stats.minRange) continue;
+        const c = { x: p.x + dx, y: p.y + dy };
+        if (!inBounds(state.map, c)) continue;
+        const key = `${c.x},${c.y}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(c);
+      }
+    }
+  }
+  return out;
+}
 
 function computeActionMenuEntries(
   state: GameState,

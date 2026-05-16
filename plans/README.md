@@ -28,8 +28,6 @@ Each plan has these sections, in order:
 - [`amphibious-ai.md`](amphibious-ai.md) — teach the AI to use transports,
   landers, carriers, and submarines, so `armada` and `island_hop` become
   contested games.
-- [`fog-of-war.md`](fog-of-war.md) — per-player visibility, hidden-tile mask,
-  enemy units invisible in fog, AI under imperfect information.
 
 ## Working in a worktree
 
