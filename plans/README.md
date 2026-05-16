@@ -28,6 +28,8 @@ Each plan has these sections, in order:
 - [`amphibious-ai.md`](amphibious-ai.md) — teach the AI to use transports,
   landers, carriers, and submarines, so `armada` and `island_hop` become
   contested games.
+- [`fog-v1.1.md`](fog-v1.1.md) — three deferred fog-of-war rules: mountain
+  vision bonus, forest-hides-ground, and last-known-position ghosts.
 
 ## Working in a worktree
 
