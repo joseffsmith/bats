@@ -441,9 +441,59 @@ function drawUnits(
     ctx.restore();
   }
 
+  // Fog-of-war ghost markers: half-opacity silhouettes for enemies last seen
+  // on tiles that are now outside the viewer's vision. Memory is updated by
+  // the reducer; the renderer just reads from `state.players[viewer]`.
+  if (fogOn && fogVisible !== null) {
+    drawGhosts(ctx, state, vp, observer, fogVisible, sprites);
+  }
+
   // Damage preview tooltip.
   if (overlay.damagePreview) {
     drawDamagePreview(ctx, vp, overlay.damagePreview);
+  }
+}
+
+function drawGhosts(
+  ctx: CanvasRenderingContext2D,
+  state: GameState,
+  vp: Viewport,
+  viewer: PlayerId,
+  fogVisible: Set<string>,
+  sprites: SpriteCache | undefined,
+): void {
+  const memory = state.players[viewer].seenEnemies;
+  if (memory === undefined) return;
+  const ts = vp.tileSize;
+  const inset = Math.max(3, Math.floor(ts * 0.12));
+  const size = ts - inset * 2;
+  for (const ghost of Object.values(memory)) {
+    if (fogVisible.has(`${ghost.pos.x},${ghost.pos.y}`)) continue;
+    const palette = PLAYER_COLOURS[ghost.owner];
+    const p = tileTopLeft(vp, ghost.pos);
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    let drewSprite = false;
+    if (sprites) {
+      try {
+        const variant = ghost.hp < 50 ? 'damaged' : 'clean';
+        const img = sprites.get(ghost.type, ghost.owner, variant);
+        ctx.drawImage(img, p.x, p.y, ts, ts);
+        drewSprite = true;
+      } catch {
+        drewSprite = false;
+      }
+    }
+    if (!drewSprite) {
+      ctx.fillStyle = palette.fill;
+      ctx.fillRect(p.x + inset, p.y + inset, size, size);
+      ctx.fillStyle = palette.letter;
+      ctx.font = `bold ${Math.floor(ts * 0.45)}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(UNIT_LETTER[ghost.type], p.x + ts / 2, p.y + ts / 2 + ts * 0.02);
+    }
+    ctx.restore();
   }
 }
 
