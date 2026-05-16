@@ -11,8 +11,6 @@
 import type {
   Coord,
   GameState,
-  PlayerId,
-  TerrainType,
   Unit,
   UnitType,
 } from '../engine/core/types';
@@ -21,6 +19,7 @@ import type { AnimationQueue, Anim } from './animations';
 import { easeInOutCubic } from './easing';
 import type { SpriteCache } from './sprites';
 import { PLAYER_COLOURS } from './canvas-palette';
+import { drawTerrain } from './terrain';
 export type { PlayerPalette } from './canvas-palette';
 export { PLAYER_COLOURS };
 
@@ -37,47 +36,6 @@ export const BOARD_TOP_INSET = 110;
 /** Vertical space reserved at the bottom of the canvas for the DOM chrome
  *  (toolshelf + AI config + end-turn cluster). */
 export const BOARD_BOTTOM_INSET = 110;
-
-const NEUTRAL_HQ_OWNER_FILL = '#555';
-
-/** Background colour per terrain type. Tuned to be distinct from player colours. */
-const TERRAIN_FILL: Record<TerrainType, string> = {
-  plain: '#c9d59a', // pale olive
-  road: '#bcb6a4', // light grey-tan
-  forest: '#3e6a3a', // dark green
-  mountain: '#7a5a3a', // brown
-  sea: '#1f4d8a', // deep blue
-  city: '#e8d680', // pale yellow
-  hq: '#bfa030', // gold (overridden per owner below)
-  factory: '#6e7480', // steel grey
-};
-
-const TERRAIN_LETTER: Record<TerrainType, string> = {
-  plain: '',
-  road: '',
-  forest: 'F',
-  mountain: 'M',
-  sea: '',
-  city: 'C',
-  hq: 'H',
-  factory: 'X',
-};
-
-const TERRAIN_LETTER_COLOUR: Record<TerrainType, string> = {
-  plain: '',
-  road: '',
-  forest: '#2a4a28', // darker green
-  mountain: '#3a2a12', // darker brown
-  sea: '',
-  city: '#7a6620',
-  hq: '#1a1a1a',
-  factory: '#3a3e44',
-};
-
-const OWNER_INDICATOR: Record<PlayerId, string> = {
-  0: '#ff7070',
-  1: '#70a0ff',
-};
 
 const UNIT_LETTER: Record<UnitType, string> = {
   infantry: 'I',
@@ -238,7 +196,6 @@ export function createCanvasRenderer(
 
     drawBoardFrame(ctx, state, vp);
     drawTerrain(ctx, state, vp);
-    drawOwnerIndicators(ctx, state, vp);
     drawOverlays(ctx, vp, overlay);
     drawUnits(ctx, state, vp, anim, overlay, deps.sprites);
     drawWinnerBanner(ctx, state, vp);
@@ -323,87 +280,6 @@ function bracket(
   ctx.lineTo(x + 0.5, y + 0.5);
   ctx.lineTo(x + 0.5, y + dy);
   ctx.stroke();
-}
-
-function drawTerrain(
-  ctx: CanvasRenderingContext2D,
-  state: GameState,
-  vp: Viewport,
-): void {
-  const map = state.map;
-  for (let y = 0; y < map.length; y++) {
-    const row = map[y]!;
-    for (let x = 0; x < row.length; x++) {
-      const tile = row[x]!;
-      const px = vp.origin.x + x * vp.tileSize;
-      const py = vp.origin.y + y * vp.tileSize;
-      const ts = vp.tileSize;
-
-      let fill: string = TERRAIN_FILL[tile.terrain];
-      if (tile.terrain === 'hq') {
-        if (tile.owner === 0) fill = '#d6a830';
-        else if (tile.owner === 1) fill = '#3a78d6';
-        else fill = NEUTRAL_HQ_OWNER_FILL;
-      }
-      ctx.fillStyle = fill;
-      ctx.fillRect(px, py, ts, ts);
-
-      // Forest pattern: a few darker dots.
-      if (tile.terrain === 'forest') {
-        ctx.fillStyle = '#2a4a28';
-        const r = Math.max(1, Math.floor(ts / 12));
-        ctx.beginPath();
-        ctx.arc(px + ts * 0.3, py + ts * 0.35, r, 0, Math.PI * 2);
-        ctx.arc(px + ts * 0.7, py + ts * 0.5, r, 0, Math.PI * 2);
-        ctx.arc(px + ts * 0.45, py + ts * 0.75, r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      // Mountain shading: triangle peak overlay.
-      if (tile.terrain === 'mountain') {
-        ctx.fillStyle = '#5a3a1f';
-        ctx.beginPath();
-        ctx.moveTo(px + ts * 0.5, py + ts * 0.2);
-        ctx.lineTo(px + ts * 0.85, py + ts * 0.8);
-        ctx.lineTo(px + ts * 0.15, py + ts * 0.8);
-        ctx.closePath();
-        ctx.fill();
-      }
-      // Terrain letter.
-      const letter = TERRAIN_LETTER[tile.terrain];
-      if (letter) {
-        ctx.fillStyle = TERRAIN_LETTER_COLOUR[tile.terrain];
-        ctx.font = `600 ${Math.floor(ts * 0.28)}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(letter, px + ts / 2, py + ts / 2 + ts * 0.02);
-      }
-      // Grid line.
-      ctx.strokeStyle = 'rgba(0,0,0,0.18)';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(px + 0.5, py + 0.5, ts - 1, ts - 1);
-    }
-  }
-}
-
-function drawOwnerIndicators(
-  ctx: CanvasRenderingContext2D,
-  state: GameState,
-  vp: Viewport,
-): void {
-  const map = state.map;
-  for (let y = 0; y < map.length; y++) {
-    const row = map[y]!;
-    for (let x = 0; x < row.length; x++) {
-      const tile = row[x]!;
-      if (tile.owner === null || tile.terrain === 'hq') continue; // HQ shows ownership via fill
-      const px = vp.origin.x + x * vp.tileSize;
-      const py = vp.origin.y + y * vp.tileSize;
-      const ts = vp.tileSize;
-      ctx.fillStyle = OWNER_INDICATOR[tile.owner];
-      const flagW = Math.max(4, Math.floor(ts * 0.18));
-      ctx.fillRect(px + ts - flagW - 4, py + 4, flagW, flagW);
-    }
-  }
 }
 
 function drawOverlays(
