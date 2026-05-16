@@ -822,7 +822,8 @@ function orderedOwnedUnits(state: GameState, player: PlayerId): string[] {
  *   - If `infantryFloor` is set and our own infantry count is below it AND
  *     there are unowned capturables on the map, build infantry first.
  *   - Else iterate `policy.preferred` (in order) and pick the first
- *     affordable unit not on the `avoid` list.
+ *     affordable unit not on the `avoid` list. A type is skipped per-factory
+ *     when the factory can't build it (sea units need a coastal factory).
  *   - Else pick the most expensive affordable from the default order
  *     [tank, recon, artillery, infantry], skipping `avoid` if anything else
  *     is affordable.
@@ -831,6 +832,13 @@ function orderedOwnedUnits(state: GameState, player: PlayerId): string[] {
  *
  * The legacy behaviour (no policy) is preserved: infantryFloor=2 (when
  * `unowned > 0`), preferred order [tank, recon, artillery, infantry].
+ *
+ * Roster expansion (round 6): per-factory legality filtering means a persona
+ * with `preferred: [cruiser, tank, ...]` correctly falls through to `tank` on
+ * inland factories instead of producing a rejected BUILD that wastes the
+ * factory's turn. The greedy affordable-first picker already auto-limits
+ * spam of expensive air/sea types — once funds dip below the expensive
+ * type's cost, the picker falls through to the next preferred entry.
  */
 function enumerateBuilds(
   state: GameState,
@@ -865,7 +873,17 @@ function enumerateBuilds(
       if (occupied(state, x, y)) continue;
       const funds = state.players[player].funds;
       const unowned = unownedCapturables(state, player);
+      const factoryCoastal = isCoastalFactory(state, x, y);
       let pick: UnitType | null = null;
+
+      // Per-factory affordability + legality check. Sea-class units need a
+      // coastal factory (engine rejects otherwise — the AI would burn a build
+      // slot on a guaranteed-illegal action). Cheap to check.
+      const buildableHere = (t: UnitType): boolean => {
+        if (funds < UNITS[t].cost) return false;
+        if (UNITS[t].movementClass === 'sea' && !factoryCoastal) return false;
+        return true;
+      };
 
       // Infantry floor — keep capture pressure up, but only when our total
       // unit count is also low (see `floorActive` above).
@@ -877,21 +895,20 @@ function enumerateBuilds(
       ) {
         pick = 'infantry';
       } else {
-        // Walk the preferred list; skip avoided types.
+        // Walk the preferred list; skip avoided types and types this factory
+        // can't legally produce.
         for (const t of preferred) {
           if (avoid.has(t)) continue;
-          if (funds >= UNITS[t].cost) {
-            pick = t;
-            break;
-          }
+          if (!buildableHere(t)) continue;
+          pick = t;
+          break;
         }
         // Last-resort fallback: try avoided types so we still spend funds.
         if (!pick) {
           for (const t of preferred) {
-            if (funds >= UNITS[t].cost) {
-              pick = t;
-              break;
-            }
+            if (!buildableHere(t)) continue;
+            pick = t;
+            break;
           }
         }
       }
@@ -900,6 +917,25 @@ function enumerateBuilds(
     }
   }
   return out;
+}
+
+/**
+ * True iff `(x, y)` is a factory tile adjacent (orthogonal) to a sea tile.
+ * Mirrors the `checkBuild` rule in `core/validators.ts`. Pure read.
+ */
+function isCoastalFactory(state: GameState, x: number, y: number): boolean {
+  const adj = [
+    { x: x - 1, y },
+    { x: x + 1, y },
+    { x, y: y - 1 },
+    { x, y: y + 1 },
+  ];
+  for (const n of adj) {
+    if (!inBounds(state.map, n)) continue;
+    const t = tileAt(state.map, n);
+    if (t.terrain === 'sea') return true;
+  }
+  return false;
 }
 
 function countOwned(state: GameState, player: PlayerId, type: UnitType): number {
@@ -949,6 +985,8 @@ export const __test = {
   nearestUnownedCapturable,
   nearestEnemy,
   hottestThreatTile,
+  isCoastalFactory,
+  enumerateBuilds,
   CAPTURE_THRESHOLD,
   coordEq,
   inAttackRange,

@@ -332,6 +332,107 @@ describe('build policy: infantryFloor activation', () => {
   });
 });
 
+describe('build policy: coastal-factory filtering (round 6)', () => {
+  // The round-6 expansion lets personas list sea units (cruiser, battleship,
+  // submarine, carrier, lander) at the top of their `preferred` list. Inland
+  // factories must SKIP those entries and fall through to a ground/air unit
+  // they can actually produce — otherwise `enumerateBuilds` emits a
+  // guaranteed-illegal BUILD that gets rejected and the factory wastes its
+  // turn.
+  it('inland factory falls through sea-preferred entries to next legal type', () => {
+    // Persona: prefers cruiser (sea, 11000) then tank (7000). Factory is
+    // inland (no adjacent sea) so cruiser is illegal here; tank must win.
+    const state = makeState({
+      width: 8,
+      height: 5,
+      defaultTerrain: 'plain',
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 2 } },
+        { owner: 1, pos: { x: 7, y: 2 } },
+      ],
+      tiles: [
+        // Inland factory — surrounded by plain.
+        { pos: { x: 1, y: 2 }, terrain: 'factory', owner: 0 },
+      ],
+      // Enough roster that the infantry floor isn't active. Two infantry +
+      // floor of 2 means floorActive = (2 < 2) → false.
+      units: [
+        { type: 'infantry', owner: 0, pos: { x: 0, y: 0 }, hp: 100 },
+        { type: 'infantry', owner: 0, pos: { x: 0, y: 4 }, hp: 100 },
+      ],
+      funds: { 0: 12000, 1: 0 },
+    });
+    for (const u of Object.values(state.units)) {
+      if (u.owner === 0) {
+        u.hasMoved = true;
+        u.hasActed = true;
+      }
+    }
+
+    const ai = utilityAI({
+      name: 'sea-pref-test',
+      useThreatMap: true,
+      useRoles: true,
+      buildPolicy: {
+        preferred: ['cruiser', 'tank', 'infantry'],
+        infantryFloor: 2,
+      },
+    });
+    const actions = ai.takeTurn({ state, player: 0, rng: createRng(1) });
+    const builds = actions.filter((a) => a.type === 'BUILD');
+    expect(builds.length).toBe(1);
+    const b = builds[0]!;
+    if (b.type !== 'BUILD') throw new Error('unreachable');
+    // Cruiser must be skipped at this inland factory; tank wins.
+    expect(b.unitType).toBe('tank');
+  });
+
+  it('coastal factory builds the sea-preferred entry', () => {
+    // Identical persona; factory now has an adjacent sea tile.
+    const state = makeState({
+      width: 8,
+      height: 5,
+      defaultTerrain: 'plain',
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 2 } },
+        { owner: 1, pos: { x: 7, y: 2 } },
+      ],
+      tiles: [
+        { pos: { x: 1, y: 2 }, terrain: 'factory', owner: 0 },
+        // Adjacent sea tile.
+        { pos: { x: 1, y: 3 }, terrain: 'sea' },
+      ],
+      units: [
+        { type: 'infantry', owner: 0, pos: { x: 0, y: 0 }, hp: 100 },
+        { type: 'infantry', owner: 0, pos: { x: 0, y: 4 }, hp: 100 },
+      ],
+      funds: { 0: 12000, 1: 0 },
+    });
+    for (const u of Object.values(state.units)) {
+      if (u.owner === 0) {
+        u.hasMoved = true;
+        u.hasActed = true;
+      }
+    }
+
+    const ai = utilityAI({
+      name: 'sea-pref-test',
+      useThreatMap: true,
+      useRoles: true,
+      buildPolicy: {
+        preferred: ['cruiser', 'tank', 'infantry'],
+        infantryFloor: 2,
+      },
+    });
+    const actions = ai.takeTurn({ state, player: 0, rng: createRng(1) });
+    const builds = actions.filter((a) => a.type === 'BUILD');
+    expect(builds.length).toBe(1);
+    const b = builds[0]!;
+    if (b.type !== 'BUILD') throw new Error('unreachable');
+    expect(b.unitType).toBe('cruiser');
+  });
+});
+
 describe('personaAI runs end-to-end', () => {
   // Cheap smoke: aggressor vs balanced finishes in <60s headless.
   it('aggressor vs balanced finishes a match on duel', async () => {

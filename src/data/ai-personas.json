@@ -2,7 +2,7 @@
   "personas": [
     {
       "name": "aggressor",
-      "description": "Tank push with HQ-pressing infantry pushers. Accepts trades but still captures.",
+      "description": "Tank push with HQ-pressing infantry pushers. Adds bombers/fighters for air-heavy maps, cruisers/submarines for sea-heavy maps. Accepts trades but still captures.",
       "weights": {
         "damageDealt": 1.2,
         "capture": 0.9,
@@ -15,14 +15,14 @@
         "frontline": { "damageDealt": 1.5, "counterRisk": 0.8 }
       },
       "buildPolicy": {
-        "preferred": ["tank", "recon", "infantry"],
-        "avoid": ["artillery"],
+        "preferred": ["bomber", "cruiser", "tank", "fighter", "recon", "infantry"],
+        "avoid": ["artillery", "submarine", "carrier", "transport", "lander"],
         "infantryFloor": 3
       }
     },
     {
       "name": "turtle",
-      "description": "Tank + infantry walls on terrain. Slow push; ignores recon.",
+      "description": "Tank + infantry walls on terrain. Slow push; ignores recon. Adds aatank for air defence and cruiser/battleship for sea defence.",
       "weights": {
         "damageDealt": 1.0,
         "capture": 1.6,
@@ -36,14 +36,14 @@
         "frontline": { "damageDealt": 1.1, "positional": 1.5 }
       },
       "buildPolicy": {
-        "preferred": ["tank", "infantry", "artillery"],
+        "preferred": ["battleship", "cruiser", "aatank", "tank", "infantry", "artillery"],
         "avoid": ["recon"],
         "infantryFloor": 3
       }
     },
     {
       "name": "economist",
-      "description": "Cheap-units swarm; captures fast and supports with a tank or two.",
+      "description": "Cheap-units swarm; captures fast and supports with a tank or two. Adds cruiser as a mid-cost sea fighter; avoids expensive air/sea capships and transports the AI can't yet operate.",
       "weights": {
         "damageDealt": 1.0,
         "capture": 1.8,
@@ -57,14 +57,14 @@
         "frontline": { "damageDealt": 1.3, "objective": 1.2 }
       },
       "buildPolicy": {
-        "preferred": ["tank", "infantry", "recon", "infantry"],
-        "avoid": ["copter"],
+        "preferred": ["cruiser", "tank", "infantry", "recon", "aatank", "infantry"],
+        "avoid": ["copter", "bomber", "battleship", "submarine", "carrier", "fighter", "lander", "transport"],
         "infantryFloor": 2
       }
     },
     {
       "name": "balanced",
-      "description": "Tuned tier3 baseline — no major weight changes, control persona.",
+      "description": "Tuned tier3 baseline — no major weight changes, control persona. Lightly extended with a representative mix of new unit types.",
       "weights": {
         "damageDealt": 1.0,
         "capture": 1.5,
@@ -72,6 +72,9 @@
         "futureThreat": 0.5,
         "positional": 0.3,
         "objective": 0.6
+      },
+      "buildPolicy": {
+        "preferred": ["cruiser", "fighter", "tank", "recon", "aatank", "artillery", "infantry"]
       }
     }
   ]

@@ -173,3 +173,39 @@ Questions and assumptions logged during autonomous execution. Resolved questions
       non-cruiser observer; cruisers and friendly subs see them).
     - Extend `enumerateBuilds` with carriers + submarines on coastal
       factories under a budget heuristic.
+
+## Phase 7 (round 6 — expanded-roster tuning)
+
+- **Per-factory legality filtering in `enumerateBuilds`.** With the
+  roster expansion we want personas to list sea units (cruiser,
+  battleship) at the top of their `preferred` build list so coastal
+  factories produce them. Naïve listing emits an illegal BUILD on
+  inland factories (engine rejects sea-class without adjacent sea).
+  Fixed by per-factory `buildableHere` check in `enumerateBuilds`
+  that skips sea-class types unless the factory is coastal. The
+  walker falls through to the next preferred entry. Documented in
+  `AI_TUNING.md` iter 6. The same hook can be reused for air-only
+  factories (airport terrain) if/when those land.
+- **Save-up vs greedy spend.** Personas can list `battleship` (18k)
+  first, but the greedy build picker spends funds the moment they
+  reach `cruiser` (11k) — so battleships rarely or never get built.
+  Considered adding a "save up for top of preferred list" flag per
+  factory but deferred — single-factory armies don't need
+  battleships to win, and the change adds complexity. Listed in
+  `AI_TUNING.md` iter 6 open follow-ups.
+- **Threat-class match scoring.** The brief considered adding a
+  per-candidate bonus when building a counter (fighter when enemy
+  has copters; bomber when enemy has tanks). The persona-list
+  change alone closed enough of the round-6 gap to defer this. If
+  a future iteration wants per-build SITUATIONAL preference (not
+  just persona-static preference), revisit by extending
+  `enumerateBuilds` to score candidates rather than picking the
+  first affordable.
+- **Persona-specific avoid lists for "AI can't yet operate" types.**
+  `submarine` (DIVE/SURFACE), `carrier` (LOAD/UNLOAD of air),
+  `transport` and `lander` (LOAD/UNLOAD of ground/foot) are
+  deliberately on every relevant persona's `avoid` list. When the
+  candidate generator is extended for those actions, the `avoid`
+  list entries should be removed from the personas that fit
+  (aggressor wants submarines; economist might want landers for
+  cheap amphibious push).

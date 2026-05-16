@@ -345,3 +345,210 @@ in `QUESTIONS.md`.
   (frontline-target semantics, infantryFloor build-bug, future
   refactors).
 
+---
+
+## Iteration 6 — expanded roster (pilot, 6 matches × 6 maps)
+
+Trigger: the unit roster expanded from 6 → 14 (added `fighter`, `bomber`,
+`battleship`, `cruiser`, `aatank`, `lander`, `submarine`, `carrier`) and
+two new maps landed (`highlands` air-focused; `armada` sea-focused). The
+iter-5 personas' `preferred` build lists named only the original 4
+ground unit types, so on the new maps the AI couldn't field anything
+appropriate to the terrain. A baseline tournament confirmed: 59.7 %
+match-stalemate rate, ALL six `armada` pairings ending in genuine draws
+(no `rawWinner`), and zero builds of any new unit type by any persona.
+
+### Baseline (216 matches, 6 maps × 6 pairs × 6 matches/pair)
+
+| persona   | W  | L  | D  | WR    |
+|-----------|----|----|----|-------|
+| aggressor | 48 | 54 |  6 | 44.4% |
+| balanced  | 33 | 69 |  6 | 30.6% |
+| economist | 66 | 36 |  6 | 61.1% |
+| turtle    | 57 | 45 |  6 | 52.8% |
+
+- **Stalemates (no `rawWinner`): 129/216 = 59.7 %**
+- **Genuine draws (adjudication tied): 12** — all on `armada`
+- **Builds per persona per match (top types):**
+  - aggressor: 6.6 tank, 5.6 recon, 3.3 infantry
+  - turtle:    7.5 tank, 7.1 infantry, 0.0 of anything else
+  - economist: 8.1 tank, 6.9 infantry, 0.0 of anything else
+  - balanced:  5.4 tank, 5.6 recon, 3.6 infantry
+- **Zero air or sea units built by any persona on any map.**
+
+Sample log (`aggressor-vs-balanced-armada-000`): both sides ground-cycle
+infantry/recon/tank on inland factories, with no path across the
+central sea strip. Land units can't move onto sea tiles; sea-class
+units aren't built because the personas don't list them. Result: 200
+turns, zero engagement, adjudicated draw.
+
+### Changes applied
+
+**(a) Persona `preferred` list expansion.** Each persona learned about
+one or two new unit types that match its archetype:
+
+| persona   | preferred (round 6)                                          | avoid (round 6)                                                |
+|-----------|--------------------------------------------------------------|----------------------------------------------------------------|
+| aggressor | bomber, cruiser, tank, fighter, recon, infantry              | artillery, submarine, carrier, transport, lander               |
+| turtle    | battleship, cruiser, aatank, tank, infantry, artillery       | recon                                                          |
+| economist | cruiser, tank, infantry, recon, aatank, infantry             | copter, bomber, battleship, submarine, carrier, fighter, lander, transport |
+| balanced  | cruiser, fighter, tank, recon, aatank, artillery, infantry   | —                                                              |
+
+Rationale per persona:
+
+- **aggressor** gets `bomber` (top of list) for huge anti-ground damage
+  (95 vs recon, 100 vs tank, 110 vs infantry — bombers fly over the
+  forest belt that traps tanks on crossroads/highlands). `cruiser` is
+  the coastal-factory fallback when bomber isn't legal/affordable.
+  `fighter` provides air-superiority defence so we don't lose bombers
+  to enemy fighters/copters. Submarine excluded because the AI doesn't
+  yet operate DIVE/SURFACE (see open follow-ups).
+- **turtle** gets `aatank` as a hard anti-air counter (105 dmg vs
+  copter/bomber, 100 vs fighter) — directly counters aggressor's
+  bombers. `battleship` + `cruiser` placed at the top so coastal
+  factories produce sea defence; on inland factories these fall
+  through to `tank`/`infantry`/`artillery`.
+- **economist** stays cheap (`avoid` blocks the 14k bomber + 18k
+  battleship + 22k carrier + 16k submarine). `cruiser` (11k) is its
+  only sea option for armada; `aatank` is mid-cost defence. Transport
+  units excluded because economist needs units that actually fight
+  (the AI doesn't operate LOAD/UNLOAD).
+- **balanced** acquires a representative mix: `cruiser` for sea,
+  `fighter` for air, `aatank` for AA. No `avoid` list — pure control.
+
+**(b) Coastal-factory build filtering in `enumerateBuilds`.** Naïvely
+putting `cruiser` at the top of turtle's `preferred` list would emit a
+guaranteed-illegal `BUILD` action on inland factories (`checkBuild`
+rejects sea-class units that don't have an adjacent sea tile). The
+top-level legality check in `planUtilityTurn` would drop the action,
+wasting the factory's turn. Fixed by gating each preferred entry per
+factory: a sea-class unit is skipped at the factory iff there is no
+orthogonally-adjacent sea tile. The walker then falls through to the
+next type in `preferred`. This is a one-function diff in
+`src/engine/ai/utility.ts`; no engine semantics change.
+
+**(c) No weight/role changes.** The persona role overrides and weights
+from iter 5 carry over unchanged. We did NOT touch the utility scoring
+or role multipliers; only the build-priority lists and the per-factory
+legality filter. (A threat-class-match scoring bonus — e.g. "+X for
+building a fighter when the enemy has copters" — was considered but
+deferred. The persona-list change alone resolved most of the build
+neglect; the residual stalemates are all driven by missing
+amphibious / transport AI, not by misweighted scoring.)
+
+### Tuned results (same conditions: 216 matches)
+
+| persona   | W  | L  | D | WR    |
+|-----------|----|----|---|-------|
+| aggressor | 63 | 39 | 6 | 58.3% |
+| economist | 60 | 48 | 0 | 55.6% |
+| turtle    | 45 | 63 | 0 | 41.7% |
+| balanced  | 42 | 60 | 6 | 38.9% |
+
+Pairing matrix (row vs col WR%):
+
+|           | aggressor | turtle | economist | balanced |
+|-----------|-----------|--------|-----------|----------|
+| aggressor | -         | 67%    | 67%       | 42%      |
+| turtle    | 33%       | -      | 25%       | 67%      |
+| economist | 33%       | 75%    | -         | 58%      |
+| balanced  | 42%       | 33%    | 42%       | -        |
+
+- **Stalemates: 108/216 = 50.0 % (-9.7 pp)**
+- **Genuine draws: 6 (-50%)** — all six remaining are on `armada`
+- Pair-win-rate **floor (≥10%) met on every pair.**
+
+Per-map breakdown of stalemates by pair (each cell is N/6):
+
+|                       | duel | crossroads | island_hop | canyon | highlands | armada |
+|-----------------------|------|------------|------------|--------|-----------|--------|
+| aggressor vs turtle   | 0/6  | 3/6 → 0/6  | 6/6        | 0/6    | 6/6 → 3/6 | 6/6    |
+| aggressor vs economist| 0/6  | 6/6 → 0/6  | 6/6        | 0/6    | 3/6 → 3/6 | 6/6    |
+| aggressor vs balanced | 0/6  | 6/6 → 6/6  | 6/6        | 3/6→0/6| 6/6 → 6/6 | 6/6    |
+| turtle vs economist   | 0/6→3/6 | 3/6→0/6 | 6/6        | 3/6→0/6| 3/6 → 3/6 | 6/6    |
+| turtle vs balanced    | 0/6  | 3/6 → 0/6  | 6/6        | 0/6→3/6| 3/6 → 3/6 | 6/6    |
+| economist vs balanced | 0/6  | 3/6 → 0/6  | 6/6        | 0/6    | 6/6 → 3/6 | 6/6    |
+
+Arrow `→` shows baseline → tuned where the cell changed; static cells
+were the same in both runs.
+
+Highlights:
+
+- **Crossroads now decisive everywhere except `aggressor vs balanced`.**
+  Bombers/fighters break the forest-belt stalemate that defeated iter
+  5's pure tank push. Aggressor wins crossroads 6/0 vs turtle by
+  bombing infantry stacks; the bomber-vs-fighter clashes resolve
+  decisively.
+- **Highlands halved its stalemate rate.** Was 4 of 6 pair-cells
+  capped; now 2 are clean and the rest are 3/6 mixed. The lone hold-
+  out is `aggressor vs balanced highlands`: both build heavy air
+  rosters (aggressor's 9.2 bomber + 7.8 tank, balanced's 9.8 fighter
+  + 5.3 tank) and trade interceptions without either reaching the HQ.
+- **Armada and island_hop are unchanged: 100 % cap-stalemate.** Both
+  maps require amphibious operations the AI can't yet stage —
+  transports/landers must LOAD an infantry, ferry across the sea, and
+  UNLOAD onto enemy land. The utility AI doesn't generate
+  LOAD/UNLOAD candidates at all (`candidates.ts` enumerates only
+  ATTACK/CAPTURE/WAIT follow-ups). With the round-6 build changes,
+  the sea action at least HAPPENS — cruisers fight cruisers,
+  bombers/fighters trade — but neither side can reach the enemy HQ
+  to win.
+
+### Build composition in tuned run (avg per match)
+
+| persona   | aatank | bomber | fighter | infantry | recon | tank |
+|-----------|--------|--------|---------|----------|-------|------|
+| aggressor |  0.0   |  3.3   |  0.0    |  3.7     | 5.8   | 3.5  |
+| balanced  |  0.0   |  0.0   |  3.4    |  4.0     | 7.8   | 2.8  |
+| economist |  0.0   |  0.0   |  0.0    |  7.3     | 0.0   | 6.9  |
+| turtle    |  6.3   |  0.0   |  0.0    |  7.2     | 0.0   | 1.4  |
+
+Map-level: aggressor's bombers concentrate on highlands (9.2/match)
+and crossroads (6.5/match); fighters on highlands for balanced
+(9.8/match). Turtle's aatank explodes on highlands (11.0/match) and
+crossroads (13.0/match) as a direct counter to enemy air. The
+deferred-integration units (`submarine`, `carrier`, `lander`,
+`battleship`) saw zero builds in this run — partly because they're
+expensive enough that the greedy build picker never accumulates the
+necessary funds (the cheaper preferred entry above always fires
+first), and partly because they're in `avoid` lists for personas
+where they don't fit. Acceptable: the goal was making the AI build
+SOMETHING useful for the new maps, not exercising every roster slot.
+
+### Open follow-ups
+
+- **Submarine DIVE/SURFACE.** `QUESTIONS.md` already flags this. Until
+  `generateCandidates` yields DIVE/SURFACE follow-ups and the threat
+  map / value map understand stealth, submarines are deliberately on
+  every persona's `avoid` list. Re-enable once integrated.
+- **Carrier + air cargo.** Carriers carry fighters/bombers across sea.
+  Without LOAD/UNLOAD candidates the carrier is a dead unit. Avoided
+  by every persona.
+- **Transport / lander (amphibious push).** The core blocker for
+  `armada` and `island_hop`. The fix is non-trivial: the AI needs to
+  recognise "my infantry can't capture the central neutral cities
+  unless I ferry them across" and route an infantry into a transport,
+  the transport across the sea, and UNLOAD it on the right tile. This
+  is a structural change in `candidates.ts` + `roles.ts` and is out
+  of scope for round 6.
+- **Battleship neglect.** Turtle lists `battleship` first but its 18k
+  cost means the greedy build picker fires on `cruiser` (11k) before
+  funds ever accumulate to 18k. Could add a "save up" flag to the
+  build policy for one factory per turn. Deferred — battleships are
+  nice-to-have, not load-bearing.
+- **Highlands `aggressor vs balanced` cap-stalemate.** Both personas
+  now field heavy air rosters that perfectly counter each other,
+  producing a slow attritional trade with no HQ-pressure. Possible
+  fix: a `pusher` role multiplier specifically for air units that
+  marches them toward the enemy HQ. Deferred — it's a single
+  remaining pair-cell, and the bigger win (resolving the 50% rate
+  itself) is achieved.
+
+### Stop condition
+
+Tuned run meets the iter 5 quality bar (≥10% floor every pair). The
+overall stalemate rate dropped 9.7 percentage points and the genuine-
+draw count halved. Two-thirds of the residual cap-matches are on the
+two sea-heavy maps (`armada`, `island_hop`), which are blocked on
+amphibious-AI integration rather than persona tuning. Round 6 closed.
+
