@@ -44,6 +44,22 @@ type Args = {
   fog?: string;
   view?: string;
   slowmo?: number;
+  scene?: string;
+};
+
+/**
+ * Named scene presets — URL params + turn counts + settle timing baked in so
+ * polish screenshots are reproducible. Pass `--scene=NAME` to apply; any
+ * explicit flag the user passes still overrides the preset.
+ */
+const SCENES: Record<string, Partial<Args>> = {
+  'projectile-arc':    { map: 'armada',    p0: 'balanced', p1: 'aggressor', turn: 12, slowmo: 10, waitMs: 1500 },
+  'tank-duel-impact':  { map: 'duel',      p0: 'balanced', p1: 'balanced',  turn: 8,  slowmo: 5,  waitMs: 1500 },
+  'capture-flash':     { map: 'duel',      p0: 'balanced', p1: 'balanced',  turn: 15, slowmo: 8,  waitMs: 1500 },
+  'damage-numbers':    { map: 'highlands', p0: 'balanced', p1: 'balanced',  turn: 14, waitMs: 1500 },
+  'armada-start':      { map: 'armada',    turn: 0 },
+  'duel-mid':          { map: 'duel',      p0: 'balanced', p1: 'balanced',  turn: 14 },
+  'island-hop-mid':    { map: 'island_hop', p0: 'balanced', p1: 'balanced', turn: 15 },
 };
 
 function parseArgs(): Args {
@@ -66,10 +82,24 @@ function parseArgs(): Args {
     else if (k === 'fog') out.fog = v;
     else if (k === 'view') out.view = v;
     else if (k === 'slowmo') out.slowmo = Number(v);
+    else if (k === 'scene') out.scene = v;
   }
   if (!out.out) {
     console.error('--out=PATH is required');
     process.exit(1);
+  }
+  // Scene presets fill in any field the caller didn't already specify.
+  if (out.scene) {
+    const preset = SCENES[out.scene];
+    if (!preset) {
+      console.error(`unknown --scene=${out.scene}; valid: ${Object.keys(SCENES).join(', ')}`);
+      process.exit(1);
+    }
+    for (const [k, v] of Object.entries(preset)) {
+      if ((out as Record<string, unknown>)[k] === undefined) {
+        (out as Record<string, unknown>)[k] = v;
+      }
+    }
   }
   return out as Args;
 }

@@ -21,7 +21,9 @@ import type { AnimationQueue, Anim } from './animations';
 import { easeInOutCubic } from './easing';
 import type { SpriteCache } from './sprites';
 import { PLAYER_COLOURS } from './canvas-palette';
-import { drawTerrain } from './terrain';
+import { drawTerrain, type TerrainCache } from './terrain';
+import { drawColourGrade } from './colour-grade';
+import { drawFactorySmoke } from './terrain-fx';
 export type { PlayerPalette } from './canvas-palette';
 export { PLAYER_COLOURS };
 
@@ -119,6 +121,10 @@ export type CanvasRendererDeps = {
   sprites?: SpriteCache;
   /** Fog-of-war configuration. Defaults to `{ on: false, viewerOverride: null }`. */
   fog?: FogConfig;
+  /** Currently-loaded map. Drives the per-map colour-grade overlay. */
+  mapName?: import('./maps').MapName;
+  /** Optional sheet-loaded terrain cache. Falls back to procedural per-tile. */
+  terrain?: TerrainCache;
 };
 
 export type CanvasRenderer = {
@@ -221,11 +227,13 @@ export function createCanvasRenderer(
 
     const viewer: PlayerId = fog.viewerOverride ?? state.currentPlayer;
     drawBoardFrame(ctx, state, vp);
-    drawTerrain(ctx, state, vp);
+    drawTerrain(ctx, state, vp, deps.terrain);
     drawOverlays(ctx, vp, overlay);
     drawUnits(ctx, state, vp, anim, overlay, deps.sprites, fog.on ? viewer : null);
+    drawFactorySmoke(ctx, state, vp);
     if (fog.on) drawFogMask(ctx, state, vp, viewer);
     drawVignette(ctx, vp);
+    drawColourGrade(ctx, vp, deps.mapName);
     drawWinnerBanner(ctx, state, vp);
   }
 

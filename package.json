@@ -14,7 +14,8 @@
     "match": "tsx src/cli/run-match.ts",
     "tournament": "tsx src/cli/tournament.ts",
     "round-robin": "tsx src/cli/round-robin.ts",
-    "shoot": "tsx scripts/shoot.ts"
+    "shoot": "tsx scripts/shoot.ts",
+    "frame-budget": "tsx scripts/frame-budget.ts"
   },
   "devDependencies": {
     "@types/node": "^25.7.0",

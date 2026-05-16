@@ -25,6 +25,8 @@ import type { AIChoice } from './renderer/ai-driver';
 import { log, setLogEnabled } from './engine/core/logger';
 import type { PlayerId } from './engine/core/types';
 import { createSpriteCache } from './renderer/sprites';
+import { createTerrainCache } from './renderer/terrain';
+import { loadAssets } from './renderer/assets/loader';
 import { createAudio } from './renderer/audio';
 import { createChrome } from './renderer/chrome';
 import { runEditor } from './renderer/editor';
@@ -74,7 +76,7 @@ function setupCanvas(): HTMLCanvasElement {
   return canvas;
 }
 
-function main(): void {
+async function main(): Promise<void> {
   // Editor mode short-circuits the normal play wiring.
   if (params.get('editor') === '1') {
     runEditor(document.getElementById('app') ?? document.body);
@@ -86,8 +88,15 @@ function main(): void {
   const baseState = loadMap(MAPS[mapName]);
   const initialState = fogConfig.on ? enableFogMemory(baseState) : baseState;
   const emitter = createEmitter(initialState);
-  const sprites = createSpriteCache();
-  const renderer = createCanvasRenderer(canvas, { sprites, fog: fogConfig });
+  const assets = await loadAssets();
+  const sprites = createSpriteCache(assets.units);
+  const terrain = createTerrainCache(assets.terrain);
+  const renderer = createCanvasRenderer(canvas, {
+    sprites,
+    terrain,
+    fog: fogConfig,
+    mapName,
+  });
   renderer.resize();
 
   let rafId = 0;
@@ -204,4 +213,4 @@ function main(): void {
   });
 }
 
-main();
+void main();

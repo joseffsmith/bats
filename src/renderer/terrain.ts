@@ -90,10 +90,26 @@ const GRID = 'rgba(0,0,0,0.10)';
 
 // ─────────────────────────── Public entry point ──────────────────────────────
 
+export type TerrainCache = {
+  get(terrain: TerrainType): CanvasImageSource | undefined;
+};
+
+/** Wrap a TerrainImages map (from `assets/loader.ts`) in a thin lookup. */
+export function createTerrainCache(
+  images: Map<TerrainType, CanvasImageSource>,
+): TerrainCache {
+  return { get: (t) => images.get(t) };
+}
+
+/** Terrains that don't fully cover the tile in PixelLab art — they need a
+ *  plain underlay so the page background doesn't show through. */
+const LAYERED_OVER_PLAIN: ReadonlySet<TerrainType> = new Set(['forest', 'mountain']);
+
 export function drawTerrain(
   ctx: CanvasRenderingContext2D,
   state: GameState,
   vp: Viewport,
+  cache?: TerrainCache,
 ): void {
   const map = state.map;
   for (let y = 0; y < map.length; y++) {
@@ -105,31 +121,32 @@ export function drawTerrain(
       const ts = vp.tileSize;
       const seed = hash2(x, y);
 
-      switch (tile.terrain) {
-        case 'plain':
-          drawPlain(ctx, px, py, ts, seed);
-          break;
-        case 'road':
-          drawRoad(ctx, px, py, ts, x, y, map);
-          break;
-        case 'forest':
-          drawForest(ctx, px, py, ts, seed);
-          break;
-        case 'mountain':
-          drawMountain(ctx, px, py, ts, seed);
-          break;
-        case 'sea':
-          drawSea(ctx, px, py, ts, seed);
-          break;
-        case 'city':
-          drawCity(ctx, px, py, ts, tile.owner);
-          break;
-        case 'hq':
-          drawHQ(ctx, px, py, ts, tile.owner);
-          break;
-        case 'factory':
-          drawFactory(ctx, px, py, ts, tile.owner, seed);
-          break;
+      const sheet = cache ? cache.get(tile.terrain) : undefined;
+      if (sheet && cache) {
+        // Sheet path: blit the PNG, plus a plain underlay for thin-canopy
+        // terrains, plus the ownership LED cue for capturables.
+        if (LAYERED_OVER_PLAIN.has(tile.terrain)) {
+          const plain = cache.get('plain');
+          if (plain) ctx.drawImage(plain, px, py, ts, ts);
+          else drawPlain(ctx, px, py, ts, seed);
+        }
+        ctx.drawImage(sheet, px, py, ts, ts);
+        if (tile.owner !== null &&
+            (tile.terrain === 'city' || tile.terrain === 'hq' || tile.terrain === 'factory')) {
+          drawOwnerCue(ctx, px, py, ts, tile.owner);
+        }
+      } else {
+        // Procedural fallback — preserved for tests + transitional builds.
+        switch (tile.terrain) {
+          case 'plain':    drawPlain(ctx, px, py, ts, seed); break;
+          case 'road':     drawRoad(ctx, px, py, ts, x, y, map); break;
+          case 'forest':   drawForest(ctx, px, py, ts, seed); break;
+          case 'mountain': drawMountain(ctx, px, py, ts, seed); break;
+          case 'sea':      drawSea(ctx, px, py, ts, seed); break;
+          case 'city':     drawCity(ctx, px, py, ts, tile.owner); break;
+          case 'hq':       drawHQ(ctx, px, py, ts, tile.owner); break;
+          case 'factory':  drawFactory(ctx, px, py, ts, tile.owner, seed); break;
+        }
       }
 
       ctx.strokeStyle = GRID;
