@@ -16,6 +16,21 @@ feature. Recon becomes the most cost-efficient unit in the game during the
 opening; ambushes become real; the early-game tempo shifts from "race to the
 front" to "build the picture, then commit."
 
+## Setup
+
+Do this work in a git worktree, not on `main`. See
+[`plans/README.md`](README.md#working-in-a-worktree) for the full setup:
+
+```sh
+git worktree add ../bats-fog -b feat/fog-of-war
+cd ../bats-fog
+ln -s ../bats/node_modules .     # or `npm install` if you change package.json
+npm test                         # confirm the worktree builds
+```
+
+Use `--port=5180` (or any free port) on `npm run shoot` if another instance
+is running on the default 5179.
+
 ## Background reading
 
 1. `src/engine/queries/selectors.ts` — `isVisibleTo`, `visibleUnitAt`. The

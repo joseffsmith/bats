@@ -31,6 +31,53 @@ Each plan has these sections, in order:
 - [`fog-of-war.md`](fog-of-war.md) — per-player visibility, hidden-tile mask,
   enemy units invisible in fog, AI under imperfect information.
 
+## Working in a worktree
+
+Every plan should be executed in its own git worktree off `main`, so the
+parent checkout stays clean and reviewable, and parallel work doesn't
+collide. From the repo root:
+
+```sh
+# Branch off main and check it out alongside the repo:
+git worktree add ../bats-<feature> -b <feature>/<short-slug>
+cd ../bats-<feature>
+```
+
+**Make the game runnable inside the worktree.** Vite, puppeteer, and tsx
+all need to resolve through `node_modules`, which a fresh worktree does
+not have. Two options, in order of preference:
+
+1. **Symlink** the parent repo's `node_modules` — instant, no extra disk:
+   ```sh
+   ln -s ../bats/node_modules .
+   ```
+   Works as long as `package.json` in the worktree hasn't diverged from
+   the parent. If your plan adds a dep, switch to option 2.
+
+2. **`npm install`** in the worktree — adds ~5min and ~600MB (puppeteer
+   bundles its own Chromium). Use this when you're touching `package.json`.
+
+Verify the worktree is wired up:
+
+```sh
+npm test                                          # all 367+ tests pass
+npm run shoot -- --map=duel --out=/tmp/wt.png     # screenshot writes
+```
+
+**Port conflicts.** `npm run shoot` defaults to port 5179 with strict-port,
+so if you have a `npm run dev` going elsewhere or another worktree
+mid-shoot, pass `--port=5180` (or any free port) to avoid the collision.
+
+**Cleanup when the work merges.** Delete the worktree and branch when done:
+
+```sh
+cd /Users/joesmith/Code/bats
+git worktree remove ../bats-<feature>
+git branch -d <feature>/<short-slug>      # safe; refuses if unmerged
+```
+
+If you forget, `git worktree list` will show you all live worktrees.
+
 ## UI feedback for agents
 
 Most plans need to verify how the change looks, not just whether tests pass.

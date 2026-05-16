@@ -17,6 +17,21 @@ Acceptance bar: armada + island_hop stalemate rate drops below 50% (from 100%);
 overall round-robin stalemate rate stays at or below the post-tuning baseline
 (currently 50%); no regression on land-only maps.
 
+## Setup
+
+Do this work in a git worktree, not on `main`. See
+[`plans/README.md`](README.md#working-in-a-worktree) for the full setup:
+
+```sh
+git worktree add ../bats-amphibious -b ai/amphibious
+cd ../bats-amphibious
+ln -s ../bats/node_modules .     # or `npm install` if you change package.json
+npm test                         # confirm the worktree builds
+```
+
+Use `--port=5180` (or any free port) on `npm run shoot` if another instance
+is running on the default 5179.
+
 ## Background reading
 
 Read in this order:
