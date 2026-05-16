@@ -37,6 +37,12 @@ export type UnitDef = {
   cargoCapacity: number;
   /** Movement classes accepted as cargo. Empty = not a transport. */
   cargoMovementClasses: ReadonlyArray<MovementClass>;
+  /**
+   * Manhattan radius this unit can see for fog-of-war purposes. The unit's own
+   * tile is always visible regardless of value. Submarines are special: this
+   * is the surfaced vision; submerged subs see only their own tile + adjacent.
+   */
+  visionRange: number;
 };
 
 export type TerrainDef = {
@@ -224,6 +230,7 @@ export function loadUnits(json: unknown): Record<UnitType, UnitDef> {
       indirect: asBool(o.indirect, `${path}.indirect`),
       cargoCapacity,
       cargoMovementClasses,
+      visionRange: asNonNegInt(o.visionRange, `${path}.visionRange`),
     };
     if (def.minRange > def.maxRange) {
       fail(path, `minRange (${def.minRange}) > maxRange (${def.maxRange})`);

@@ -233,8 +233,11 @@ export const PERSONA_NAMES: ReadonlyArray<string> = Object.keys(PERSONAS).sort()
  * Build an AI driven by the named persona. The returned AI is a Tier 3
  * utility AI with the persona's base weights, role multipliers, and build
  * policy in effect.
+ *
+ * `fog` toggles fog-of-war planning — the persona then sees only what its
+ * player sees, and treats hidden tiles as carrying a phantom-threat baseline.
  */
-export function personaAI(name: string): AI {
+export function personaAI(name: string, opts: { fog?: boolean } = {}): AI {
   const cfg = PERSONAS[name];
   if (!cfg) {
     throw new Error(
@@ -248,5 +251,6 @@ export function personaAI(name: string): AI {
     useRoles: true,
     roleMultipliers: cfg.roleMultipliers,
     buildPolicy: cfg.buildPolicy,
+    fog: opts.fog ?? false,
   });
 }

@@ -7,7 +7,8 @@
     "minRange": 1,
     "maxRange": 1,
     "canCapture": true,
-    "indirect": false
+    "indirect": false,
+    "visionRange": 2
   },
   {
     "type": "recon",
@@ -17,7 +18,8 @@
     "minRange": 1,
     "maxRange": 1,
     "canCapture": false,
-    "indirect": false
+    "indirect": false,
+    "visionRange": 5
   },
   {
     "type": "tank",
@@ -27,7 +29,8 @@
     "minRange": 1,
     "maxRange": 1,
     "canCapture": false,
-    "indirect": false
+    "indirect": false,
+    "visionRange": 3
   },
   {
     "type": "artillery",
@@ -37,7 +40,8 @@
     "minRange": 2,
     "maxRange": 3,
     "canCapture": false,
-    "indirect": true
+    "indirect": true,
+    "visionRange": 2
   },
   {
     "type": "copter",
@@ -47,7 +51,8 @@
     "minRange": 1,
     "maxRange": 1,
     "canCapture": false,
-    "indirect": false
+    "indirect": false,
+    "visionRange": 5
   },
   {
     "type": "transport",
@@ -59,7 +64,8 @@
     "canCapture": false,
     "indirect": false,
     "cargoCapacity": 1,
-    "cargoMovementClasses": ["foot"]
+    "cargoMovementClasses": ["foot"],
+    "visionRange": 1
   },
   {
     "type": "fighter",
@@ -69,7 +75,8 @@
     "minRange": 1,
     "maxRange": 1,
     "canCapture": false,
-    "indirect": false
+    "indirect": false,
+    "visionRange": 5
   },
   {
     "type": "bomber",
@@ -79,7 +86,8 @@
     "minRange": 1,
     "maxRange": 1,
     "canCapture": false,
-    "indirect": false
+    "indirect": false,
+    "visionRange": 4
   },
   {
     "type": "battleship",
@@ -89,7 +97,8 @@
     "minRange": 2,
     "maxRange": 6,
     "canCapture": false,
-    "indirect": true
+    "indirect": true,
+    "visionRange": 3
   },
   {
     "type": "cruiser",
@@ -99,7 +108,8 @@
     "minRange": 1,
     "maxRange": 1,
     "canCapture": false,
-    "indirect": false
+    "indirect": false,
+    "visionRange": 5
   },
   {
     "type": "aatank",
@@ -109,7 +119,8 @@
     "minRange": 1,
     "maxRange": 1,
     "canCapture": false,
-    "indirect": false
+    "indirect": false,
+    "visionRange": 2
   },
   {
     "type": "lander",
@@ -121,7 +132,8 @@
     "canCapture": false,
     "indirect": false,
     "cargoCapacity": 1,
-    "cargoMovementClasses": ["foot", "wheel", "tread"]
+    "cargoMovementClasses": ["foot", "wheel", "tread"],
+    "visionRange": 1
   },
   {
     "type": "submarine",
@@ -131,7 +143,8 @@
     "minRange": 1,
     "maxRange": 1,
     "canCapture": false,
-    "indirect": false
+    "indirect": false,
+    "visionRange": 5
   },
   {
     "type": "carrier",
@@ -143,6 +156,7 @@
     "canCapture": false,
     "indirect": false,
     "cargoCapacity": 2,
-    "cargoMovementClasses": ["air"]
+    "cargoMovementClasses": ["air"],
+    "visionRange": 4
   }
 ]

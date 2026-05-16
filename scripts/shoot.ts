@@ -41,6 +41,8 @@ type Args = {
   url?: string;
   port: number;
   waitMs: number;
+  fog?: string;
+  view?: string;
 };
 
 function parseArgs(): Args {
@@ -60,6 +62,8 @@ function parseArgs(): Args {
     else if (k === 'url') out.url = v;
     else if (k === 'port') out.port = Number(v);
     else if (k === 'wait-ms') out.waitMs = Number(v);
+    else if (k === 'fog') out.fog = v;
+    else if (k === 'view') out.view = v;
   }
   if (!out.out) {
     console.error('--out=PATH is required');
@@ -98,6 +102,8 @@ function buildUrl(args: Args): string {
   if (args.map) u.searchParams.set('map', args.map);
   if (args.p0) u.searchParams.set('p0', args.p0);
   if (args.p1) u.searchParams.set('p1', args.p1);
+  if (args.fog) u.searchParams.set('fog', args.fog);
+  if (args.view) u.searchParams.set('view', args.view);
   return u.toString();
 }
 

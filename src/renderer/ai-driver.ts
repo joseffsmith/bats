@@ -62,6 +62,8 @@ export type AIDriverDeps = {
   seed?: number;
   /** Time source — `performance.now` in the browser, `Date.now` in tests. */
   now?: () => number;
+  /** When true, AI plans under fog-of-war (filtered enemy reads). */
+  fog?: boolean;
 };
 
 export type AIDriver = {
@@ -81,6 +83,7 @@ export function createAIDriver(deps: AIDriverDeps): AIDriver {
   const now = deps.now ?? ((): number => performance.now());
   const seed = deps.seed ?? Date.now();
   const rng: Rng = createRng(seed);
+  const fog = deps.fog ?? false;
 
   const choices: Record<PlayerId, AIChoice> = {
     0: deps.initial?.[0] ?? 'human',
@@ -97,9 +100,9 @@ export function createAIDriver(deps: AIDriverDeps): AIDriver {
   function makeAI(choice: AIChoice): AI | null {
     if (choice === 'human') return null;
     if (choice === 'random') return randomAI({ name: 'random' });
-    if (choice === 'utility') return utilityAI({ name: 'utility' });
+    if (choice === 'utility') return utilityAI({ name: 'utility', fog });
     // Otherwise it's a persona name — defer to the persona factory.
-    return personaAI(choice);
+    return personaAI(choice, { fog });
   }
 
   function planTurnIfNeeded(): void {

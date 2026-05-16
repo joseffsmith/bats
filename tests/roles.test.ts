@@ -196,6 +196,7 @@ describe('role assignment', () => {
         useRoles: true,
         roleMultipliers: ROLE_MULTIPLIERS,
         buildPolicy: {},
+        fog: false,
       },
       enemyReach: new Map(),
       threatMap: tm,

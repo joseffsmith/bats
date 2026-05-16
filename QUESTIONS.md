@@ -209,3 +209,29 @@ Questions and assumptions logged during autonomous execution. Resolved questions
   list entries should be removed from the personas that fit
   (aggressor wants submarines; economist might want landers for
   cheap amphibious push).
+
+## Fog-of-war (shipped `?fog=on` behind toolshelf toggle)
+
+- **Explored-memory ("ever-seen") rendering.** The fog mask is
+  binary: visible tiles are clear, all others are dimmed at alpha
+  0.55. AW uses a half-strength dim for "explored once, currently
+  dark" to communicate that terrain is known even if current vision
+  is gone. Deferred to v1.1.
+- **Last-known-position ghosts.** When an enemy unit leaves vision,
+  render a faded sprite at the last visible tile. Big strategic-feel
+  upgrade for little code; deferred to v1.1.
+- **Forest-hides-ground / mountain vision bonus.** AW gives forest
+  tiles a "hide ground units from observers >1 away" rule and
+  mountain tiles +3 vision. Both deferred to v1.1 — see
+  `plans/fog-of-war.md`.
+- **Hot-seat view-swap on END_TURN.** The renderer pins viewer to
+  `state.currentPlayer` or the `?view=p0|p1` override. The plan
+  suggested an optional fade on viewer change for hot-seat play,
+  gated by `?private-mode=1`. Deferred — the default works fine for
+  AI-vs-AI which is the dominant case.
+- **Phantom-threat sensitivity.** Fog AI uses
+  `PHANTOM_THREAT_PER_HIDDEN_TILE = 2` (see `AI_TUNING.md`). Tier3-fog
+  vs tier1-fog wins ≥7/10 on duel at this value; crossroads / armada
+  / island_hop / canyon / highlands haven't been measured under fog.
+  Open: do they hold without re-tuning?
+

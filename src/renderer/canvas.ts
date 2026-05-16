@@ -16,6 +16,7 @@ import type {
   UnitType,
 } from '../engine/core/types';
 import { manhattan, tileAt, unitAt } from '../engine/core/types';
+import { visibleTiles } from '../engine/queries/selectors';
 import type { AnimationQueue, Anim } from './animations';
 import { easeInOutCubic } from './easing';
 import type { SpriteCache } from './sprites';
@@ -100,10 +101,24 @@ export type Viewport = {
 
 // ─────────────────────────── Public renderer API ─────────────────────────────
 
+/**
+ * Fog-of-war renderer configuration. When `on` is true the renderer draws a
+ * dark mask over hidden tiles and refuses to draw enemy units whose tile is
+ * not in the viewer's visibility set. The viewer defaults to
+ * `state.currentPlayer` for hot-seat play; `viewerOverride` pins it to a
+ * specific player (used by the `?view=p0|p1` debug param).
+ */
+export type FogConfig = {
+  on: boolean;
+  viewerOverride: PlayerId | null;
+};
+
 export type CanvasRendererDeps = {
   /** Optional procedurally-baked sprite cache. If absent, units fall back to the
    *  coloured-square renderer (used by tests with stub contexts). */
   sprites?: SpriteCache;
+  /** Fog-of-war configuration. Defaults to `{ on: false, viewerOverride: null }`. */
+  fog?: FogConfig;
 };
 
 export type CanvasRenderer = {
@@ -124,6 +139,7 @@ export function createCanvasRenderer(
   deps: CanvasRendererDeps = {},
 ): CanvasRenderer {
   let viewport: Viewport = computeViewport(canvas);
+  const fog: FogConfig = deps.fog ?? { on: false, viewerOverride: null };
 
   function computeViewport(c: HTMLCanvasElement): Viewport {
     const dpr = window.devicePixelRatio || 1;
@@ -203,10 +219,12 @@ export function createCanvasRenderer(
       );
     }
 
+    const viewer: PlayerId = fog.viewerOverride ?? state.currentPlayer;
     drawBoardFrame(ctx, state, vp);
     drawTerrain(ctx, state, vp);
     drawOverlays(ctx, vp, overlay);
-    drawUnits(ctx, state, vp, anim, overlay, deps.sprites);
+    drawUnits(ctx, state, vp, anim, overlay, deps.sprites, fog.on ? viewer : null);
+    if (fog.on) drawFogMask(ctx, state, vp, viewer);
     drawWinnerBanner(ctx, state, vp);
   }
 
@@ -343,6 +361,7 @@ function drawUnits(
   anim: AnimationQueue,
   overlay: Overlay,
   sprites: SpriteCache | undefined,
+  fogViewer: PlayerId | null,
 ): void {
   const ts = vp.tileSize;
   const active = anim.active();
@@ -358,11 +377,18 @@ function drawUnits(
     }
     if (a.kind === 'hpTween') hpTweenById.set(a.unitId, a);
   }
+  // Pre-compute the viewer's visibility set once per frame when fog is on.
+  const fogVisible = fogViewer !== null ? visibleTiles(state, fogViewer) : null;
 
   for (const unit of Object.values(state.units)) {
     // Loaded cargo isn't drawn separately — its carrier renders a cargo
     // badge instead.
     if (unit.loadedIn !== undefined) continue;
+    // Fog-of-war: enemy units (relative to the viewer) on hidden tiles aren't
+    // drawn at all. Friendlies and the viewer's own units always render.
+    if (fogVisible !== null && fogViewer !== null && unit.owner !== fogViewer) {
+      if (!fogVisible.has(`${unit.pos.x},${unit.pos.y}`)) continue;
+    }
     // Submerged-submarine stealth: skip rendering an enemy submerged sub
     // unless the current viewer has a cruiser/submarine adjacent. (Own
     // submerged subs always render; for ground-truth debugging the
@@ -639,6 +665,39 @@ function drawDamagePreview(
   ctx.fillText(`Dealt:     ${preview.dealt} HP`, bx + 8, by + 6);
   ctx.fillStyle = preview.received > 0 ? '#ff8888' : '#bbb';
   ctx.fillText(`Counter: ${preview.received} HP`, bx + 8, by + 24);
+}
+
+/**
+ * Per-tile dim overlay for fog-of-war. Tiles not in the viewer's
+ * `visibleTiles` set get filled with a semi-transparent dark mask, painted
+ * AFTER terrain (and behind unit sprites, which were already gated out at
+ * `drawUnits`). The fog only covers the grid extent — board frame / chrome
+ * stays untouched.
+ *
+ * Note this is a simple binary mask (visible vs hidden); the optional
+ * "explored memory" half-strength tint from the plan is deferred to v1.1.
+ */
+function drawFogMask(
+  ctx: CanvasRenderingContext2D,
+  state: GameState,
+  vp: Viewport,
+  viewer: PlayerId,
+): void {
+  const visible = visibleTiles(state, viewer);
+  const ts = vp.tileSize;
+  const rows = state.map.length;
+  const cols = state.map[0]?.length ?? 0;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      if (visible.has(`${x},${y}`)) continue;
+      const px = vp.origin.x + x * ts;
+      const py = vp.origin.y + y * ts;
+      ctx.fillRect(px, py, ts, ts);
+    }
+  }
+  ctx.restore();
 }
 
 function drawWinnerBanner(
