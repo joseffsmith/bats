@@ -225,6 +225,7 @@ export function createCanvasRenderer(
     drawOverlays(ctx, vp, overlay);
     drawUnits(ctx, state, vp, anim, overlay, deps.sprites, fog.on ? viewer : null);
     if (fog.on) drawFogMask(ctx, state, vp, viewer);
+    drawVignette(ctx, vp);
     drawWinnerBanner(ctx, state, vp);
   }
 
@@ -331,14 +332,45 @@ function drawOverlays(
   for (const c of overlay.movePath ?? []) {
     fillTile(ctx, vp, c, 'rgba(255, 220, 80, 0.45)');
   }
-  // Selected unit border.
+  // Selected unit: animated dashed ring instead of a static border.
   if (overlay.selected) {
     const px = vp.origin.x + overlay.selected.x * ts;
     const py = vp.origin.y + overlay.selected.y * ts;
-    ctx.lineWidth = 3;
+    ctx.save();
+    ctx.lineWidth = 2.5;
     ctx.strokeStyle = '#ffd84a';
-    ctx.strokeRect(px + 2, py + 2, ts - 4, ts - 4);
+    // Dash pattern: 4 dashes per cycle, ~6deg/cycle phase per ms.
+    const phase = (performance.now() / 1000) * 30; // deg/s
+    ctx.setLineDash([Math.max(6, ts * 0.18), Math.max(4, ts * 0.12)]);
+    ctx.lineDashOffset = -phase;
+    // Slightly inset rounded square — easier on the eye than a hard corner.
+    const inset = 2;
+    const r = Math.max(3, ts * 0.10);
+    roundedStroke(ctx, px + inset, py + inset, ts - inset * 2, ts - inset * 2, r);
+    ctx.restore();
   }
+}
+
+function roundedStroke(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+): void {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+  ctx.stroke();
 }
 
 function fillTile(
@@ -524,6 +556,14 @@ function drawUnit(
     const p = tileTopLeft(vp, unit.pos);
     renderX = p.x;
     renderY = p.y;
+    // Idle bob — subtle ±1px vertical sine wobble, phase per-unit so the
+    // platoon doesn't breathe in lockstep. Greyed-out (acted) units don't
+    // bob; mid-MOVE units don't either (handled above).
+    if (!(unit.hasMoved && unit.hasActed)) {
+      const hash = idleHash(unit.id);
+      const wobble = Math.sin(performance.now() / 600 + hash * Math.PI * 2);
+      renderY += wobble * Math.max(0.7, ts * 0.025);
+    }
   }
 
   // Attack lunge: short horizontal jitter for the attacker. The amplitude is
@@ -656,6 +696,39 @@ function tileTopLeft(vp: Viewport, c: Coord): { x: number; y: number } {
     x: vp.origin.x + c.x * vp.tileSize,
     y: vp.origin.y + c.y * vp.tileSize,
   };
+}
+
+/**
+ * Subtle dark vignette around the viewport edges, plus a tiny warm overlay
+ * to give the board a cinematic frame without obscuring tiles. Drawn after
+ * everything else; the fog mask is unaffected because the radial gradient
+ * is mostly transparent in the centre.
+ */
+function drawVignette(ctx: CanvasRenderingContext2D, vp: Viewport): void {
+  const w = vp.width;
+  const h = vp.height;
+  ctx.save();
+  ctx.globalCompositeOperation = 'multiply';
+  const cx = w / 2;
+  const cy = h / 2;
+  const r0 = Math.min(w, h) * 0.45;
+  const r1 = Math.hypot(w, h) * 0.6;
+  const grad = ctx.createRadialGradient(cx, cy, r0, cx, cy, r1);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(1, 'rgba(180,165,135,1)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+  ctx.restore();
+}
+
+/** Stable [0,1) hash from a unit id for per-unit animation phase offsets. */
+function idleHash(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 10000) / 10000;
 }
 
 /**

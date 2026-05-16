@@ -89,12 +89,18 @@ function main(): void {
   const renderer = createCanvasRenderer(canvas, { sprites, fog: fogConfig });
   renderer.resize();
 
-  let dirty = true;
   let rafId = 0;
+  // `?slowmo=N` slows all anims by N× (and shifts performance.now in the same
+  // ratio for renderers that read it directly). Useful for screenshotting
+  // mid-flight effects.
+  const slowmoRaw = params.get('slowmo');
+  const slowmo = slowmoRaw ? Math.max(1, Math.min(20, Number(slowmoRaw) || 1)) : 1;
+  if (slowmo > 1) {
+    const origNow = performance.now.bind(performance);
+    const t0 = origNow();
+    performance.now = (): number => t0 + (origNow() - t0) / slowmo;
+  }
   const animQueue = createAnimationQueue({
-    onTick: () => {
-      dirty = true;
-    },
     onBusyChange: (busy) => {
       log('render', 'animation busy', { busy });
     },
@@ -143,23 +149,18 @@ function main(): void {
   function frame(): void {
     animQueue.tick();
     aiDriver.tick();
-    if (dirty || animQueue.busy() || aiDriver.busy()) {
-      const state = emitter.getState();
-      const overlay = input.getOverlay();
-      renderer.draw(state, overlay, animQueue);
-      hud.draw(state, overlay);
-      dirty = false;
-    }
+    // Always redraw — continuous render features (idle bob, animated
+    // selection ring, water shimmer, tree sway, factory smoke) need a fresh
+    // frame regardless of game-state changes. The renderer is fast enough.
+    const state = emitter.getState();
+    const overlay = input.getOverlay();
+    renderer.draw(state, overlay, animQueue);
+    hud.draw(state, overlay);
     rafId = window.requestAnimationFrame(frame);
   }
 
-  emitter.on(() => {
-    dirty = true;
-  });
-
   window.addEventListener('resize', () => {
     renderer.resize();
-    dirty = true;
   });
 
   // Disable canvas clicks when the current player is AI-controlled. We
