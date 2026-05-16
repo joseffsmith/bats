@@ -25,6 +25,14 @@ const PROPERTY_VISION_RANGE = 1;
  */
 const SUBMERGED_VISION_RANGE = 1;
 
+/**
+ * Bonus added to a unit's `visionRange` when it stands on a `mountain` tile —
+ * classic Advance Wars rule. Mountain is impassable to wheel/tread/sea, so in
+ * practice this fires for foot infantry (and the occasional air unit that
+ * ends a turn there).
+ */
+const MOUNTAIN_VISION_BONUS = 3;
+
 /** Per-state, per-player visibleTiles cache. Cleared via state identity. */
 const visibleTilesCache = new WeakMap<GameState, Map<PlayerId, Set<string>>>();
 
@@ -74,10 +82,15 @@ export function visibleTiles(
     if (u.owner !== player) continue;
     if (u.loadedIn !== undefined) continue;
     const stats = UNITS[u.type];
-    const r =
-      u.type === 'submarine' && u.submerged === true
-        ? SUBMERGED_VISION_RANGE
-        : stats.visionRange;
+    let r: number;
+    if (u.type === 'submarine' && u.submerged === true) {
+      r = SUBMERGED_VISION_RANGE;
+    } else {
+      r = stats.visionRange;
+      if (state.map[u.pos.y]?.[u.pos.x]?.terrain === 'mountain') {
+        r += MOUNTAIN_VISION_BONUS;
+      }
+    }
     addDisk(u.pos, r);
   }
 

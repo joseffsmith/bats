@@ -180,6 +180,60 @@ describe('fog-of-war: visibleTiles matrix', () => {
     // Under fog, with the spotter adjacent, the sub IS visible.
     expect(isVisibleTo(s, sub, 0, /* fog */ true)).toBe(true);
   });
+
+  it('infantry on mountain sees +3 farther (Manhattan-5)', () => {
+    const s = makeState({
+      width: 13,
+      height: 13,
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 12, y: 12 } },
+      ],
+      tiles: [{ pos: { x: 6, y: 6 }, terrain: 'mountain' }],
+      units: [{ type: 'infantry', owner: 0, pos: { x: 6, y: 6 } }],
+    });
+    const v = visibleTiles(s, 0);
+    // Manhattan-5 in every cardinal direction is now visible (base 2 + 3 bonus).
+    expect(v.has('11,6')).toBe(true);
+    expect(v.has('1,6')).toBe(true);
+    expect(v.has('6,11')).toBe(true);
+    expect(v.has('6,1')).toBe(true);
+    // Distance 6 still dark.
+    expect(v.has('12,6')).toBe(false);
+  });
+
+  it('infantry adjacent to a mountain (but not on it) is unaffected', () => {
+    const s = makeState({
+      width: 13,
+      height: 13,
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 12, y: 12 } },
+      ],
+      tiles: [{ pos: { x: 7, y: 6 }, terrain: 'mountain' }],
+      units: [{ type: 'infantry', owner: 0, pos: { x: 6, y: 6 } }],
+    });
+    const v = visibleTiles(s, 0);
+    // Still vanilla Manhattan-2 vision; distance 3 stays dark.
+    expect(v.has('8,6')).toBe(true); // distance 2 — visible
+    expect(v.has('9,6')).toBe(false); // distance 3 — dark
+  });
+
+  it('recon on mountain sees +3 farther (Manhattan-8)', () => {
+    const s = makeState({
+      width: 19,
+      height: 19,
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 18, y: 18 } },
+      ],
+      tiles: [{ pos: { x: 9, y: 9 }, terrain: 'mountain' }],
+      units: [{ type: 'recon', owner: 0, pos: { x: 9, y: 9 } }],
+    });
+    const v = visibleTiles(s, 0);
+    expect(v.has('17,9')).toBe(true); // distance 8 (base 5 + 3)
+    expect(v.has('18,9')).toBe(false); // distance 9
+  });
 });
 
 describe('fog-of-war: viewStateForPlayer', () => {
