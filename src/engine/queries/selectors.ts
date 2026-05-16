@@ -180,8 +180,11 @@ export function viewStateForPlayer(
   player: PlayerId,
 ): GameState {
   const visible = visibleTiles(state, player);
+  const memory = state.players[player].seenEnemies;
   const filtered: Record<UnitId, Unit> = {};
+  const truthIds = new Set<UnitId>();
   for (const u of Object.values(state.units)) {
+    truthIds.add(u.id);
     if (u.owner === player) {
       filtered[u.id] = u;
       continue;
@@ -208,9 +211,50 @@ export function viewStateForPlayer(
       if (!spotted) hidden = true;
     }
     if (!hidden && isHiddenByForest(state, u, player)) hidden = true;
-    filtered[u.id] = hidden ? { ...u, loadedIn: FOG_HIDDEN_SENTINEL } : u;
+
+    if (!hidden) {
+      filtered[u.id] = u;
+      continue;
+    }
+
+    // Hidden enemy. Aggressive AI variant: if the viewer has a ghost for
+    // this unit on a dark tile, replace the hidden-truth entry with a
+    // phantom at the ghost's pos so threat-map / futureThreat picks it up.
+    // Otherwise stamp with FOG_HIDDEN_SENTINEL — the AI knows the unit
+    // exists (so checkWinner doesn't fire a bogus rout) but pathfinding /
+    // attack targeting ignores it.
+    const ghost = memory?.[u.id];
+    if (ghost && !visible.has(coordKey(ghost.pos))) {
+      filtered[u.id] = ghostToPhantom(ghost);
+    } else {
+      filtered[u.id] = { ...u, loadedIn: FOG_HIDDEN_SENTINEL };
+    }
+  }
+  // Carry-forward phantoms: ghosts whose unit no longer exists in the truth
+  // state (destroyed unwitnessed). The AI keeps planning around them until
+  // the player scouts the tile and proves it empty (handled by bookkeeping).
+  if (memory !== undefined) {
+    for (const ghost of Object.values(memory)) {
+      if (truthIds.has(ghost.unitId)) continue;
+      if (visible.has(coordKey(ghost.pos))) continue;
+      filtered[ghost.unitId] = ghostToPhantom(ghost);
+    }
   }
   return { ...state, units: filtered };
+}
+
+function ghostToPhantom(ghost: import('../core/types').SeenEnemy): Unit {
+  return {
+    id: ghost.unitId,
+    type: ghost.type,
+    owner: ghost.owner,
+    pos: ghost.pos,
+    hp: ghost.hp,
+    hasMoved: false,
+    hasActed: false,
+    captureProgress: 0,
+    phantom: true,
+  };
 }
 
 /**
@@ -280,6 +324,7 @@ export function attackableTargets(state: GameState, unit: Unit): Unit[] {
   for (const other of Object.values(state.units)) {
     if (other.owner === unit.owner) continue;
     if (other.loadedIn !== undefined) continue;
+    if (other.phantom === true) continue; // can't shoot a memory
     const d = manhattan(unit.pos, other.pos);
     if (d < stats.minRange || d > stats.maxRange) continue;
     // Submerged-sub stealth: only cruisers + submarines can target a dived

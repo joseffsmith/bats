@@ -60,6 +60,16 @@ export type Unit = {
   // `visibleUnitAt` is the viewer-aware variant used by the renderer/input
   // layer. See selectors.ts.
   submerged?: boolean;
+  // ── Fog phantom (AI planning only) ──────────────────────────────────────
+  // True on synthetic "last-known position" entries injected into the
+  // fog-aware AI's view by `viewStateForPlayer`. Phantoms feed the threat
+  // map ("an enemy was last seen here, plan as if it still threatens")
+  // but are NOT physical: `unitAt` and `attackableTargets` skip them so
+  // pathfinding doesn't treat the tile as occupied and the AI doesn't
+  // emit ATTACK candidates against a memory. Phantoms never appear in
+  // the truth state — the reducer operates on truth and is unaware of
+  // this flag.
+  phantom?: boolean;
 };
 
 export type Tile = {
@@ -185,8 +195,10 @@ export function tileAt(map: Tile[][], c: Coord): Tile {
 export function unitAt(state: GameState, c: Coord): Unit | undefined {
   // Loaded units (cargo) share their carrier's position but are not present
   // on the tile for occupancy purposes — only the transport occupies the tile.
+  // Phantoms (fog-memory injections) likewise don't occupy tiles.
   for (const u of Object.values(state.units)) {
     if (u.loadedIn !== undefined) continue;
+    if (u.phantom === true) continue;
     if (coordEq(u.pos, c)) return u;
   }
   return undefined;
