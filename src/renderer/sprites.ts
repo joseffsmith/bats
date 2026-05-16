@@ -189,35 +189,85 @@ function paintShadow(ctx: Ctx): void {
 
 function paintInfantry(ctx: Ctx, body: string, dark: string, light: string, detail: string): void {
   const S = SPRITE_SIZE;
-  // Body torso.
-  ctx.fillStyle = body;
-  roundedRect(ctx, S * 0.34, S * 0.42, S * 0.32, S * 0.36, 4);
-  ctx.fill();
-  // Helmet.
+  const CREAM = '#e8dcc0'; // matches chrome accent
+
+  // Boots — small dark slabs at the base so the figure is grounded.
   ctx.fillStyle = dark;
+  ctx.fillRect(S * 0.40, S * 0.82, S * 0.08, S * 0.06);
+  ctx.fillRect(S * 0.52, S * 0.82, S * 0.08, S * 0.06);
+
+  // Legs — narrow column under the torso.
+  ctx.fillStyle = dark;
+  ctx.fillRect(S * 0.40, S * 0.68, S * 0.08, S * 0.16);
+  ctx.fillRect(S * 0.52, S * 0.68, S * 0.08, S * 0.16);
+
+  // Torso — slightly tapered: shoulders wider than waist.
+  ctx.fillStyle = body;
   ctx.beginPath();
-  ctx.arc(S * 0.5, S * 0.34, S * 0.13, Math.PI, 0);
-  ctx.lineTo(S * 0.63, S * 0.36);
-  ctx.lineTo(S * 0.37, S * 0.36);
+  ctx.moveTo(S * 0.30, S * 0.50);          // left shoulder
+  ctx.lineTo(S * 0.70, S * 0.50);          // right shoulder
+  ctx.lineTo(S * 0.64, S * 0.70);          // right hip
+  ctx.lineTo(S * 0.36, S * 0.70);          // left hip
   ctx.closePath();
   ctx.fill();
-  // Helmet rim highlight.
-  ctx.strokeStyle = light;
-  ctx.lineWidth = 1.5;
+
+  // Torso highlight strip on west shoulder so the figure has form.
+  ctx.fillStyle = light;
   ctx.beginPath();
-  ctx.moveTo(S * 0.37, S * 0.35);
-  ctx.lineTo(S * 0.63, S * 0.35);
-  ctx.stroke();
-  // Detail strap (chin).
-  ctx.fillStyle = detail;
-  ctx.fillRect(S * 0.47, S * 0.4, S * 0.06, S * 0.04);
-  // Rifle slung diagonally.
+  ctx.moveTo(S * 0.30, S * 0.50);
+  ctx.lineTo(S * 0.38, S * 0.50);
+  ctx.lineTo(S * 0.40, S * 0.70);
+  ctx.lineTo(S * 0.36, S * 0.70);
+  ctx.closePath();
+  ctx.fill();
+
+  // Belt — cream stripe for cohesion with terrain palette.
+  ctx.fillStyle = CREAM;
+  ctx.fillRect(S * 0.36, S * 0.66, S * 0.28, S * 0.04);
+
+  // Head — larger than before so it reads at small render sizes.
+  ctx.fillStyle = CREAM;
+  ctx.beginPath();
+  ctx.arc(S * 0.50, S * 0.40, S * 0.10, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Helmet — broad dome with brim. Darker body shade so the figure feels armoured.
+  ctx.fillStyle = dark;
+  ctx.beginPath();
+  ctx.arc(S * 0.50, S * 0.38, S * 0.15, Math.PI, 0);
+  ctx.lineTo(S * 0.64, S * 0.40);
+  ctx.lineTo(S * 0.36, S * 0.40);
+  ctx.closePath();
+  ctx.fill();
+  // Helmet brim.
+  ctx.fillStyle = dark;
+  ctx.fillRect(S * 0.34, S * 0.40, S * 0.32, S * 0.04);
+  // Helmet emblem dot — player colour.
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.arc(S * 0.50, S * 0.34, S * 0.022, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Rifle slung diagonally across the chest, with stock and barrel beats.
   ctx.strokeStyle = dark;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = Math.max(2, S * 0.04);
+  ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.moveTo(S * 0.62, S * 0.5);
-  ctx.lineTo(S * 0.74, S * 0.7);
+  ctx.moveTo(S * 0.36, S * 0.74);   // stock end (lower-left)
+  ctx.lineTo(S * 0.74, S * 0.54);   // muzzle (upper-right)
   ctx.stroke();
+  // Rifle highlight.
+  ctx.strokeStyle = CREAM;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(S * 0.36, S * 0.74);
+  ctx.lineTo(S * 0.74, S * 0.54);
+  ctx.stroke();
+  // Rifle grip.
+  ctx.fillStyle = detail;
+  ctx.beginPath();
+  ctx.arc(S * 0.54, S * 0.64, S * 0.02, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 function paintRecon(ctx: Ctx, body: string, dark: string, light: string): void {
