@@ -60,6 +60,16 @@ export type Unit = {
   // `visibleUnitAt` is the viewer-aware variant used by the renderer/input
   // layer. See selectors.ts.
   submerged?: boolean;
+  // ── Fog phantom (AI planning only) ──────────────────────────────────────
+  // True on synthetic "last-known position" entries injected into the
+  // fog-aware AI's view by `viewStateForPlayer`. Phantoms feed the threat
+  // map ("an enemy was last seen here, plan as if it still threatens")
+  // but are NOT physical: `unitAt` and `attackableTargets` skip them so
+  // pathfinding doesn't treat the tile as occupied and the AI doesn't
+  // emit ATTACK candidates against a memory. Phantoms never appear in
+  // the truth state — the reducer operates on truth and is unaware of
+  // this flag.
+  phantom?: boolean;
 };
 
 export type Tile = {
@@ -67,7 +77,34 @@ export type Tile = {
   owner: PlayerId | null; // for capturable tiles
 };
 
-export type PlayerState = { funds: number; hq: Coord };
+/**
+ * A snapshot of an enemy unit observed at some past moment, retained by the
+ * viewing player as "last-known position". Used to render ghost markers and
+ * to inject phantom threats into the fog-aware AI's planning state.
+ *
+ * `lastSeenTurn` is the engine turn counter at the moment of observation;
+ * useful for diagnostics but not currently consulted by the rules.
+ */
+export type SeenEnemy = {
+  unitId: UnitId;
+  type: UnitType;
+  owner: PlayerId;
+  pos: Coord;
+  hp: number;
+  lastSeenTurn: number;
+};
+
+export type PlayerState = {
+  funds: number;
+  hq: Coord;
+  /**
+   * Per-player memory of last-known enemy positions. Absent on non-fog
+   * games (signals "fog memory disabled" to the reducer + selectors).
+   * Initialised to `{}` by `enableFogMemory` when the game starts under
+   * fog. Round-trips through save/load as plain JSON.
+   */
+  seenEnemies?: Record<UnitId, SeenEnemy>;
+};
 
 export type GameState = {
   turn: number;
@@ -158,8 +195,10 @@ export function tileAt(map: Tile[][], c: Coord): Tile {
 export function unitAt(state: GameState, c: Coord): Unit | undefined {
   // Loaded units (cargo) share their carrier's position but are not present
   // on the tile for occupancy purposes — only the transport occupies the tile.
+  // Phantoms (fog-memory injections) likewise don't occupy tiles.
   for (const u of Object.values(state.units)) {
     if (u.loadedIn !== undefined) continue;
+    if (u.phantom === true) continue;
     if (coordEq(u.pos, c)) return u;
   }
   return undefined;

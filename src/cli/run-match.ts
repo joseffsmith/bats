@@ -16,6 +16,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { loadMap, loadAIWeights } from '../engine/data/loader';
+import { enableFogMemory } from '../engine/systems/memory';
 import type { AIWeights } from '../engine/data/loader';
 import { AI_WEIGHTS, INCOME_TERRAIN } from '../engine/data';
 import { reduce } from '../engine/core/reducer';
@@ -182,10 +183,12 @@ export async function runMatch(opts: RunMatchOptions): Promise<RunMatchResult> {
   const logDir = opts.logDir ?? path.join(PROJECT_ROOT, 'logs');
 
   const mapJson = opts.mapJson ?? (await readMapJson(opts.mapName));
-  const state0 = loadMap(mapJson);
+  const loaded = loadMap(mapJson);
 
   const p0Spec: AISpec = opts.p0 ?? { name: 'utility' };
   const p1Spec: AISpec = opts.p1 ?? { name: 'random' };
+  const fogOn = (p0Spec.fog ?? false) || (p1Spec.fog ?? false);
+  const state0 = fogOn ? enableFogMemory(loaded) : loaded;
   const ai0 = makeAI(p0Spec);
   const ai1 = makeAI(p1Spec);
   const ais: Record<PlayerId, AI> = { 0: ai0, 1: ai1 };
