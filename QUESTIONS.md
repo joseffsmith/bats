@@ -209,6 +209,13 @@ Questions and assumptions logged during autonomous execution. Resolved questions
   list entries should be removed from the personas that fit
   (aggressor wants submarines; economist might want landers for
   cheap amphibious push).
+  - **Round 7 update.** Resolved for `submarine`, `transport`, and
+    `lander`: candidate generator now yields DIVE/SURFACE/LOAD/UNLOAD,
+    and `aggressor` + `economist` removed the relevant avoid entries.
+    `carrier` (LOAD/UNLOAD of air) is also implemented but stays on
+    every persona's avoid list pending a map that ships one as a
+    starting unit (none currently do, and the build picker won't
+    spend 22k unprompted).
 
 ## Fog-of-war (shipped `?fog=on` behind toolshelf toggle)
 
@@ -235,3 +242,38 @@ Questions and assumptions logged during autonomous execution. Resolved questions
   / island_hop / canyon / highlands haven't been measured under fog.
   Open: do they hold without re-tuning?
 
+## Phase 7 round 7 — amphibious AI
+
+- **Cap-stalemate on `armada` / `island_hop`.** Genuine draws went
+  from 12 → 0 (every match resolves to a tie-break winner) but
+  matches still hit the 200-turn cap on these two maps. The AI
+  ferries cargo and captures cities, but doesn't push hard enough
+  on the enemy HQ within 200 turns. Two diagnostic threads:
+  - Does `scoreUnload`'s `+8` HQ bonus need to dominate the
+    "+capturable" bonus? Right now if an enemy city is 1 tile from
+    the drop and the HQ is 4, the AI drops at the city.
+  - Should we add a `pusher` role override that fires specifically
+    for ferried infantry (i.e. infantry that just disembarked) so
+    they march toward HQ even past nearer capturables?
+- **`economist vs turtle` floor regressed 25 % → 0 %.** Turtle's
+  defender role has `capture: 0` which suppresses HQ-side reactive
+  captures; on sea maps that previously stalemated, economist's
+  amphibious flow now wins those by tiebreak. Fix candidate: tune
+  turtle's `defender` override to allow non-zero capture, or boost
+  its amphibious-build leaning so the new transport play is
+  reciprocated. Hard to do well without a tuning loop.
+- **Submarine stealth is underused outside opportunistic dives.**
+  The starting subs on `armada` engage in surface combat (cruisers,
+  battleships) but rarely DIVE proactively. The scorer fires DIVE
+  only when `threatMap[cell] > 0` AND no spotter adjacent. Refine
+  by computing an effective-threat that EXCLUDES non-spotter
+  attackers (since they can't hit a dived sub) — that would make
+  DIVE more attractive to subs threatened by, say, an artillery.
+- **Multi-turn LOAD planning.** Out-of-scope per the plan but worth
+  flagging: today the AI loads reactively (cargo happens to be
+  next to a transport). On a generic naval map, the cargo and
+  transport often start far apart; the AI doesn't currently route
+  a foot unit toward a friendly transport intentionally. A simple
+  improvement: when a `pusher`-role infantry's path to the enemy
+  HQ crosses water, bias its MOVE objective toward the nearest
+  friendly transport instead of straight at the HQ.

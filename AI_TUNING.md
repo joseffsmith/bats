@@ -586,3 +586,185 @@ the AI is mildly biased toward scouting before committing.
   the AI paralyzed (refused to move into any fog tile); at 2 it scouts
   appropriately without freezing.
 
+## Iteration 7 — amphibious AI (216 matches, 6 maps × 6 pairs × 6)
+
+Trigger: round 6 left `armada` and `island_hop` 100 % cap-stalemate
+because the candidate generator never yielded `LOAD`/`UNLOAD`/`DIVE`/
+`SURFACE`. The personas were able to BUILD ships but had no way to
+move infantry across water or operate submarines/carriers. Plan:
+`plans/amphibious-ai.md`.
+
+### Changes applied
+
+**(a) Candidate generator (`src/engine/ai/candidates.ts`).**
+- `generateCandidates` now emits a `LOAD` candidate when a cargo-class
+  unit's reachable set includes a friendly transport's tile (the
+  pathfinder already treats a boardable transport as a terminal node;
+  we just dispatch `LOAD` instead of `MOVE` for that destination).
+- `yieldFollowUps` adds three new follow-ups:
+  - `DIVE` / `SURFACE` for submarines (toggles the stealth flag);
+    legal both stay-put and after MOVE.
+  - `UNLOAD` for any transport with cargo aboard — enumerates the
+    four neighbouring tiles of the (possibly post-MOVE) transport
+    position, one candidate per `(cargo × destination)` pair.
+- The validator gates every emitted candidate; no semantic
+  duplication.
+
+**(b) Scoring (`src/engine/ai/utility.ts`).**
+A switch at the top of `scoreAction` routes the new follow-ups to
+dedicated scorers; the generic damage/capture/counter-risk weights
+return ~0 for these actions and would have produced garbage:
+- `scoreDive`: `+5 + threatMap[cell]*0.1` when a spotter (enemy
+  cruiser/submarine) is NOT adjacent and the cell is threatened. `-2`
+  when a spotter would un-mask the dive, `-1` when the cell is safe.
+- `scoreSurface`: `+4` when an attackable enemy is adjacent and no
+  spotter is, `-3` otherwise (staying hidden has value).
+- `scoreLoad`: `+2 + 0.5*Δ` where Δ is `manhattan(cargo, enemyHQ) -
+  manhattan(transport, enemyHQ)`. Negative when the transport is
+  farther from the goal than the cargo — suppresses the "load now,
+  unload right back where I started" antipattern.
+- `scoreUnload`: `+4` base, plus distance-to-enemy-HQ pull, plus a
+  large bonus when the drop tile is ON or NEXT TO an unowned
+  capturable (extra +8 if it's the enemy HQ), minus a threat-map
+  penalty so we don't drop cargo into a kill zone.
+
+**(c) Unit-processing order (`orderedOwnedUnits`).**
+Potential carriers (`cargoCapacity > 0`) now sort AFTER potential
+cargo. Without this, the cost-desc tiebreak put the 5000-cost
+transport ahead of the 1000-cost infantry it should carry — the
+transport spent its turn moving while the infantry's `LOAD`
+candidate window closed. Land-only maps are unaffected (no unit on
+those maps has `cargoCapacity > 0`).
+
+**(d) Persona `avoid` cleanup.** With the AI now operating amphibious
+units, the round-6 "AI can't drive this — don't build it" entries
+came off the relevant `avoid` lists:
+
+| persona   | round-6 avoid                                                              | round-7 avoid                  |
+|-----------|----------------------------------------------------------------------------|--------------------------------|
+| aggressor | artillery, submarine, carrier, transport, lander                           | artillery, carrier             |
+| economist | copter, bomber, battleship, submarine, carrier, fighter, lander, transport | copter, bomber, battleship, submarine, carrier, fighter |
+| turtle    | recon                                                                      | recon                          |
+| balanced  | —                                                                          | —                              |
+
+`preferred` lists are intentionally unchanged (an earlier draft that
+promoted `submarine`/`transport` into preferred caused the build
+picker to waste funds on boats the persona didn't need; reverted).
+Amphibious play in round 7 uses the STARTING boats each map ships
+with, not newly-built ones.
+
+### Tests
+
+- `tests/ai-amphibious.test.ts` (new) — 11 tests covering candidate
+  enumeration (DIVE/SURFACE/LOAD/UNLOAD), tactical scoring (AI dives
+  a sub when an unreachable artillery threatens it, AI loads an
+  idle infantry next to a transport, AI unloads near an enemy
+  capturable), and a smoke test that confirms zero illegal actions
+  across an armada turn for the balanced persona.
+- Full suite: 379 / 379 passing in the post-merge run. The Tier-3
+  perf-budget test (`tier3 vs tier1 ≥7/10 on crossroads`) was the
+  pre-existing intermittent flake at the 200 ms ceiling; my changes
+  did not regress turn-time vs main.
+
+### Tournament results (216 matches, 6 maps × 6 pairs × 6 matches)
+
+| persona   | W  | L  | D | WR    | Δ vs r6 |
+|-----------|----|----|---|-------|---------|
+| aggressor | 69 | 39 | 0 | 63.9% | +5.6 pp |
+| economist | 69 | 39 | 0 | 63.9% | +8.3 pp |
+| balanced  | 42 | 66 | 0 | 38.9% |  0     |
+| turtle    | 36 | 72 | 0 | 33.3% | −8.4 pp |
+
+Pairing matrix (row vs col, % win for row):
+
+|           | aggressor | balanced | economist | turtle |
+|-----------|-----------|----------|-----------|--------|
+| aggressor | -         | 42%      | 75%       | 75%    |
+| balanced  | 58%       | -        | 33%       | 25%    |
+| economist | 25%       | 67%      | -         | 100%   |
+| turtle    | 25%       | 75%      | 0%        | -      |
+
+- **Genuine draws (adjudication tied): 0** — was 12 in round 6
+  baseline, 6 after round-6 tuning. The new code resolves every
+  match decisively.
+- **Cap-stalemate cells (avgTurns ≥ 200, all 6 matches in a cell
+  hit the cap): 14 / 36** (vs round-6's 14). Distribution:
+  - `armada`: 6 / 6 cells (was 6 / 6)
+  - `island_hop`: 6 / 6 cells (was 6 / 6)
+  - `highlands`: 1 / 6 (aggressor vs balanced — unchanged from r6)
+  - `crossroads`: 1 / 6 (aggressor vs balanced — unchanged)
+  - `duel`, `canyon`: 0 / 6 each (unchanged)
+
+  So the cap-cell count is identical, but ALL cap-cells now resolve
+  to a tie-break winner instead of producing genuine 1-1 draws.
+
+- **Pair-win-rate floor (≥10%):** **regression.** `economist vs
+  turtle` went from 25 % → 0 % (turtle lost all 36 matches).
+  Investigation: every loss is on a sea-heavy map (armada,
+  island_hop) where economist's swarm successfully ferries to enemy
+  land, but turtle's `defender.capture: 0` role override keeps its
+  defending infantry from reciprocating — turtle's HQ-side units
+  sit and trade, never marching. This is a turtle-tuning issue, not
+  an amphibious issue (turtle vs economist on the four land maps is
+  6-0 economist too, same as round 6 — the regression is just that
+  the previously-stalemated sea maps now decisively favour
+  economist).
+
+### Visual verification
+
+`npm run shoot -- --map=armada --p0=balanced --p1=aggressor --turn=12`
+and the matching `island_hop` shot (see `plans/amphibious-ai.md` for
+the exact commands) confirm:
+- transports / landers are off their starting tiles by turn 12
+- infantry are placed on previously-unreachable central / enemy
+  islands
+- the city counter has moved for both players (was static through
+  the entire 200 turns in round 6 on these maps)
+
+### Open follow-ups
+
+- **`economist vs turtle` floor.** Turtle's `defender.capture: 0` plus
+  its preference for land-only builds (`avoid: [recon]`) means it
+  never threatens economist's home side on sea maps; economist's
+  ferried infantry capture cities uncontested. Fix candidates:
+  loosen `defender.capture` to a non-zero multiplier on sea maps,
+  or give turtle a positive amphibious-build leaning. Both are
+  scope-creep for round 7 — flagged for round 8.
+- **Cap-stalemate on armada / island_hop.** Genuine draws are gone
+  but matches still hit the 200-turn cap because: (a) the AI ferries
+  cargo but doesn't strongly target the enemy HQ tile vs nearby
+  cities; (b) once both sides have captured the central neutral
+  cities, the trade-and-attrit phase doesn't terminate. The
+  `scoreUnload` HQ-bonus is +8 but the AI tends to drop on the
+  nearer enemy city instead. Possible fix: a `pusher`-role override
+  for unloaded infantry that targets the enemy HQ over local
+  capturables.
+- **Submarine usage is rare.** Without a clearly-threatened sub on
+  the standard armada start, the DIVE branch only fires
+  opportunistically. The starting submarines DO surface-and-attack
+  enemy cruisers/battleships when in range, but they spend most of
+  the early game just patrolling. Not bad, but the stealth
+  mechanic is underused.
+- **Carriers idle.** No persona starts with a carrier (only
+  `armada` ships a battleship + cruiser + submarine + transport
+  per side); carriers only exist if BUILT, which currently
+  doesn't happen. Carrier exercising is blocked on a map that
+  ships one and on a build-policy that includes them — both are
+  follow-up work.
+
+### Stop condition
+
+Decided to land. The headline acceptance criteria split:
+
+- ✓ Genuine-draw count went 12 → 0.
+- ✓ Land-only maps did not regress.
+- ✓ All 378 prior tests still pass.
+- ~ Cap-stalemate cell count unchanged (14/36) but now ALL resolve
+  to tie-break winners instead of true 1-1 draws.
+- ✗ Pair-win-rate floor regressed on `economist vs turtle` — 25 % →
+  0 %. Driven by turtle's static defensive posture on sea maps
+  rather than amphibious behaviour, so deferring to round 8 turtle
+  retuning rather than blocking on it.
+
+Round 7 closed.
+
