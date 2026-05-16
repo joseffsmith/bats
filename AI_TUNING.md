@@ -552,3 +552,37 @@ draw count halved. Two-thirds of the residual cap-matches are on the
 two sea-heavy maps (`armada`, `island_hop`), which are blocked on
 amphibious-AI integration rather than persona tuning. Round 6 closed.
 
+---
+
+## Fog-of-war: AI under imperfect information
+
+Shipping behind `?fog=on`. When enabled, the AI is handed
+`viewStateForPlayer(state, ai.player)` in place of the truth: a
+shallow-cloned state where hidden enemies are stamped with a
+`loadedIn` sentinel (`FOG_HIDDEN_SENTINEL`), so existing skip-logic
+in `attackableTargets`, `unitAt`, `computeThreatMap`, and pathfinding
+masks them — but `checkWinner` still counts them so the AI's
+simulated `reduce()` calls don't trigger spurious rout-wins on every
+plan step.
+
+A small phantom-threat baseline (`PHANTOM_THREAT_PER_HIDDEN_TILE = 2`
+in `utility.ts`) is overlaid onto the threat map for hidden tiles, so
+the AI is mildly biased toward scouting before committing.
+
+### Acceptance numbers
+
+- `tests/fog-acceptance.test.ts`: tier3 (fog) vs tier1 (fog) on duel
+  with seeds 1..10 — **≥7/10** wins for tier3. Matches the no-fog
+  acceptance bar in `tests/ai-tier3-vs-tier1.test.ts`.
+- `tests/fog-of-war.test.ts`: vision-disk matrix (per unit type) and a
+  determinism check (utility-vs-utility with the same seed produces
+  identical traces under fog).
+
+### Tuning knobs
+
+- `visionRange` per unit type in `src/data/units.json` — recon 5,
+  copter 5, fighter 5, cruiser 5, infantry 2, etc.
+- `PHANTOM_THREAT_PER_HIDDEN_TILE` in `src/engine/ai/utility.ts` — at 12
+  the AI paralyzed (refused to move into any fog tile); at 2 it scouts
+  appropriately without freezing.
+

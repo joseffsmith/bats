@@ -68,17 +68,24 @@ export type AISpec = {
   name: AIName;
   /** Custom utility weights, ignored by other AIs. */
   weights?: AIWeights;
+  /** When true, the AI plans under fog-of-war (filtered enemy reads). */
+  fog?: boolean;
 };
 
 export function makeAI(spec: AISpec): AI {
   if (spec.name === 'random') return randomAI({ name: 'random' });
+  const fog = spec.fog ?? false;
   if (spec.name === 'utility' || spec.name === 'tier1') {
-    const opts: Record<string, unknown> = { name: spec.name };
+    const opts: Record<string, unknown> = { name: spec.name, fog };
     if (spec.weights) opts.weights = spec.weights;
     return utilityAI(opts);
   }
   if (spec.name === 'tier2') {
-    const opts: Record<string, unknown> = { name: 'tier2', useThreatMap: true };
+    const opts: Record<string, unknown> = {
+      name: 'tier2',
+      useThreatMap: true,
+      fog,
+    };
     if (spec.weights) opts.weights = spec.weights;
     return utilityAI(opts);
   }
@@ -87,12 +94,13 @@ export function makeAI(spec: AISpec): AI {
       name: 'tier3',
       useThreatMap: true,
       useRoles: true,
+      fog,
     };
     if (spec.weights) opts.weights = spec.weights;
     return utilityAI(opts);
   }
   if (spec.name in PERSONAS) {
-    return personaAI(spec.name);
+    return personaAI(spec.name, { fog });
   }
   throw new Error(`unknown AI name: ${spec.name}`);
 }

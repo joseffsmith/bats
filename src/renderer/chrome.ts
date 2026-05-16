@@ -304,6 +304,10 @@ function createToolshelf(deps: ToolshelfDeps): { root: HTMLElement } {
   // Map picker — reloads the page with `?map=<name>` so we get a fresh state
   // through `main.ts` rather than trying to live-swap.
   const mapPicker = createMapPicker();
+  // Fog toggle — reloads the page with `?fog=on|off` for the same reason
+  // (live-swapping fog mid-game is meaningless when the AI was planning
+  // omnisciently up to that point).
+  const fogToggle = createFogToggle();
 
   root.appendChild(replayBtn);
   root.appendChild(makeDivider());
@@ -313,9 +317,24 @@ function createToolshelf(deps: ToolshelfDeps): { root: HTMLElement } {
   root.appendChild(soundBtn);
   root.appendChild(makeDivider());
   root.appendChild(mapPicker);
+  root.appendChild(fogToggle);
   root.appendChild(loadFile);
 
   return { root };
+}
+
+function createFogToggle(): HTMLElement {
+  const params = new URLSearchParams(window.location.search);
+  const on = (params.get('fog') ?? 'off').toLowerCase();
+  const isOn = on === 'on' || on === '1' || on === 'true';
+  const btn = makeTool(isOn ? 'Fog on' : 'Fog off', '◐');
+  btn.classList.toggle('off', !isOn);
+  btn.addEventListener('click', () => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('fog', isOn ? 'off' : 'on');
+    window.location.assign(url.toString());
+  });
+  return btn;
 }
 
 function createMapPicker(): HTMLElement {

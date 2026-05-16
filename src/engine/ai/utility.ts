@@ -39,6 +39,7 @@ import type { Candidate } from './candidates';
 import type { AIContext, AIFactory } from './types';
 import { computeThreatMap, computeValueMap } from './threatMap';
 import type { ThreatMap, ValueMap } from './threatMap';
+import { hiddenTiles, viewStateForPlayer } from '../queries/selectors';
 import {
   ROLE_MULTIPLIERS,
   applyRoleMultipliers,
@@ -105,7 +106,26 @@ export type UtilityAIOptions = {
   roleMultipliers?: Record<Role, RoleMultipliers>;
   /** Persona BUILD hints. Default: behave as before. */
   buildPolicy?: BuildPolicyHint;
+  /**
+   * When true, plan under fog-of-war: filter enemy reads through the
+   * player's visibility set and add a phantom-threat baseline to hidden
+   * tiles so the AI is appropriately cautious about pushing into unknowns.
+   */
+  fog?: boolean;
 };
+
+/**
+ * Phantom-threat per hidden tile, in the same units as
+ * `threatMap[y][x]` (max HP damage to a representative target). Applied on
+ * tiles the AI can't currently see when `fog` is on.
+ *
+ * Sized so the per-tile penalty is small enough that the AI still pushes
+ * forward — at 2, a tank stepping into fog incurs `2 × (7000/1000) × 0.5 ×
+ * 0.5 ≈ 3.5` score, below the +1.8 objective bonus and the positional gains
+ * from approaching the enemy HQ. The AI still preferentially scouts (recon
+ * with vision-5 reveals more tiles per step), but it doesn't paralyse.
+ */
+const PHANTOM_THREAT_PER_HIDDEN_TILE = 2;
 
 export const utilityAI: AIFactory = (opts) => {
   const name = (opts?.name as string | undefined) ?? 'utility';
@@ -115,6 +135,7 @@ export const utilityAI: AIFactory = (opts) => {
   const roleMultipliers =
     (opts?.roleMultipliers as Record<Role, RoleMultipliers> | undefined) ?? ROLE_MULTIPLIERS;
   const buildPolicy = (opts?.buildPolicy as BuildPolicyHint | undefined) ?? {};
+  const fog = (opts?.fog as boolean | undefined) ?? false;
   // `useRoles` implies `useThreatMap` — we need an HQ threat read for the
   // defender promotion.
   const effectiveThreatMap = useThreatMap || useRoles;
@@ -126,6 +147,7 @@ export const utilityAI: AIFactory = (opts) => {
         useRoles,
         roleMultipliers,
         buildPolicy,
+        fog,
       });
     },
   };
@@ -136,6 +158,7 @@ type PlanOptions = {
   useRoles: boolean;
   roleMultipliers: Record<Role, RoleMultipliers>;
   buildPolicy: BuildPolicyHint;
+  fog: boolean;
 };
 
 function planUtilityTurn(
@@ -144,10 +167,18 @@ function planUtilityTurn(
   planOpts: PlanOptions,
 ): Action[] {
   const { player } = ctx;
-  let state = ctx.state;
+  // Fog-of-war: replace truth with the player's filtered view BEFORE any
+  // planning logic runs. Every downstream `state.units` read then auto-filters,
+  // and the AI's internal `reduce(...)` simulations evolve from the visible
+  // roster — i.e. the AI plans against what it can see, just like a human.
+  let state = planOpts.fog ? viewStateForPlayer(ctx.state, player) : ctx.state;
+  // Pre-compute the truth-state hidden-tiles set ONCE per turn — phantom-threat
+  // augmentation needs the real visibility (not the filtered state's, which is
+  // identical anyway but cheaper to derive from the raw state).
+  const hidden = planOpts.fog ? hiddenTiles(ctx.state, player) : null;
   const out: Action[] = [];
 
-  log('ai', 'utility turn start', { player, turn: state.turn });
+  log('ai', 'utility turn start', { player, turn: state.turn, fog: planOpts.fog });
 
   if (state.currentPlayer !== player) {
     out.push({ type: 'END_TURN' });
@@ -184,7 +215,22 @@ function planUtilityTurn(
   };
   const getThreatMap = (s: GameState): ThreatMap => {
     if (threatMapCache) return threatMapCache;
-    threatMapCache = computeThreatMap(s, otherPlayer(player), player);
+    const raw = computeThreatMap(s, otherPlayer(player), player);
+    // Under fog, augment with a phantom-threat baseline on hidden tiles so
+    // the AI doesn't blithely sprint into the dark. Mutating in place is safe
+    // here — the map was freshly allocated by computeThreatMap.
+    if (hidden) {
+      for (let y = 0; y < raw.length; y++) {
+        const row = raw[y]!;
+        for (let x = 0; x < row.length; x++) {
+          if (!hidden.has(`${x},${y}`)) continue;
+          if (row[x]! < PHANTOM_THREAT_PER_HIDDEN_TILE) {
+            row[x] = PHANTOM_THREAT_PER_HIDDEN_TILE;
+          }
+        }
+      }
+    }
+    threatMapCache = raw;
     return threatMapCache;
   };
   const getValueMap = (s: GameState): ValueMap => {
@@ -742,6 +788,8 @@ function computeEnemyReachRanges(
   const out = new Map<string, Set<string>>();
   for (const u of Object.values(state.units)) {
     if (u.owner !== enemy) continue;
+    if (u.loadedIn !== undefined) continue; // cargo can't threaten; same gate
+    // also masks fog-hidden enemies stamped by viewStateForPlayer.
     out.set(u.id, bfsReachIgnoringUnits(state, u));
   }
   return out;

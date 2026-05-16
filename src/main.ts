@@ -49,6 +49,16 @@ function parseInitialAI(): Record<PlayerId, AIChoice> {
   return out;
 }
 
+function parseFogConfig(): { on: boolean; viewerOverride: PlayerId | null } {
+  const raw = (params.get('fog') ?? 'off').toLowerCase();
+  const on = raw === 'on' || raw === '1' || raw === 'true';
+  const view = params.get('view');
+  let viewerOverride: PlayerId | null = null;
+  if (view === 'p0' || view === '0') viewerOverride = 0;
+  else if (view === 'p1' || view === '1') viewerOverride = 1;
+  return { on, viewerOverride };
+}
+
 function setupCanvas(): HTMLCanvasElement {
   const existing = document.querySelector('canvas');
   if (existing) existing.remove();
@@ -74,8 +84,9 @@ function main(): void {
   const initialState = loadMap(MAPS[mapName]);
   const emitter = createEmitter(initialState);
 
+  const fogConfig = parseFogConfig();
   const sprites = createSpriteCache();
-  const renderer = createCanvasRenderer(canvas, { sprites });
+  const renderer = createCanvasRenderer(canvas, { sprites, fog: fogConfig });
   renderer.resize();
 
   let dirty = true;
@@ -95,6 +106,7 @@ function main(): void {
     animQueue,
     initial: initialAI,
     pauseMs: 250,
+    fog: fogConfig.on,
   });
 
   const input = createInputController(renderer, emitter, animQueue);
