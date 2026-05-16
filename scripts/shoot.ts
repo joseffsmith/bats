@@ -147,7 +147,9 @@ async function main(): Promise<void> {
     await page.setViewport({ width: args.width, height: args.height });
     const url = buildUrl(args);
     process.stderr.write(`[shoot] navigating ${url}\n`);
-    await page.goto(url, { waitUntil: 'networkidle0' });
+    // Use 'load' (DOM + module imports complete) rather than 'networkidle0' —
+    // Vite's HMR keeps a WebSocket open, so networkidle0 can hang.
+    await page.goto(url, { waitUntil: 'load' });
     // Page-load settle (canvas first paint).
     await new Promise((r) => setTimeout(r, args.waitMs));
     if (args.turn && args.turn > 0) {
