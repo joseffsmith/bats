@@ -456,6 +456,18 @@ function drawUnits(
     drawAttackEffects(ctx, vp, a);
   }
 
+  // Capture flashes — radial pulse when a tile flips ownership.
+  for (const a of active) {
+    if (a.kind !== 'captureFlash') continue;
+    drawCaptureFlash(ctx, vp, a);
+  }
+
+  // Floating damage labels — drawn last so they read above everything.
+  for (const a of active) {
+    if (a.kind !== 'damageLabel') continue;
+    drawDamageLabel(ctx, vp, a);
+  }
+
   // Damage preview tooltip.
   if (overlay.damagePreview) {
     drawDamagePreview(ctx, vp, overlay.damagePreview);
@@ -774,6 +786,83 @@ function drawAttackEffects(
       }
     }
   }
+}
+
+/**
+ * Floating damage number on the defender's tile. Rises, fades, and snaps
+ * larger for big hits.
+ */
+function drawDamageLabel(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  anim: import('./animations').DamageLabelAnim,
+): void {
+  const ts = vp.tileSize;
+  const elapsed = performance.now() - anim.startMs;
+  if (elapsed < 0) return;
+  const t = Math.min(1, elapsed / anim.durationMs);
+  const p = tileTopLeft(vp, anim.pos);
+  const rise = ts * 0.55 * t;
+  const cx = p.x + ts / 2;
+  const cy = p.y + ts * 0.4 - rise;
+  // Pop-in: scale 0.6 → 1.15 → 1.0 over the first ~25% of life.
+  const pop = t < 0.25 ? 0.6 + (t / 0.25) * 0.55 : 1.15 - Math.min(1, (t - 0.25) / 0.25) * 0.15;
+  const fade = t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3;
+  const size = Math.floor(ts * (anim.big ? 0.42 : 0.32) * pop);
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, fade);
+  ctx.font = `900 ${size}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  // Black outline so the number reads against any terrain.
+  ctx.lineWidth = Math.max(2, size * 0.18);
+  ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+  ctx.strokeText(`-${anim.value}`, cx, cy);
+  ctx.fillStyle = anim.big ? '#ffd14a' : '#ffffff';
+  ctx.fillText(`-${anim.value}`, cx, cy);
+  ctx.restore();
+}
+
+/**
+ * Radial pulse over a tile when its ownership flips. The pulse expands from
+ * the tile centre and fades, tinted with the new owner's palette colour.
+ */
+function drawCaptureFlash(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  anim: import('./animations').CaptureFlashAnim,
+): void {
+  const ts = vp.tileSize;
+  const elapsed = performance.now() - anim.startMs;
+  if (elapsed < 0) return;
+  const t = Math.min(1, elapsed / anim.durationMs);
+  const p = tileTopLeft(vp, anim.pos);
+  const cx = p.x + ts / 2;
+  const cy = p.y + ts / 2;
+  const palette = PLAYER_COLOURS[anim.newOwner];
+  // Two concentric rings expanding at different rates.
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 2; i++) {
+    const rt = Math.min(1, (t + i * 0.18));
+    const r = ts * 0.45 + rt * ts * 1.1;
+    const alpha = (1 - rt) * 0.55;
+    if (alpha <= 0) continue;
+    ctx.strokeStyle = palette.fill;
+    ctx.globalAlpha = alpha;
+    ctx.lineWidth = Math.max(2, ts * 0.10 * (1 - rt));
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  // Soft inner tint over the tile during the first half of the flash.
+  if (t < 0.5) {
+    const innerT = t / 0.5;
+    ctx.globalAlpha = (1 - innerT) * 0.45;
+    ctx.fillStyle = palette.fill;
+    ctx.fillRect(p.x, p.y, ts, ts);
+  }
+  ctx.restore();
 }
 
 function drawDamagePreview(
