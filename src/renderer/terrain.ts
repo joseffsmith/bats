@@ -105,6 +105,17 @@ export function createTerrainCache(
  *  plain underlay so the page background doesn't show through. */
 const LAYERED_OVER_PLAIN: ReadonlySet<TerrainType> = new Set(['forest', 'mountain']);
 
+// PixelLab tile PNGs are 48×48 but ship with a 6px transparent gutter on each
+// side (road is full-height but gutter on the sides). Blitting them edge-to-
+// edge lets the board-frame brown show through. We crop the gutter at draw
+// time with the 9-arg drawImage so each tile fills its cell.
+type SrcRect = { sx: number; sy: number; sw: number; sh: number };
+const FULL_BLEED: SrcRect = { sx: 6, sy: 6, sw: 36, sh: 36 };
+const ROAD_BLEED: SrcRect = { sx: 6, sy: 0, sw: 36, sh: 48 };
+function srcRectFor(t: TerrainType): SrcRect {
+  return t === 'road' ? ROAD_BLEED : FULL_BLEED;
+}
+
 export function drawTerrain(
   ctx: CanvasRenderingContext2D,
   state: GameState,
@@ -112,6 +123,9 @@ export function drawTerrain(
   cache?: TerrainCache,
 ): void {
   const map = state.map;
+  // Preserve the pixel-art look across the 36→48 upscale.
+  const prevSmoothing = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = false;
   for (let y = 0; y < map.length; y++) {
     const row = map[y]!;
     for (let x = 0; x < row.length; x++) {
@@ -127,10 +141,13 @@ export function drawTerrain(
         // terrains, plus the ownership LED cue for capturables.
         if (LAYERED_OVER_PLAIN.has(tile.terrain)) {
           const plain = cache.get('plain');
-          if (plain) ctx.drawImage(plain, px, py, ts, ts);
-          else drawPlain(ctx, px, py, ts, seed);
+          if (plain) {
+            const r = FULL_BLEED;
+            ctx.drawImage(plain, r.sx, r.sy, r.sw, r.sh, px, py, ts, ts);
+          } else drawPlain(ctx, px, py, ts, seed);
         }
-        ctx.drawImage(sheet, px, py, ts, ts);
+        const r = srcRectFor(tile.terrain);
+        ctx.drawImage(sheet, r.sx, r.sy, r.sw, r.sh, px, py, ts, ts);
         if (tile.owner !== null &&
             (tile.terrain === 'city' || tile.terrain === 'hq' || tile.terrain === 'factory')) {
           drawOwnerCue(ctx, px, py, ts, tile.owner);
@@ -154,6 +171,7 @@ export function drawTerrain(
       ctx.strokeRect(px + 0.5, py + 0.5, ts - 1, ts - 1);
     }
   }
+  ctx.imageSmoothingEnabled = prevSmoothing;
 }
 
 // ─────────────────────────── Plain ───────────────────────────────────────────
