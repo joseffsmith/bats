@@ -13,7 +13,8 @@
     "lint": "eslint src tests",
     "match": "tsx src/cli/run-match.ts",
     "tournament": "tsx src/cli/tournament.ts",
-    "round-robin": "tsx src/cli/round-robin.ts"
+    "round-robin": "tsx src/cli/round-robin.ts",
+    "shoot": "tsx scripts/shoot.ts"
   },
   "devDependencies": {
     "@types/node": "^25.7.0",
@@ -22,6 +23,7 @@
     "@vitest/coverage-v8": "^2.1.9",
     "eslint": "^9.0.0",
     "jsdom": "^29.1.1",
+    "puppeteer": "^25.0.2",
     "tsx": "^4.21.0",
     "typescript": "~5.6.0",
     "typescript-eslint": "^8.0.0",
