@@ -363,6 +363,23 @@ export function scoreAction(
   unit: Unit,
   sctx: ScoreContext,
 ): number {
+  // Amphibious follow-ups have bespoke scoring branches: the generic
+  // damageDealt / capture / counter-risk terms are mostly 0 for these
+  // actions, so we route through dedicated scorers that capture the
+  // strategic intent (deny detection, ferry cargo, beach assault).
+  switch (candidate.followUp.type) {
+    case 'DIVE':
+      return scoreDive(state, candidate, unit, sctx);
+    case 'SURFACE':
+      return scoreSurface(state, candidate, unit, sctx);
+    case 'LOAD':
+      return scoreLoad(state, candidate, unit, sctx);
+    case 'UNLOAD':
+      return scoreUnload(state, candidate, unit, sctx);
+    default:
+      break;
+  }
+
   const after = candidate.finalState;
   const movedUnit = after.units[unit.id];
   // sctx.weights is already role-multiplied (see planUtilityTurn).
@@ -402,6 +419,164 @@ export function scoreAction(
     pv * w.positional +
     ob * w.objective
   );
+}
+
+// ─────────────────────────── Amphibious scorers ──────────────────────────────
+
+/**
+ * DIVE: high when the sub stands on a tile the enemy could reach + attack
+ * next turn (threatMap > 0 there) AND no enemy cruiser/submarine is adjacent
+ * (which would un-mask us). When the sub is already safe, the slight
+ * information loss of diving outweighs the benefit.
+ */
+function scoreDive(
+  _before: GameState,
+  candidate: Candidate,
+  unit: Unit,
+  sctx: ScoreContext,
+): number {
+  const after = candidate.finalState;
+  const sub = after.units[unit.id];
+  if (!sub) return -50;
+  // Spotter check: any enemy cruiser/sub adjacent un-masks the dive, so the
+  // stealth gain is illusory.
+  for (const e of Object.values(after.units)) {
+    if (e.owner === unit.owner) continue;
+    if (e.loadedIn !== undefined) continue;
+    if (e.type !== 'cruiser' && e.type !== 'submarine') continue;
+    if (manhattan(e.pos, sub.pos) <= 1) return -2;
+  }
+  // Threat-driven dive value: the precomputed threatMap encodes "max damage
+  // an enemy could project here next turn" without modelling stealth, which
+  // is exactly the danger DIVE neutralises. We use raw cell value.
+  const raw = sctx.threatMap?.[sub.pos.y]?.[sub.pos.x] ?? 0;
+  if (raw > 0) return 5 + raw * 0.1;
+  // No threat: prefer to keep attacking. Small negative so DIVE only fires
+  // when nothing more useful is available.
+  return -1;
+}
+
+/**
+ * SURFACE: positive when an attackable enemy is in melee range (we surface to
+ * fire next turn) AND no enemy spotter is adjacent. Otherwise low — staying
+ * hidden retains optionality.
+ */
+function scoreSurface(
+  _before: GameState,
+  candidate: Candidate,
+  unit: Unit,
+  _sctx: ScoreContext,
+): number {
+  const after = candidate.finalState;
+  const sub = after.units[unit.id];
+  if (!sub) return -50;
+  // Penalty if a spotter is adjacent.
+  for (const e of Object.values(after.units)) {
+    if (e.owner === unit.owner) continue;
+    if (e.loadedIn !== undefined) continue;
+    if (e.type !== 'cruiser' && e.type !== 'submarine') continue;
+    if (manhattan(e.pos, sub.pos) <= 1) return -3;
+  }
+  // Any in-range enemy?
+  let hasTarget = false;
+  for (const t of Object.values(after.units)) {
+    if (t.owner === unit.owner) continue;
+    if (t.loadedIn !== undefined) continue;
+    if (manhattan(t.pos, sub.pos) <= 1) {
+      hasTarget = true;
+      break;
+    }
+  }
+  if (hasTarget) return 4;
+  return -3;
+}
+
+/**
+ * LOAD: positive when boarding the transport gets the cargo closer to a goal
+ * it couldn't otherwise reach. We approximate goal-distance with Manhattan to
+ * the enemy HQ: if the transport is meaningfully closer than the cargo's
+ * current tile, LOAD is worth it. Boarding a transport that's farther from
+ * the front than the cargo is the "load then immediately unload here"
+ * antipattern — heavily suppressed.
+ */
+function scoreLoad(
+  state: GameState,
+  candidate: Candidate,
+  unit: Unit,
+  sctx: ScoreContext,
+): number {
+  const action = candidate.followUp as Extract<Action, { type: 'LOAD' }>;
+  const transport = state.units[action.transportId];
+  if (!transport) return -50;
+  // Cap with a positional pull toward the enemy HQ — cargo on a transport
+  // that points the wrong way isn't useful.
+  const enemyHq = state.players[otherPlayer(unit.owner)].hq;
+  const cargoDist = manhattan(unit.pos, enemyHq);
+  const transportDist = manhattan(transport.pos, enemyHq);
+  const delta = cargoDist - transportDist;
+  if (delta <= 0) return -1; // boat is farther from the goal than we are
+  let score = 2 + delta * 0.5;
+  // Mild bonus when the transport sits on a high-value valueMap tile (close
+  // to enemy HQ ramp) to break ties between two boats.
+  if (sctx.valueMap) {
+    const v = sctx.valueMap[transport.pos.y]?.[transport.pos.x] ?? 0;
+    score += v * 0.05;
+  }
+  return score;
+}
+
+/**
+ * UNLOAD: positive when the drop tile is closer to the enemy HQ than the
+ * transport's tile, especially when an enemy capturable is adjacent. We also
+ * penalise drops onto tiles the enemy can heavily threaten (cargo dies before
+ * it acts). UNLOAD is the high-value end of an amphibious play; weights must
+ * push hard enough that the AI commits to it over WAIT.
+ */
+function scoreUnload(
+  state: GameState,
+  candidate: Candidate,
+  unit: Unit,
+  sctx: ScoreContext,
+): number {
+  const action = candidate.followUp as Extract<Action, { type: 'UNLOAD' }>;
+  const after = candidate.finalState;
+  const cargo = after.units[action.cargoId];
+  if (!cargo) return -50;
+  const dst = action.destination;
+  let score = 4; // base — committing to the assault is good
+
+  // Closer-to-HQ pull from the drop tile.
+  const enemyHq = state.players[otherPlayer(unit.owner)].hq;
+  const hqDist = manhattan(dst, enemyHq);
+  score += Math.max(0, 12 - hqDist) * 0.4;
+
+  // Adjacent-capturable bonus: an unloaded infantry that lands ON or NEXT TO
+  // an unowned capturable can start/continue a capture next turn. Scan dst
+  // and its 4-neighbours.
+  if (UNITS[cargo.type].canCapture) {
+    const candidates: Coord[] = [dst, ...NEIGHBOURS.map((n) => ({ x: dst.x + n.x, y: dst.y + n.y }))];
+    for (const c of candidates) {
+      if (!inBounds(after.map, c)) continue;
+      const tile = tileAt(after.map, c);
+      if (!isCapturable(tile.terrain)) continue;
+      if (tile.owner === unit.owner) continue;
+      const onTile = coordEq(c, dst);
+      // ON a capturable is strictly better than adjacent (we can begin
+      // capturing immediately on the cargo's next turn).
+      score += onTile ? 6 : 2;
+      // Land on the enemy HQ tile = win-condition pressure.
+      if (tile.terrain === 'hq') score += 8;
+    }
+  }
+
+  // Threat penalty: cargo gets dropped surfaced. If the destination is heavily
+  // threatened, we may lose the cargo before it can act.
+  if (sctx.threatMap) {
+    const raw = sctx.threatMap[dst.y]?.[dst.x] ?? 0;
+    score -= raw * 0.04;
+  }
+
+  return score;
 }
 
 // ─────────────────────────── Helpers ─────────────────────────────────────────
@@ -802,12 +977,18 @@ function orderedOwnedUnits(state: GameState, player: PlayerId): string[] {
   const mine: Unit[] = [];
   for (const u of Object.values(state.units)) {
     if (u.owner !== player) continue;
-    // Loaded cargo can't act this turn — skip. Transports themselves may
-    // still WAIT but the utility AI ignores them (scope-cut; QUESTIONS.md).
+    // Loaded cargo can't act this turn — skip.
     if (u.loadedIn !== undefined) continue;
     mine.push(u);
   }
   mine.sort((a, b) => {
+    // Process potential cargo BEFORE potential carriers so an infantry that
+    // could LOAD onto an idle transport gets that option before the transport
+    // spends its turn moving elsewhere. No-op on land maps where no unit has
+    // cargoCapacity > 0.
+    const aCarrier = UNITS[a.type].cargoCapacity > 0 ? 1 : 0;
+    const bCarrier = UNITS[b.type].cargoCapacity > 0 ? 1 : 0;
+    if (aCarrier !== bCarrier) return aCarrier - bCarrier;
     const costA = UNITS[a.type].cost;
     const costB = UNITS[b.type].cost;
     if (costA !== costB) return costB - costA;
