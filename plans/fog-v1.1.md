@@ -169,31 +169,34 @@ clock-face badge at the tile. Render after live units, before fog mask.
 If a live enemy unit is visible at the same tile (re-spot during the
 current viewer's turn), the live render wins.
 
-**AI consumption.** Open question — do we feed ghosts into the AI's
-threat map?
-- *Conservative:* leave the AI on its current `viewStateForPlayer`
-  (truth-or-hidden, no ghosts). Ghosts are a UI affordance only. v1
-  acceptance is unaffected.
-- *Aggressive:* expose `seenEnemies` to the AI so its `futureThreat`
-  estimator can include "the tank I saw last turn at (5,3) is probably
-  still nearby." Better play, but it's a behavioural change that could
-  shift tournament numbers.
+**AI consumption.** The AI plans against ghosts as threat sources
+("the tank I saw last turn at (5,3) is probably still nearby"). Concrete
+hook: extend the wrapper that hands `viewStateForPlayer` to the AI so
+that ghost entries in `seenEnemies` whose `pos` is currently hidden are
+re-injected into the planning state as faded "phantom" units — same
+type, owner, hp, and pos as the snapshot — so the existing
+`futureThreat` and threat-map code picks them up without per-call-site
+plumbing.
 
-**Recommendation:** ship Conservative for v1.1 and file the Aggressive
-variant in `QUESTIONS.md` for a follow-up tuning round. Confirm with
-user before coding.
+A phantom unit must NOT be treated as a kill target by `attackableTargets`
+(you can't attack a memory). Two clean options: (a) tag the phantom with
+a new `phantom: true` flag and gate `attackableTargets` on it, or (b)
+re-use the `loadedIn = FOG_HIDDEN_SENTINEL` trick with a parallel
+`PHANTOM_SENTINEL` so existing cargo-skip logic already excludes it. Pick
+(b) for symmetry with the existing fog mechanism.
 
-## Decision points (confirm before coding)
+This is a behavioural change for the AI — tournament numbers will shift.
+Re-tune in task 6 if the fog-acceptance threshold breaks.
 
-1. **Mountain bonus magnitude** — propose `+3`. Push back if you want
-   `+2` or a per-unit JSON knob.
-2. **Layer 3 AI integration** — Conservative (UI only) or Aggressive
-   (AI sees ghosts as threat sources)? Default to Conservative.
-3. **Ghost staleness cap** — should ghosts age out after N turns even
-   without proof, or only on positive disproof? Default: positive proof
-   only (no time cap), matching AW-DS behaviour.
-4. **Ghost sprite/glyph** — half-opacity with "?" badge, or a faded
-   sprite? Default: half-opacity sprite with no badge.
+## Locked decisions
+
+1. **Mountain bonus magnitude** — `+3`, single global constant in
+   `selectors.ts`. No JSON knob.
+2. **AI ghost consumption** — Aggressive: phantoms re-injected via the
+   `PHANTOM_SENTINEL` mechanism above.
+3. **Ghost staleness** — positive proof only. Ghosts persist until
+   re-spotted (replaced) or their tile is observed empty. No time cap.
+4. **Ghost glyph** — faded sprite (half opacity), no badge.
 
 ## Tasks
 
@@ -224,13 +227,21 @@ user before coding.
    and empty; ghost is replaced by truth on re-spot. Commit.
 5. **Layer 3c — rendering.** Extend `drawUnits` to draw ghosts from
    `state.players[viewer].seenEnemies` for entries whose `pos` is NOT
-   in `visibleTiles(state, viewer)`. Half-opacity, no badge (per
-   default). Commit.
-6. **Acceptance regression.** Re-run `tests/fog-acceptance.test.ts`
-   (tier3-fog vs tier1-fog ≥7/10 on duel). If the AI behaviour shifted
-   because of the visibility changes, file findings in `QUESTIONS.md`
-   and re-tune in a separate commit.
-7. **Document.** Append a "Fog v1.1" section to `PLAN.md`'s "Out of
+   in `visibleTiles(state, viewer)`. Half-opacity, no badge. Commit.
+6. **Layer 3d — AI phantom injection.** Add `PHANTOM_SENTINEL` alongside
+   `FOG_HIDDEN_SENTINEL` in `selectors.ts`. Extend `viewStateForPlayer`
+   (or a new wrapper used only by the AI driver) to inject ghost
+   entries as phantom units when the AI is the consumer. Make sure
+   `attackableTargets` skips them (the cargo-skip path already does, by
+   the sentinel trick). Tests: AI's threat map at a hidden tile that
+   contains a known-recent enemy tank reads non-zero; AI does not
+   attempt to ATTACK a phantom. Commit.
+7. **Acceptance regression.** Re-run `tests/fog-acceptance.test.ts`
+   (tier3-fog vs tier1-fog ≥7/10 on duel). Aggressive ghost consumption
+   WILL shift behaviour — if the threshold breaks, re-tune
+   `futureThreat` weights and re-run, then file the round in
+   `AI_TUNING.md`.
+8. **Document.** Append a "Fog v1.1" section to `PLAN.md`'s "Out of
    Scope" paragraph (replace the deferred-list sentence with a "shipped
    in v1.1" sentence). Append open questions / tuning notes to
    `QUESTIONS.md`.
@@ -276,8 +287,6 @@ matches intent before committing.
 
 ## Out of scope
 
-- AI-side ghost consumption (Aggressive variant in design — defer to a
-  tuning round).
 - Time-based ghost decay (no aging without positive disproof in v1.1).
 - Per-unit `mountainVisionBonus` overrides in `units.json` (use a single
   global constant; revisit only if balance demands).
