@@ -123,6 +123,17 @@ export function createAIDriver(deps: AIDriverDeps): AIDriver {
 
   function dispatchNext(): void {
     if (pendingPlan.length === 0) return;
+    // Backstop against ANY external END_TURN source (human Enter key, the End
+    // Turn button) that flipped currentPlayer out from under a plan we're still
+    // draining. Without this guard the stale unit actions merely get rejected
+    // by the validators, but the plan's *trailing* END_TURN is always legal and
+    // would end the human's freshly-started turn — a one-keystroke turn steal.
+    // If we no longer own the active turn, abandon whatever's left of the plan.
+    if (planOwner !== null && deps.emitter.getState().currentPlayer !== planOwner) {
+      pendingPlan = [];
+      planOwner = null;
+      return;
+    }
     const t = now();
     if (t < nextActionAt) return;
     if (deps.animQueue.busy()) return;

@@ -9,7 +9,7 @@
 
 import type { GameState, PlayerId, UnitType } from '../engine/core/types';
 import { UNITS } from '../engine/data';
-import { BOARD_TOP_INSET } from './canvas';
+import { BOARD_TOP_INSET, BOARD_BOTTOM_INSET } from './canvas';
 import type {
   ActionMenuEntry,
   BuildMenuEntry,
@@ -206,20 +206,45 @@ function buildMenuLayout(
   const tilePos = renderer.tileToPixel(menu.tile);
   const itemH = 36;
   const w = 200;
-  const h = menu.entries.length * itemH + 8;
+  // The full 14-entry coastal roster stacked in one column (14*36 = 504px)
+  // overflows the board band on short viewports, spilling rows under the bottom
+  // DOM chrome (which swallows clicks) or off-screen. Wrap into columns so the
+  // menu height never exceeds the band, then lay entries out column-major.
+  // (Interim: Phase 2 replaces canvas menus with DOM.)
+  const bandTop = BOARD_TOP_INSET + 4;
+  const bandBottom = vp.height - BOARD_BOTTOM_INSET - 4;
+  const maxRows = Math.max(
+    1,
+    Math.floor((vp.height - BOARD_TOP_INSET - BOARD_BOTTOM_INSET - 16) / itemH),
+  );
+  const cols = Math.ceil(menu.entries.length / maxRows);
+  const rows = Math.min(menu.entries.length, maxRows);
+  const rectW = cols * w;
+  const rectH = rows * itemH + 8;
+
   let x = tilePos.x + vp.tileSize + 8;
   let y = tilePos.y;
-  if (x + w > vp.width - 8) x = tilePos.x - w - 8;
-  if (y + h > vp.height - 8) y = vp.height - h - 8;
-  if (y < BOARD_TOP_INSET + 4) y = BOARD_TOP_INSET + 4;
-  const items = menu.entries.map((entry, i) => ({
-    entry,
-    x: x + 4,
-    y: y + 4 + i * itemH,
-    w: w - 8,
-    h: itemH - 2,
-  }));
-  return { items, rect: { x, y, w, h } };
+  // Flip to the left of the tile if the (multi-column) rect would run off the
+  // right edge, then clamp inside the viewport horizontally.
+  if (x + rectW > vp.width - 8) x = tilePos.x - rectW - 8;
+  x = Math.max(8, Math.min(x, vp.width - 8 - rectW));
+  // Keep the whole rect inside the board band vertically (push up off the
+  // bottom chrome first, then down off the top chrome).
+  if (y + rectH > bandBottom) y = bandBottom - rectH;
+  if (y < bandTop) y = bandTop;
+
+  const items = menu.entries.map((entry, i) => {
+    const col = Math.floor(i / maxRows);
+    const row = i % maxRows;
+    return {
+      entry,
+      x: x + 4 + col * w,
+      y: y + 4 + row * itemH,
+      w: w - 8,
+      h: itemH - 2,
+    };
+  });
+  return { items, rect: { x, y, w: rectW, h: rectH } };
 }
 
 function drawBuildMenu(
@@ -300,3 +325,6 @@ function labelFor(type: UnitType): string {
 function capitalise(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
+
+// Expose the internal layout for tests (multi-column clamping regression).
+export const __test = { buildMenuLayout };

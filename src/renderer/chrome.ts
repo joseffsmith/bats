@@ -75,6 +75,7 @@ export function createChrome(deps: ChromeDeps): Chrome {
   const actions = createActions({
     emitter: deps.emitter,
     aiDriver: deps.aiDriver,
+    animQueue: deps.animQueue,
   });
 
   bottom.appendChild(toolshelf.root);
@@ -406,6 +407,7 @@ function flashTool(btn: HTMLElement, msg: string, err = false): void {
 type ActionsDeps = {
   emitter: Emitter;
   aiDriver: AIDriver;
+  animQueue: AnimationQueue;
 };
 
 type Actions = {
@@ -466,7 +468,13 @@ function createActions(deps: ActionsDeps): Actions {
   endTurn.dataset.action = 'end-turn';
   endTurn.innerHTML = 'End Turn <span class="kbd-ret">↵</span>';
   endTurn.addEventListener('click', () => {
-    if (deps.emitter.getState().winner !== null) return;
+    const state = deps.emitter.getState();
+    if (state.winner !== null) return;
+    // Same turn-steal guard as the Enter keybind: while the AI holds input lock
+    // it is mid-plan, and while animations are settling the board is between
+    // states. A click in either window would flip currentPlayer and let the
+    // AI's trailing END_TURN end the human's turn — so refuse the click.
+    if (deps.aiDriver.inputLocked(state) || deps.animQueue.busy()) return;
     deps.emitter.dispatch({ type: 'END_TURN' });
   });
 
@@ -482,9 +490,12 @@ function createActions(deps: ActionsDeps): Actions {
     const remaining = owned.filter((u) => !u.hasActed).length;
     movesV.innerHTML = `<em>${remaining}</em> / ${owned.length}`;
     cluster.dataset.player = String(current);
-    const concluded = state.winner !== null;
-    endTurn.disabled = concluded;
-    endTurn.classList.toggle('disabled', concluded);
+    // Disable when the match is over, and also during an AI turn: the click
+    // handler is inert then (see its guard), so the button must read as
+    // disabled rather than falsely inviting a click.
+    const disabled = state.winner !== null || deps.aiDriver.inputLocked(state);
+    endTurn.disabled = disabled;
+    endTurn.classList.toggle('disabled', disabled);
   }
 
   return { root, update };
@@ -1110,7 +1121,9 @@ function ensureStyle(): void {
 .end-turn:disabled, .end-turn.disabled {
   background: var(--panel-2);
   color: var(--ink-faint);
-  cursor: not-allowed;
+  opacity: 0.55;
+  cursor: default;
+  filter: none;
 }
 .end-turn .kbd-ret {
   font-family: 'IBM Plex Mono', monospace;

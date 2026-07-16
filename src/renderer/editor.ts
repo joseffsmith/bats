@@ -332,6 +332,12 @@ export function runEditor(parent: HTMLElement): void {
     const ts = EDITOR_TILE_SIZE;
     canvas.width = st.width * ts;
     canvas.height = st.height * ts;
+    // Pin the CSS size to the backing-store size so the canvas is never
+    // stretched. pxToTile divides raw client offsets by EDITOR_TILE_SIZE, which
+    // is only correct at 1:1 scale — Resize changes both dimensions, so they
+    // must be re-synced here alongside the width/height attributes.
+    canvas.style.width = `${canvas.width}px`;
+    canvas.style.height = `${canvas.height}px`;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     for (let y = 0; y < st.height; y++) {

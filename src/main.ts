@@ -66,6 +66,9 @@ function setupCanvas(): HTMLCanvasElement {
   const existing = document.querySelector('canvas');
   if (existing) existing.remove();
   const canvas = document.createElement('canvas');
+  // Tag as the board canvas so the global full-viewport / absolute-position CSS
+  // (index.html) applies here but NOT to the editor's own canvas.
+  canvas.className = 'board';
   const app = document.getElementById('app');
   if (app) {
     app.innerHTML = '';
@@ -125,7 +128,10 @@ async function main(): Promise<void> {
     fog: fogConfig.on,
   });
 
-  const input = createInputController(renderer, emitter, animQueue);
+  const input = createInputController(renderer, emitter, animQueue, {
+    endTurnAllowed: () =>
+      !aiDriver.inputLocked(emitter.getState()) && !animQueue.busy(),
+  });
   const hud = createHud(renderer);
 
   // Audio: default muted (so we don't autoplay). The audio module gates its

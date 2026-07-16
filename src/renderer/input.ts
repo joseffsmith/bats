@@ -116,9 +116,15 @@ export function createInputController(
   renderer: CanvasRenderer,
   emitter: Emitter,
   animQueue: AnimationQueue,
+  opts?: { endTurnAllowed?: () => boolean },
 ): InputController {
   let inputState: InputState = { kind: 'idle' };
   const hud = createHud(renderer);
+  // Gate for the Enter-to-end-turn keybind. Defaults to always-allowed so
+  // existing call sites (and tests) that omit it keep the old behaviour;
+  // main.ts passes a predicate that refuses while an AI turn is in progress or
+  // animations are mid-flight, so a stray Enter can't steal the AI's turn.
+  const endTurnAllowed = opts?.endTurnAllowed ?? ((): boolean => true);
 
   function logTransition(from: string, to: string, extra?: Record<string, unknown>): void {
     log('render', 'state transition', { from, to, ...extra });
@@ -540,7 +546,11 @@ export function createInputController(
   canvas.addEventListener('mousemove', (e) => handleHover(e.offsetX, e.offsetY));
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') cancel();
-    else if (e.key === 'Enter' && emitter.getState().winner === null) {
+    else if (
+      e.key === 'Enter' &&
+      emitter.getState().winner === null &&
+      endTurnAllowed()
+    ) {
       emitter.dispatch({ type: 'END_TURN' });
       setState({ kind: 'idle' }, inputState.kind);
     }

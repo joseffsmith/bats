@@ -841,7 +841,7 @@ function drawAttackEffects(
   // ── Projectile (first projFrac of window) ───────────────────────────────
   if (t < projFrac) {
     const p = t / projFrac;
-    let px = ax + dx * p;
+    const px = ax + dx * p;
     let py = ay + dy * p;
     if (anim.arc) {
       // Parabolic arc: deflect upward by an amount proportional to distance.
