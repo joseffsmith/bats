@@ -1,6 +1,7 @@
 node_modules
 dist
 .vite
+coverage/
 logs/*
 !logs/.gitkeep
 *.log

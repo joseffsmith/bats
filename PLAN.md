@@ -278,13 +278,13 @@ Animation queue with proper move/attack/death easing. Save/load (state is JSON-s
 
 Commander powers / COs, day-night, weather, multiplayer networking, real sprite art, sound, dedicated mobile touch UI (responsive layout fine, but mouse-first), AI levels above Tier 3 (no minimax, no MCTS, no RL — explicitly do not attempt), more than two players.
 
-Fog of war shipped behind the `?fog=on` URL param + toolshelf toggle (see
-`plans/fog-of-war.md`). Per-unit `visionRange` lives in `src/data/units.json`;
+Fog of war shipped behind the `?fog=on` URL param + toolshelf toggle.
+Per-unit `visionRange` lives in `src/data/units.json`;
 `visibleTiles` and `viewStateForPlayer` in `src/engine/queries/selectors.ts`
 do the actual masking. The AI plans against the filtered state when fog is
 on; tier3-fog still beats tier1-fog ≥7/10 on duel.
 
-Fog v1.1 (see `plans/fog-v1.1.md`) added the three deferred AW rules:
+Fog v1.1 added the three deferred AW rules:
 mountain vision bonus (+3, `MOUNTAIN_VISION_BONUS` in selectors.ts),
 forest-hides-ground (foot/wheel/tread on forest is hidden unless an
 observer is at Manhattan-1), and last-known-position ghosts. Ghost
