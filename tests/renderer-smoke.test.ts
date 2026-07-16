@@ -120,21 +120,30 @@ describe('renderer smoke', () => {
   });
 
   it('canvas dimensions reflect viewport × DPR', () => {
-    const { canvas, renderer } = mount();
+    const { canvas, renderer, emitter, input, animQueue } = mount();
     const vp = renderer.getViewport();
     expect(vp.width).toBe(1024);
     expect(vp.height).toBe(768);
-    // Desktop tile size.
+    // Before any draw the viewport carries the provisional default tile size;
+    // tiles are re-fit to the map on the first draw (see fitTileSize).
     expect(vp.tileSize).toBe(48);
+    // One draw fits duel (12x8) to 1024x768: height-bound at (768-220-24)/8 ≈ 65
+    // → snapped/capped to the 64px ceiling.
+    renderer.draw(emitter.getState(), input.getOverlay(), animQueue);
+    expect(renderer.getViewport().tileSize).toBe(64);
     // jsdom may report DPR=1.
     expect(canvas.width).toBe(Math.floor(1024 * vp.dpr));
     expect(canvas.height).toBe(Math.floor(768 * vp.dpr));
   });
 
-  it('mobile breakpoint picks the 32px tile size', () => {
+  it('fit-to-viewport shrinks tiles on a small viewport', () => {
+    // Post-fit-scaling there is no width breakpoint: tiles shrink continuously
+    // to fit. Duel (12x8) at 500x800 is width-bound at (500-24)/12 ≈ 39 → snapped
+    // down to 32. (Verifies the old TILE_SIZE_MOBILE=32 case still lands there.)
     Object.defineProperty(window, 'innerWidth', { value: 500, configurable: true });
     Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
-    const { renderer } = mount();
+    const { renderer, emitter, input, animQueue } = mount();
+    renderer.draw(emitter.getState(), input.getOverlay(), animQueue);
     expect(renderer.getViewport().tileSize).toBe(32);
   });
 

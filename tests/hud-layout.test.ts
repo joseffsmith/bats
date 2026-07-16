@@ -12,7 +12,6 @@
 
 import { describe, expect, it, beforeAll, beforeEach } from 'vitest';
 import { createCanvasRenderer } from '../src/renderer/canvas';
-import { BOARD_TOP_INSET, BOARD_BOTTOM_INSET } from '../src/renderer/canvas';
 import type { BuildMenuEntry } from '../src/renderer/canvas';
 import type { Coord } from '../src/engine/core/types';
 import { __test } from '../src/renderer/hud';
@@ -111,9 +110,10 @@ describe('buildMenuLayout wraps into columns and stays inside the board band', (
 
     expect(layout.items).toHaveLength(14);
     for (const item of layout.items) {
-      // Inside the board band vertically.
-      expect(item.y).toBeGreaterThanOrEqual(BOARD_TOP_INSET);
-      expect(item.y + item.h).toBeLessThanOrEqual(vp.height - BOARD_BOTTOM_INSET);
+      // Inside the board band vertically — the band is now the viewport's live
+      // (measured) insets, which for a fresh renderer equal the defaults.
+      expect(item.y).toBeGreaterThanOrEqual(vp.insetTop);
+      expect(item.y + item.h).toBeLessThanOrEqual(vp.height - vp.insetBottom);
       // Inside the viewport horizontally.
       expect(item.x).toBeGreaterThanOrEqual(0);
       expect(item.x + item.w).toBeLessThanOrEqual(vp.width);

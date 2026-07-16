@@ -9,7 +9,6 @@
 
 import type { GameState, PlayerId, UnitType } from '../engine/core/types';
 import { UNITS } from '../engine/data';
-import { BOARD_TOP_INSET, BOARD_BOTTOM_INSET } from './canvas';
 import type {
   ActionMenuEntry,
   BuildMenuEntry,
@@ -148,10 +147,15 @@ export function actionMenuLayout(
   const itemH = 30;
   const w = 120;
   const h = menu.entries.length * itemH + 8;
+  // Keep the menu inside the board band (between the measured chrome insets) so
+  // it never renders under the DOM chrome, which would swallow its clicks.
+  const bandTop = vp.insetTop + 4;
+  const bandBottom = vp.height - vp.insetBottom - 4;
   let x = tilePos.x + vp.tileSize + 8;
   let y = tilePos.y;
   if (x + w > vp.width - 8) x = tilePos.x - w - 8;
-  if (y + h > vp.height - 8) y = vp.height - h - 8;
+  if (y + h > bandBottom) y = bandBottom - h;
+  if (y < bandTop) y = bandTop;
   const items = menu.entries.map((entry, i) => ({
     entry,
     x: x + 4,
@@ -211,11 +215,11 @@ export function buildMenuLayout(
   // DOM chrome (which swallows clicks) or off-screen. Wrap into columns so the
   // menu height never exceeds the band, then lay entries out column-major.
   // (Interim: Phase 2 replaces canvas menus with DOM.)
-  const bandTop = BOARD_TOP_INSET + 4;
-  const bandBottom = vp.height - BOARD_BOTTOM_INSET - 4;
+  const bandTop = vp.insetTop + 4;
+  const bandBottom = vp.height - vp.insetBottom - 4;
   const maxRows = Math.max(
     1,
-    Math.floor((vp.height - BOARD_TOP_INSET - BOARD_BOTTOM_INSET - 16) / itemH),
+    Math.floor((vp.height - vp.insetTop - vp.insetBottom - 16) / itemH),
   );
   const cols = Math.ceil(menu.entries.length / maxRows);
   const rows = Math.min(menu.entries.length, maxRows);

@@ -10,8 +10,10 @@
 // pointer-events on the root is `none` so canvas clicks pass through the void;
 // individual interactive controls opt back in with `auto`.
 //
-// CHROME_TOP_HEIGHT / CHROME_BOTTOM_HEIGHT are exported so canvas.ts can
-// reserve grid space.
+// The chrome measures its own header/footer heights via a ResizeObserver and
+// reports them (plus a small breathing gap) through `onInsetsChange`, so the
+// canvas renderer reserves exactly as much grid space as the chrome occupies —
+// the single source of truth for the board's top/bottom insets.
 
 import type { GameState, PlayerId } from '../engine/core/types';
 import type { Emitter } from './emitter';
@@ -26,8 +28,9 @@ import { MAPS, MAP_NAMES, mapLabel, resolveMapName } from './maps';
 import type { MapName } from './maps';
 import { log } from '../engine/core/logger';
 
-export const CHROME_TOP_HEIGHT = 96;
-export const CHROME_BOTTOM_HEIGHT = 96;
+/** Breathing gap (CSS px) added to each measured chrome height so the board
+ *  never butts flush against the DOM bars. */
+const INSET_GAP = 8;
 
 const PLAYER_NAMES: Record<PlayerId, string> = { 0: 'Vermilion', 1: 'Cobalt' };
 const PLAYER_NUMERALS: Record<PlayerId, string> = { 0: 'I', 1: 'II' };
@@ -42,6 +45,9 @@ export type ChromeDeps = {
   aiDriver: AIDriver;
   animQueue: AnimationQueue;
   audio: AudioModule;
+  /** Reports the measured chrome insets (top header / bottom footer heights,
+   *  each plus INSET_GAP) whenever they change. Fires once on mount. */
+  onInsetsChange?: (top: number, bottom: number) => void;
 };
 
 export function createChrome(deps: ChromeDeps): Chrome {
@@ -105,9 +111,35 @@ export function createChrome(deps: ChromeDeps): Chrome {
 
   refresh(deps.emitter.getState());
 
+  // ── Measured board insets ───────────────────────────────────────────────────
+  // Observe the top header and bottom footer heights and report them (plus a
+  // small breathing gap) to the renderer so it reserves exactly the chrome's
+  // footprint. Integer-guarded so an unchanged measurement doesn't re-fire — the
+  // renderer's setBoardInsets also no-ops, but stopping here avoids the churn.
+  let lastTop = -1;
+  let lastBottom = -1;
+  function reportInsets(): void {
+    if (!deps.onInsetsChange) return;
+    const t = Math.round(top.offsetHeight) + INSET_GAP;
+    const b = Math.round(bottom.offsetHeight) + INSET_GAP;
+    if (t === lastTop && b === lastBottom) return;
+    lastTop = t;
+    lastBottom = b;
+    deps.onInsetsChange(t, b);
+  }
+  let observer: ResizeObserver | null = null;
+  if (typeof ResizeObserver !== 'undefined') {
+    observer = new ResizeObserver(() => reportInsets());
+    observer.observe(top);
+    observer.observe(bottom);
+  }
+  // Fire once on mount even if the observer is unavailable (or hasn't ticked).
+  reportInsets();
+
   return {
     destroy(): void {
       unsub();
+      observer?.disconnect();
       root.remove();
     },
   };
@@ -142,8 +174,11 @@ function createPlayerPanel(pid: PlayerId): PlayerPanel {
   const stats = document.createElement('div');
   stats.className = 'stats';
 
-  const fundsStat = createStat('Coffer');
-  const unitsStat = createStat('Units');
+  // Stable per-kind modifier classes so the responsive CSS can target them
+  // individually — the mobile breakpoint hides `.stat-units` so the
+  // gameplay-critical Coffer always fits.
+  const fundsStat = createStat('Coffer', 'stat-coffer');
+  const unitsStat = createStat('Units', 'stat-units');
   stats.appendChild(fundsStat.root);
   stats.appendChild(unitsStat.root);
 
@@ -166,9 +201,12 @@ function createPlayerPanel(pid: PlayerId): PlayerPanel {
   return { root, update };
 }
 
-function createStat(label: string): { root: HTMLElement; value: HTMLElement } {
+function createStat(
+  label: string,
+  modifier?: string,
+): { root: HTMLElement; value: HTMLElement } {
   const root = document.createElement('div');
-  root.className = 'stat';
+  root.className = modifier ? `stat ${modifier}` : 'stat';
   const v = document.createElement('span');
   v.className = 'v';
   v.textContent = '—';
@@ -237,7 +275,18 @@ type ToolshelfDeps = {
 
 function createToolshelf(deps: ToolshelfDeps): { root: HTMLElement } {
   const root = document.createElement('div');
-  root.className = 'toolshelf';
+  // `collapsed` only bites under the mobile media query — on desktop the class
+  // is inert (all tools stay visible and the disclosure button is display:none),
+  // so starting collapsed is safe everywhere.
+  root.className = 'toolshelf collapsed';
+
+  // Mobile disclosure: a "Tools" button (desktop-hidden via the media query)
+  // toggles `.collapsed`, which the media query uses to show/hide the tools.
+  const disclosure = makeTool('Tools', '☰');
+  disclosure.classList.add('tools-disclosure');
+  disclosure.addEventListener('click', () => {
+    root.classList.toggle('collapsed');
+  });
 
   const replayBtn = makeTool('Replay', '⤺');
   const saveBtn = makeTool('Save', '◊');
@@ -310,6 +359,7 @@ function createToolshelf(deps: ToolshelfDeps): { root: HTMLElement } {
   // omnisciently up to that point).
   const fogToggle = createFogToggle();
 
+  root.appendChild(disclosure);
   root.appendChild(replayBtn);
   root.appendChild(makeDivider());
   root.appendChild(saveBtn);
@@ -951,6 +1001,9 @@ function ensureStyle(): void {
   align-items: center;
   pointer-events: auto;
 }
+/* The mobile disclosure toggle is desktop-invisible; the media query reveals it
+   and makes the collapsed state hide the individual tools. Desktop ignores both. */
+.tools-disclosure { display: none; }
 .tool {
   background: var(--panel);
   border: 1px solid var(--rule);
@@ -1272,6 +1325,76 @@ function ensureStyle(): void {
   display: flex;
   gap: 10px;
   justify-content: center;
+}
+
+/* ── Responsive: phones / narrow windows ──────────────────────────────────────
+   The repo's first @media query. Pre-fix at 390px the top grid's 1fr player
+   panels starved (funds clipped by overflow:hidden), the toolshelf overflowed
+   with no wrap, and the end-turn cluster ran off-screen. This breakpoint tightens
+   the top chrome so Coffer always fits, wraps + collapses the toolshelf behind a
+   disclosure, drops the AI config, and guarantees a full-size End Turn button. */
+@media (max-width: 720px) {
+  /* Top chrome: tighter, honour the notch/status-bar safe area. */
+  .chrome-top {
+    padding: calc(8px + env(safe-area-inset-top)) 10px 0;
+    gap: 8px;
+  }
+  /* Grid children must be allowed to shrink below their content size, or the
+     player panels overflow and clip .stats (funds) again. */
+  .chrome-top > * { min-width: 0; }
+
+  .turn-indicator {
+    min-width: 0;
+    padding: 4px 10px;
+  }
+  /* Keep the dot + "Turn NN"; drop the two secondary strings to save width. */
+  .turn-indicator .phase { display: none; }
+  .turn-indicator .arrow-text { display: none; }
+  .turn-indicator .turn-n { font-size: 24px; }
+
+  .player-panel {
+    min-height: auto;
+    padding: 8px 10px;
+    gap: 8px;
+  }
+  .marker { width: 24px; height: 24px; font-size: 11px; }
+  .meta .label { display: none; }
+  .meta .name { font-size: 13px; }
+  .stat .v { font-size: 15px; }
+  .stat .k { font-size: 8px; letter-spacing: 0.12em; }
+  /* Units count is expendable; hiding it guarantees the gameplay-critical
+     Coffer (funds) never gets clipped. */
+  .stat-units { display: none; }
+
+  /* Bottom chrome: toolshelf (left, shrinkable) + end-turn cluster (right,
+     never shrinks), honouring the bottom safe area. */
+  .chrome-bottom {
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  }
+
+  .toolshelf {
+    flex-wrap: wrap;
+    gap: 4px;
+    min-width: 0;
+  }
+  .tools-disclosure { display: inline-flex; }
+  /* Collapsed (the mobile default): hide every tool but the disclosure toggle. */
+  .toolshelf.collapsed .tool:not(.tools-disclosure),
+  .toolshelf.collapsed .divider { display: none; }
+
+  /* AI controllers strip is desktop-only chrome; URL params still configure AI. */
+  .ai-config { display: none; }
+
+  .end-turn-cluster { flex-shrink: 0; }
+  .end-turn { min-height: 48px; padding: 0 18px; font-size: 16px; }
+}
+
+/* Below 400px the "Units to Act" meta is dropped so the End Turn button keeps
+   its full tap target on the smallest phones. */
+@media (max-width: 400px) {
+  .end-turn-cluster .turn-meta { display: none; }
 }
 `;
   const style = document.createElement('style');

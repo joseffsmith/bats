@@ -29,16 +29,30 @@ export { PLAYER_COLOURS };
 
 // ─────────────────────────── Constants ───────────────────────────────────────
 
-export const TILE_SIZE_DESKTOP = 48;
-export const TILE_SIZE_MOBILE = 32;
-export const MOBILE_BREAKPOINT = 768;
+/** Provisional tile edge (CSS px) for the initial viewport. draw() overwrites
+ *  this with the map-aware fit (see fitTileSize) on the first frame; it only
+ *  survives in tests that resize() but never draw(). */
+const DEFAULT_TILE_SIZE = 48;
 
-/** Vertical space reserved at the top of the canvas for the DOM chrome
- *  (mirrored player HUDs + turn indicator). */
+/** Outer gutter (CSS px) kept clear on every side of the grid when fitting. */
+const MARGIN = 12;
+
+/** Fitted tile size is clamped to this closed range [16, 64]. */
+const MIN_TILE_SIZE = 16;
+const MAX_TILE_SIZE = 64;
+
+/** Floor for the measured chrome insets: a mis-measured (near-zero) chrome
+ *  height can't let the grid collide with the DOM bars. */
+const MIN_INSET = 40;
+
+/** DEFAULT vertical space reserved at the top of the canvas for the DOM chrome
+ *  (mirrored player HUDs + turn indicator). The live value lives on the viewport
+ *  (`insetTop`) and is overwritten by setBoardInsets from the measured chrome;
+ *  this constant only seeds the initial viewport. */
 export const BOARD_TOP_INSET = 110;
 
-/** Vertical space reserved at the bottom of the canvas for the DOM chrome
- *  (toolshelf + AI config + end-turn cluster). */
+/** DEFAULT vertical space reserved at the bottom of the canvas for the DOM
+ *  chrome (toolshelf + AI config + end-turn cluster). See BOARD_TOP_INSET. */
 export const BOARD_BOTTOM_INSET = 110;
 
 const UNIT_LETTER: Record<UnitType, string> = {
@@ -122,6 +136,10 @@ export type Viewport = {
   dpr: number;
   tileSize: number;
   origin: { x: number; y: number }; // top-left of grid in CSS pixels
+  /** Vertical space reserved at the top for the DOM chrome (measured, live). */
+  insetTop: number;
+  /** Vertical space reserved at the bottom for the DOM chrome (measured, live). */
+  insetBottom: number;
 };
 
 // ─────────────────────────── Public renderer API ─────────────────────────────
@@ -156,6 +174,12 @@ export type CanvasRendererDeps = {
 export type CanvasRenderer = {
   readonly canvas: HTMLCanvasElement;
   resize(): Viewport;
+  /**
+   * Update the reserved chrome insets (measured from the DOM header/footer).
+   * Clamps to a sane floor, integer-compares, and no-ops when unchanged so an
+   * observer callback can't feed a render loop. The next draw() re-fits tiles.
+   */
+  setBoardInsets(top: number, bottom: number): void;
   /** Render the full frame given current state + overlay. */
   draw(state: GameState, overlay: Overlay, anim: AnimationQueue): void;
   /** CSS-pixel → tile coord. Returns null if outside the grid. */
@@ -181,13 +205,22 @@ export function createCanvasRenderer(
     // jsdom sometimes has 0 inner sizes — fall back to a sensible default.
     const w = window.innerWidth || 1024;
     const h = window.innerHeight || 768;
-    const tileSize = w < MOBILE_BREAKPOINT ? TILE_SIZE_MOBILE : TILE_SIZE_DESKTOP;
     c.width = Math.max(1, Math.floor(w * dpr));
     c.height = Math.max(1, Math.floor(h * dpr));
     c.style.width = `${w}px`;
     c.style.height = `${h}px`;
-    // Origin set when we know the map size — recomputed each draw.
-    return { width: w, height: h, dpr, tileSize, origin: { x: 0, y: 0 } };
+    // tileSize is provisional (draw() re-fits it map-aware); origin is set once
+    // the map size is known, recomputed each draw. Insets seed from the default
+    // constants — setBoardInsets overwrites them from the measured DOM chrome.
+    return {
+      width: w,
+      height: h,
+      dpr,
+      tileSize: DEFAULT_TILE_SIZE,
+      origin: { x: 0, y: 0 },
+      insetTop: BOARD_TOP_INSET,
+      insetBottom: BOARD_BOTTOM_INSET,
+    };
   }
 
   function originFor(state: GameState, vp: Viewport): { x: number; y: number } {
@@ -197,19 +230,35 @@ export function createCanvasRenderer(
     const gridW = cols * vp.tileSize;
     const gridH = rows * vp.tileSize;
     const x = Math.floor((vp.width - gridW) / 2);
-    // Centre the grid inside the chrome-bounded area: between BOARD_TOP_INSET
-    // and (height - BOARD_BOTTOM_INSET). Clamp to never overlap the top chrome.
-    const usableH = vp.height - BOARD_TOP_INSET - BOARD_BOTTOM_INSET;
+    // Centre the grid inside the chrome-bounded area: between the measured top
+    // inset and (height - bottom inset). Clamp to never overlap the top chrome.
+    const usableH = vp.height - vp.insetTop - vp.insetBottom;
     const y = Math.max(
-      BOARD_TOP_INSET + 8,
-      BOARD_TOP_INSET + Math.floor((usableH - gridH) / 2),
+      vp.insetTop + 8,
+      vp.insetTop + Math.floor((usableH - gridH) / 2),
     );
     return { x, y };
   }
 
   function resize(): Viewport {
+    // Preserve the measured insets across a resize — the DOM chrome's height is
+    // reported independently by the ResizeObserver (setBoardInsets), and a
+    // window resize shouldn't stomp it back to the defaults.
+    const prev = viewport;
     viewport = computeViewport(canvas);
+    viewport.insetTop = prev.insetTop;
+    viewport.insetBottom = prev.insetBottom;
     return viewport;
+  }
+
+  function setBoardInsets(top: number, bottom: number): void {
+    const t = Math.max(MIN_INSET, Math.round(top));
+    const b = Math.max(MIN_INSET, Math.round(bottom));
+    // Integer-compare + no-op guard: the caller is a ResizeObserver, and
+    // re-writing an unchanged value could churn (observer → layout → observer).
+    if (t === viewport.insetTop && b === viewport.insetBottom) return;
+    viewport.insetTop = t;
+    viewport.insetBottom = b;
   }
 
   function pixelToTile(px: number, py: number): Coord | null {
@@ -232,10 +281,21 @@ export function createCanvasRenderer(
 
   function draw(state: GameState, overlay: Overlay, anim: AnimationQueue): void {
     const vp = viewport;
+    // Re-fit the tile size every frame: it depends on the map dimensions (which
+    // computeViewport can't see) plus the viewport + measured insets, any of
+    // which may have changed since the last frame. Cheap arithmetic.
+    const rows = state.map.length;
+    const cols = state.map[0]?.length ?? 0;
+    vp.tileSize = fitTileSize(cols, rows, vp.width, vp.height, vp.insetTop, vp.insetBottom);
     vp.origin = originFor(state, vp);
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('2D context unavailable');
     ctx.setTransform(vp.dpr, 0, 0, vp.dpr, 0, 0);
+    // Nearest-neighbour scaling: the unit PNGs are authored at 48px and the fit
+    // routinely up/down-scales them; crisp pixels beat bilinear mush here (and
+    // Phase 3's pixel art will want the same). Context state, so once per frame
+    // suffices — the later shake setTransform doesn't reset it.
+    ctx.imageSmoothingEnabled = false;
     // Transparent clear — the body background (warm dark + noise) shows
     // through, unifying the canvas with the DOM chrome.
     ctx.clearRect(0, 0, vp.width, vp.height);
@@ -272,6 +332,7 @@ export function createCanvasRenderer(
   return {
     canvas,
     resize,
+    setBoardInsets,
     draw,
     pixelToTile,
     tileToPixel,
@@ -1036,7 +1097,7 @@ function drawDamagePreview(
   let by = p.y - h - 6;
   // Keep on-screen.
   if (bx + w > vp.width - 8) bx = p.x - w - 6;
-  if (by < BOARD_TOP_INSET + 4) by = p.y + ts + 6;
+  if (by < vp.insetTop + 4) by = p.y + ts + 6;
   ctx.fillStyle = 'rgba(20,20,20,0.92)';
   ctx.fillRect(bx, by, w, h);
   ctx.strokeStyle = '#ffd84a';
@@ -1106,9 +1167,37 @@ function drawWinnerBanner(
   ctx.fillText(`Player ${state.winner + 1} wins!`, x + w / 2, y + h / 2);
 }
 
-// Re-export for hud / input to share the same constants.
-export function tileSizeFor(width: number): number {
-  return width < MOBILE_BREAKPOINT ? TILE_SIZE_MOBILE : TILE_SIZE_DESKTOP;
+/**
+ * Largest tile edge (CSS px) at which a `cols`×`rows` grid fits inside the
+ * chrome-bounded viewport, snapped and clamped for crisp rendering. Pure — the
+ * renderer calls it every frame from draw() (the map size lives on the state,
+ * not the viewport), and the unit tests exercise it directly.
+ *
+ *   availW = width  - 2*MARGIN
+ *   availH = height - insetTop - insetBottom - 2*MARGIN
+ *   fit    = floor(min(availW/cols, availH/rows))
+ *
+ * At >=32px we snap DOWN to the nearest multiple of 16 (32/48/64) so the 48px
+ * source PNGs scale by clean ratios; below 32 every integer size is allowed so
+ * dense maps on phones surrender as little board as possible. Final clamp to
+ * [16, 64].
+ */
+export function fitTileSize(
+  cols: number,
+  rows: number,
+  width: number,
+  height: number,
+  insetTop: number,
+  insetBottom: number,
+): number {
+  if (cols <= 0 || rows <= 0) return DEFAULT_TILE_SIZE;
+  const availW = width - 2 * MARGIN;
+  const availH = height - insetTop - insetBottom - 2 * MARGIN;
+  let fit = Math.floor(Math.min(availW / cols, availH / rows));
+  // Snap down to a multiple of 16 at desktop-ish sizes so sprites scale cleanly;
+  // leave sub-32 sizes unsnapped so tight phone fits aren't rounded away.
+  if (fit >= 32) fit = Math.floor(fit / 16) * 16;
+  return Math.max(MIN_TILE_SIZE, Math.min(MAX_TILE_SIZE, fit));
 }
 
 export function isUnitAt(state: GameState, c: Coord): Unit | undefined {

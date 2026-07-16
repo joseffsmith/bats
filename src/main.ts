@@ -178,6 +178,11 @@ async function main(): Promise<void> {
     aiDriver,
     animQueue,
     audio,
+    // Single source of truth for the board insets: the chrome measures its own
+    // header/footer heights and the renderer reserves exactly that much space.
+    onInsetsChange: (t, b) => {
+      renderer.setBoardInsets(t, b);
+    },
   });
   log('render', 'chrome mounted', { muted: audio.isMuted() });
 

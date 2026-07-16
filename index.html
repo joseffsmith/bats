@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
     <title>Tactical Engine</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <!-- Self-hosted fonts (see public/fonts/fonts.css). No external font CDN so
@@ -65,6 +68,10 @@
         height: 100vh;
         position: absolute;
         inset: 0;
+        /* Kill the browser's double-tap-to-zoom / pan gestures on the board so
+           taps register as taps (no 300ms delay, no accidental zoom) without the
+           accessibility cost of user-scalable=no on the whole document. */
+        touch-action: none;
       }
     </style>
   </head>
