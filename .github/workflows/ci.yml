@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The ai-*.test.ts suites are deliberately heavy (full self-play matches,
+      # ~5min total). That's expected — they guard AI determinism + strength.
+      - run: npm test
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Cache the puppeteer-managed Chromium download, keyed on the resolved
+      # puppeteer version so a bump busts the cache.
+      - name: Resolve puppeteer version
+        id: pptr
+        run: echo "version=$(node -p "require('puppeteer/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/puppeteer
+          key: puppeteer-${{ runner.os }}-${{ steps.pptr.outputs.version }}
+      - name: Install Chromium for puppeteer
+        run: npx puppeteer browsers install chrome
+      - run: npm run test:e2e
+        env:
+          CI: 'true'
+
+  visual:
+    needs: e2e
+    runs-on: ubuntu-latest
+    # Screenshot goldens are host-sensitive; keep the pixel diff advisory so a
+    # rendering nudge on a different runner doesn't block the pipeline. The
+    # uploaded artifacts (actual + diff PNGs) let a human adjudicate.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Resolve puppeteer version
+        id: pptr
+        run: echo "version=$(node -p "require('puppeteer/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/puppeteer
+          key: puppeteer-${{ runner.os }}-${{ steps.pptr.outputs.version }}
+      - name: Install Chromium for puppeteer
+        run: npx puppeteer browsers install chrome
+      - name: Visual regression
+        run: RUN_VISUAL=1 npm run test:e2e -- visual
+        env:
+          CI: 'true'
+      - name: Upload visual diff artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-artifacts
+          path: e2e/artifacts/
+          if-no-files-found: ignore

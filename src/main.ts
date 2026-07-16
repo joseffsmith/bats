@@ -89,6 +89,13 @@ async function main(): Promise<void> {
   const canvas = setupCanvas();
   const mapName = resolveMapName(params.get('map'));
   const fogConfig = parseFogConfig();
+  // `?ambient=off` (or `=0`) freezes all continuous idle animation for byte-
+  // stable visual-regression screenshots. The renderer honours the flag for its
+  // own idle terms (unit bob, selection dash) and skips factory smoke; the
+  // `performance.now` freeze below additionally halts terrain.ts's *internal*
+  // time reads (water shimmer, tree sway), which the renderer can't reach.
+  const ambientRaw = (params.get('ambient') ?? 'on').toLowerCase();
+  const ambient = !(ambientRaw === 'off' || ambientRaw === '0');
   const baseState = loadMap(MAPS[mapName]);
   const initialState = fogConfig.on ? enableFogMemory(baseState) : baseState;
   const emitter = createEmitter(initialState);
@@ -100,6 +107,7 @@ async function main(): Promise<void> {
     terrain,
     fog: fogConfig,
     mapName,
+    ambient,
   });
   renderer.resize();
 
@@ -113,6 +121,14 @@ async function main(): Promise<void> {
     const origNow = performance.now.bind(performance);
     const t0 = origNow();
     performance.now = (): number => t0 + (origNow() - t0) / slowmo;
+  }
+  // Ambient off pins performance.now to a FIXED constant (not a load-time
+  // reading, which would differ run-to-run) so every terrain frame — water,
+  // trees — is identical across the golden-generate and golden-compare passes.
+  // Safe here because ambient=off is only used for static screenshots, where
+  // nothing is animating and no elapsed-time math needs to progress.
+  if (!ambient) {
+    performance.now = (): number => 1_000;
   }
   const animQueue = createAnimationQueue({
     onBusyChange: (busy) => {

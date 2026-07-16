@@ -1,6 +1,7 @@
 node_modules
 dist
 .vite
+e2e/artifacts/
 coverage/
 logs/*
 !logs/.gitkeep

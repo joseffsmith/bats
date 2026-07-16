@@ -18,9 +18,27 @@ import type { CanvasRenderer } from './canvas';
 import type { InputController, InputState } from './input';
 import type { AnimationQueue } from './animations';
 import type { AIDriver } from './ai-driver';
+import { actionMenuLayout, buildMenuLayout } from './hud';
 
 /** Rolling cap for the applied-action history buffer. */
 const HISTORY_CAP = 500;
+
+/**
+ * A clickable menu item rect in CSS pixels, with the entry's display label.
+ * The canvas menus (action / build) are drawn, not DOM, so an automated driver
+ * can't query them via selectors — it reads these rects and clicks the centre.
+ * Phase 2 converts menus to DOM and this shape collapses to a selector lookup;
+ * only `clickMenuEntry` in the e2e helpers needs to change.
+ */
+export type MenuRect = {
+  kind: 'action' | 'build';
+  /** Entry label — action verb ('Attack', 'Wait', …) or unit label ('Infantry'). */
+  label: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+};
 
 export type BatsDebug = {
   /** Bumped when the shape changes so drivers can assert compatibility. */
@@ -40,6 +58,13 @@ export type BatsDebug = {
   /** Tile CENTRE in CSS pixels — what a driver should click. */
   tileToScreen(c: Coord): { x: number; y: number };
   pixelToTile(x: number, y: number): Coord | null;
+  /**
+   * Item rects for the currently-open canvas menu (action or build), or null
+   * when no menu is open. Computed from the live input overlay via the same
+   * layout functions the renderer + hit-test use, so a click at an item's
+   * centre lands exactly where the human would click.
+   */
+  menuRects(): MenuRect[] | null;
   animBusy(): boolean;
   aiBusy(): boolean;
   /** True iff nothing is animating and no AI plan is being played out. */
@@ -107,6 +132,33 @@ export function installDebugHook(deps: DebugHookDeps): BatsDebug {
       return { x: p.x + half, y: p.y + half };
     },
     pixelToTile: (x, y) => renderer.pixelToTile(x, y),
+    menuRects: () => {
+      // Read the CURRENT overlay (input state machine + game state) and map the
+      // open menu's item rects into the stable MenuRect shape. Build menu wins
+      // over action menu, matching hud.hit's priority.
+      const overlay = input.getOverlay();
+      if (overlay.buildMenu) {
+        return buildMenuLayout(renderer, overlay.buildMenu).items.map((it) => ({
+          kind: 'build' as const,
+          label: it.entry.label,
+          x: it.x,
+          y: it.y,
+          w: it.w,
+          h: it.h,
+        }));
+      }
+      if (overlay.actionMenu) {
+        return actionMenuLayout(renderer, overlay.actionMenu).items.map((it) => ({
+          kind: 'action' as const,
+          label: it.entry.label,
+          x: it.x,
+          y: it.y,
+          w: it.w,
+          h: it.h,
+        }));
+      }
+      return null;
+    },
     animBusy,
     aiBusy,
     idle: () => !animBusy() && !aiBusy(),

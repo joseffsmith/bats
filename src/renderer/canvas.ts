@@ -58,6 +58,29 @@ const UNIT_LETTER: Record<UnitType, string> = {
   carrier: 'V',
 };
 
+// ─────────────────────────── Ambient (idle-animation) gate ───────────────────
+
+// Continuous, time-driven idle effects — the unit idle bob and the selection-
+// ring dash phase here, plus water shimmer / tree sway (terrain.ts) and factory
+// smoke (terrain-fx.ts) — make every rendered frame differ from the last, which
+// is fatal to byte-stable screenshot goldens. `?ambient=off` (main.ts) flips
+// this OFF for visual regression captures. Module-level rather than threaded
+// through every draw fn to keep the churn minimal; it's set once at boot from
+// `CanvasRendererDeps.ambient`. main.ts additionally freezes `performance.now`
+// so terrain.ts's *internal* time reads freeze too (we don't edit terrain.ts).
+let ambientEnabled = true;
+
+/** Enable/disable continuous idle animations. See `?ambient=off`. */
+export function setAmbientEnabled(on: boolean): void {
+  ambientEnabled = on;
+}
+
+/** Phase source for the idle terms: real time when ambient is on, a fixed
+ *  constant when off so bob/dash render identically every frame. */
+function ambientPhaseMs(): number {
+  return ambientEnabled ? performance.now() : 0;
+}
+
 // ─────────────────────────── View state ──────────────────────────────────────
 
 export type Overlay = {
@@ -125,6 +148,9 @@ export type CanvasRendererDeps = {
   mapName?: import('./maps').MapName;
   /** Optional sheet-loaded terrain cache. Falls back to procedural per-tile. */
   terrain?: TerrainCache;
+  /** Continuous idle animations (bob, dash, water, smoke). Defaults to true;
+   *  the `?ambient=off` visual-regression param passes false. */
+  ambient?: boolean;
 };
 
 export type CanvasRenderer = {
@@ -146,6 +172,9 @@ export function createCanvasRenderer(
 ): CanvasRenderer {
   let viewport: Viewport = computeViewport(canvas);
   const fog: FogConfig = deps.fog ?? { on: false, viewerOverride: null };
+  // Only flip the module gate when the caller explicitly opts out, so the many
+  // tests that construct a renderer without this dep keep the default (on).
+  if (deps.ambient === false) setAmbientEnabled(false);
 
   function computeViewport(c: HTMLCanvasElement): Viewport {
     const dpr = window.devicePixelRatio || 1;
@@ -230,7 +259,10 @@ export function createCanvasRenderer(
     drawTerrain(ctx, state, vp, deps.terrain);
     drawOverlays(ctx, vp, overlay);
     drawUnits(ctx, state, vp, anim, overlay, deps.sprites, fog.on ? viewer : null);
-    drawFactorySmoke(ctx, state, vp);
+    // Skip the continuous smoke pass entirely when ambient is off (visual
+    // goldens) — a frozen puff would still be deterministic, but omitting it
+    // keeps the reference image clean.
+    if (ambientEnabled) drawFactorySmoke(ctx, state, vp);
     if (fog.on) drawFogMask(ctx, state, vp, viewer);
     drawVignette(ctx, vp);
     drawColourGrade(ctx, vp, deps.mapName);
@@ -347,8 +379,9 @@ function drawOverlays(
     ctx.save();
     ctx.lineWidth = 2.5;
     ctx.strokeStyle = '#ffd84a';
-    // Dash pattern: 4 dashes per cycle, ~6deg/cycle phase per ms.
-    const phase = (performance.now() / 1000) * 30; // deg/s
+    // Dash pattern: 4 dashes per cycle, ~6deg/cycle phase per ms. Frozen when
+    // ambient is off so the ring doesn't rotate between golden captures.
+    const phase = (ambientPhaseMs() / 1000) * 30; // deg/s
     ctx.setLineDash([Math.max(6, ts * 0.18), Math.max(4, ts * 0.12)]);
     ctx.lineDashOffset = -phase;
     // Slightly inset rounded square — easier on the eye than a hard corner.
@@ -611,7 +644,9 @@ function drawUnit(
     // bob; mid-MOVE units don't either (handled above).
     if (!(unit.hasMoved && unit.hasActed)) {
       const hash = idleHash(unit.id);
-      const wobble = Math.sin(performance.now() / 600 + hash * Math.PI * 2);
+      // ambientPhaseMs() freezes this to a constant when ambient is off so the
+      // platoon holds still for byte-stable screenshots.
+      const wobble = Math.sin(ambientPhaseMs() / 600 + hash * Math.PI * 2);
       renderY += wobble * Math.max(0.7, ts * 0.025);
     }
   }

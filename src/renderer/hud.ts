@@ -139,7 +139,7 @@ type ActionMenuLayout = {
   rect: { x: number; y: number; w: number; h: number };
 };
 
-function actionMenuLayout(
+export function actionMenuLayout(
   renderer: CanvasRenderer,
   menu: NonNullable<Overlay['actionMenu']>,
 ): ActionMenuLayout {
@@ -198,7 +198,7 @@ type BuildMenuLayout = {
   rect: { x: number; y: number; w: number; h: number };
 };
 
-function buildMenuLayout(
+export function buildMenuLayout(
   renderer: CanvasRenderer,
   menu: NonNullable<Overlay['buildMenu']>,
 ): BuildMenuLayout {
@@ -326,5 +326,8 @@ function capitalise(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-// Expose the internal layout for tests (multi-column clamping regression).
-export const __test = { buildMenuLayout };
+// Expose the internal layouts for tests (multi-column clamping regression) and
+// for the `__bats.menuRects()` debug hook, which derives clickable item rects
+// from the live overlay. Both are also named exports above; `__test` is kept as
+// the existing test entry point.
+export const __test = { buildMenuLayout, actionMenuLayout };
