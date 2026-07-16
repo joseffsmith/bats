@@ -86,6 +86,14 @@ async function main(): Promise<void> {
     runEditor(document.getElementById('app') ?? document.body);
     return;
   }
+  // `?sheet=1` short-circuits into the sprite contact sheet — the art-review
+  // deliverable (see scripts/sprite-sheet.ts). Dependency-light on purpose: it
+  // only touches the sprite cache, no engine/input/AI wiring.
+  if (params.get('sheet') === '1') {
+    const { runSheet } = await import('./renderer/assets/pixel-art/sheet');
+    runSheet(document.getElementById('app') ?? document.body);
+    return;
+  }
   const canvas = setupCanvas();
   const mapName = resolveMapName(params.get('map'));
   const fogConfig = parseFogConfig();
@@ -99,8 +107,10 @@ async function main(): Promise<void> {
   const baseState = loadMap(MAPS[mapName]);
   const initialState = fogConfig.on ? enableFogMemory(baseState) : baseState;
   const emitter = createEmitter(initialState);
+  // Units are generated in-repo (createSpriteCache bakes the pixel-art grids);
+  // only terrain still needs the async PNG load.
   const assets = await loadAssets();
-  const sprites = createSpriteCache(assets.units);
+  const sprites = createSpriteCache();
   const terrain = createTerrainCache(assets.terrain);
   const renderer = createCanvasRenderer(canvas, {
     sprites,

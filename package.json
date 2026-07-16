@@ -17,6 +17,7 @@
     "tournament": "tsx src/cli/tournament.ts",
     "round-robin": "tsx src/cli/round-robin.ts",
     "shoot": "tsx scripts/shoot.ts",
+    "sprites": "tsx scripts/sprite-sheet.ts",
     "frame-budget": "tsx scripts/frame-budget.ts",
     "drive": "tsx scripts/drive.ts"
   },

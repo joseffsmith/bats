@@ -1,21 +1,20 @@
-// Async loader for unit sprite PNGs.
+// Async loader for terrain tile PNGs.
 //
-// Vite resolves `import.meta.glob` at build time, giving each PNG a hashed
-// URL the browser can fetch in parallel. The loader awaits all decodes and
-// returns a map keyed by `<type>-<player>-clean` so `createSpriteCache` can
-// drop the images straight into the existing SpriteCache layout.
+// Unit sprites are no longer loaded here — they're generated in-repo from the
+// hand-authored pixel-art grids (see ../sprites.ts + ./pixel-art/). This loader
+// now only decodes the terrain tiles, which stay PNG until Phase 3B. The raw
+// unit PNGs under ./raw/ are dead (kept on disk for Phase 3B's final deletion)
+// and intentionally not globbed.
+//
+// Vite resolves `import.meta.glob` at build time, giving each PNG a hashed URL
+// the browser can fetch in parallel. The loader awaits all decodes and returns
+// a map keyed by TerrainType so `createTerrainCache` can index it directly.
 //
 // Under JSDOM (tests) `Image` and `URL.createObjectURL` may be missing or
-// non-functional; the loader detects that and resolves to an empty map so
-// `createSpriteCache` falls back to its 1×1 stub hosts.
+// non-functional; the loader detects that and resolves to an empty map so the
+// terrain cache falls back to procedural tiles.
 
-import type { PlayerId, TerrainType, UnitType } from '../../engine/core/types';
-
-const UNIT_PNG_URLS = import.meta.glob<string>('./raw/*-p[01].png', {
-  query: '?url',
-  import: 'default',
-  eager: false,
-});
+import type { TerrainType } from '../../engine/core/types';
 
 const TERRAIN_PNG_URLS = import.meta.glob<string>('./terrain-raw/*.png', {
   query: '?url',
@@ -23,20 +22,11 @@ const TERRAIN_PNG_URLS = import.meta.glob<string>('./terrain-raw/*.png', {
   eager: false,
 });
 
-export type UnitSpriteKey = `${UnitType}-${PlayerId}-clean`;
-export type UnitSpriteImages = Map<UnitSpriteKey, CanvasImageSource>;
 export type TerrainImages = Map<TerrainType, CanvasImageSource>;
 
 export type LoadedAssets = {
-  units: UnitSpriteImages;
   terrain: TerrainImages;
 };
-
-function parseUnitKey(path: string): UnitSpriteKey | null {
-  const m = path.match(/\/([a-z]+)-p([01])\.png$/);
-  if (!m) return null;
-  return `${m[1] as UnitType}-${Number(m[2]) as PlayerId}-clean`;
-}
 
 function parseTerrainKey(path: string): TerrainType | null {
   const m = path.match(/\/([a-z]+)\.png$/);
@@ -77,9 +67,6 @@ async function loadGlob<K>(
 }
 
 export async function loadAssets(): Promise<LoadedAssets> {
-  const [units, terrain] = await Promise.all([
-    loadGlob(UNIT_PNG_URLS, parseUnitKey),
-    loadGlob(TERRAIN_PNG_URLS, parseTerrainKey),
-  ]);
-  return { units, terrain };
+  const terrain = await loadGlob(TERRAIN_PNG_URLS, parseTerrainKey);
+  return { terrain };
 }
