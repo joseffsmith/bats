@@ -16,7 +16,7 @@ export const cruiser: PixelGrid = [
   '.KCBBBBBBBBBBBCK',
   '.KAAABBBBBBBAAK.',
   '..KKKKKKKKKKKK..',
-  '...QQ..QQ...QQ..',
+  '.QQQ.QQQ.QQQ.QQ.',
   '................',
   '................',
   '................',

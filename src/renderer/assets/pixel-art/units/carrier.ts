@@ -17,7 +17,7 @@ export const carrier: PixelGrid = [
   'KBBBBBBBBBBBBBBK',
   'KAAAAAAAAAAAAAAK',
   '.KKKKKKKKKKKKKK.',
-  '...QQ...QQ..QQ..',
+  '.QQQ.QQQ.QQQ.QQ.',
   '................',
   '................',
   '................',

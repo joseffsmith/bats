@@ -1,23 +1,25 @@
-// Attack copter — a fat team-colour body slung under a long horizontal main
-// rotor, teal canopy at the nose (right), a short tail rotor on the left joined
-// to the body by a stubby boom, landing skids beneath. The rotor bar spanning
-// the top is the instant "this flies + spins" read. Light top-left: body crown
-// (D/C), belly shadow (A).
+// Attack copter — a SLIM gunship, read against the boxy transport: a compact
+// team-colour body under the main rotor bar, a thin tail BOOM reaching left to a
+// small vertical tail rotor, a teal canopy at the nose, and a gunmetal chin gun
+// stub jutting down-forward (the "this shoots" tell). Skids beneath. The boom is
+// 2px (lit team top, outline underside) so the left half of the silhouette stays
+// narrow and pointy — nothing like the transport's slab. Light top-left: body
+// crown (D/C), belly shadow (A).
 
 import type { PixelGrid } from '../types';
 
 export const copter: PixelGrid = [
   '................',
   '....RRRRRRRRR...',
-  '........KK......',
-  '.......KKKKKK...',
-  '......KDCCBBLK..',
-  '..RKKABBBBBBLK..',
-  '.RRKABBBBBBBLK..',
-  '..RKKKBBBBBKK...',
-  '......KKBBKK....',
-  '......K...K.....',
-  '.....KKKKKKK....',
+  '.........KK.....',
+  '........KKKKK...',
+  '.R.....KDCCBLK..',
+  '.RCBBBBBBBBBBLK.',
+  '.RKKKKKKKABBBKE.',
+  '........KKBBKEE.',
+  '.......K...K....',
+  '......KKKKKKK...',
+  '................',
   '................',
   '................',
   '................',

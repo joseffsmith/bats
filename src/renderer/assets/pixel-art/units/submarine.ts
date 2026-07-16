@@ -18,7 +18,7 @@ export const submarine: PixelGrid = [
   '.KABBBBBBBBBBAK.',
   '..KKAAAAAAAAKK..',
   '....KKKKKKKK....',
-  '................',
+  '...QQQ.QQQ.QQ...',
   '................',
   '................',
   '................',

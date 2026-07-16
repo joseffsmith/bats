@@ -1,7 +1,9 @@
-// Transport copter — a boxy cargo chopper: taller, more rectangular team-colour
-// cabin than the attack copter, a vertical tail rotor standing on the left, main
-// rotor across the top, small teal cockpit glass at the nose. Boxiness + the
-// upright tail rotor separate it from the sleeker attack copter at a glance.
+// Transport copter — a boxy troop ferry, read against the slim gunship: a tall,
+// distinctly rectangular team-colour cabin (no tapering, no nose gun), a recessed
+// side DOOR panel on the flank, an upright tail rotor mounted straight onto the
+// boxy tail (no thin boom), main rotor across the top, teal cockpit glass at the
+// nose, twin skids. The solid slab body is the silhouette that keeps it from
+// being mistaken for the copter. Light top-left: roof (D/C), belly shadow (A).
 
 import type { PixelGrid } from '../types';
 
@@ -11,14 +13,14 @@ export const transport: PixelGrid = [
   '.........K......',
   '......KKKKKKKK..',
   '.....KDCCBBBBLK.',
-  '..RKKABBBBBBBLK.',
-  '..RKABBBBBBBBLK.',
-  '..RKKABBBBBBBBK.',
+  '..RKKABBKAAKBLK.',
+  '..RKABBBKAAKBLK.',
+  '..RKABBBKAAKBBK.',
+  '..RKKBBBBBBBBK..',
   '......KBBBBBBK..',
   '......KKKKKKKK..',
   '.......K...K....',
   '.....KKKKKKKKK..',
-  '................',
   '................',
   '................',
   '................',

@@ -17,7 +17,7 @@ export const battleship: PixelGrid = [
   'KAABBBBBBBBBBAAK',
   '.KAAAAAAAAAAAAK.',
   '..KKKKKKKKKKKKK.',
-  '...QQ...QQ..QQ..',
+  '.QQQ.QQQ.QQQ.QQ.',
   '................',
   '................',
   '................',

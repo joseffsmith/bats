@@ -27,8 +27,13 @@ export const PLAYER_COLOURS: Record<PlayerId, PlayerPalette> = {
     ramp: ['#6e1616', '#c83030', '#e05a4a', '#f2937f'],
   },
   1: {
-    fill: '#2860c0', // cobalt base (unchanged)
+    fill: '#2860c0', // cobalt base (unchanged — HUD/fallback squares use this)
     letter: '#e6ecff', // pale blue letter (fallback square)
-    ramp: ['#14306e', '#2860c0', '#4a86e0', '#8fb4f2'],
+    // Base + light pushed brighter and more saturated than the HUD `fill` so
+    // cobalt hulls separate from the sea blues in-game (the darker #2860c0 read
+    // as camouflage on water). Only the sprite ramp shifts; `fill` stays put so
+    // the HUD/chrome pairing is unchanged. Brighter blue on green only *helps*
+    // land units, so nothing regresses there.
+    ramp: ['#14306e', '#2f78e6', '#5fa0f5', '#a6cbfb'],
   },
 };
