@@ -38,6 +38,7 @@ import type {
   GameState,
   PlayerId,
   Unit,
+  UnitType,
 } from '../engine/core/types';
 import { coordEq, inBounds, isCapturable, tileAt, unitAt } from '../engine/core/types';
 import { TERRAIN, UNITS } from '../engine/data';
@@ -52,7 +53,7 @@ import type { CanvasRenderer, Overlay } from './canvas';
 import type { Emitter } from './emitter';
 import type { AnimationQueue } from './animations';
 import { enqueueAttackEffects } from './attack-effects';
-import { buildMenuEntries, createHud } from './hud';
+import { buildMenuEntries } from './hud';
 import type { ActionMenuEntry, BuildMenuEntry } from './canvas';
 
 export type InputState =
@@ -110,21 +111,38 @@ export type InputController = {
   cancel(): void;
   /** Programmatic transition for tests. */
   selectUnit(unit: Unit): void;
+  /**
+   * Choose an action-menu entry by label. The menus are DOM now (menus.ts) so
+   * the branch logic that used to live in `onHudClick` moved here — the DOM
+   * button calls this directly. Ignored unless we're in `action-menu` state and
+   * the entry exists + is enabled.
+   */
+  chooseAction(label: ActionMenuEntry['label']): void;
+  /**
+   * Choose a build-menu entry by unit type. Ignored unless we're in
+   * `build-menu-open` state and the entry exists + is affordable.
+   */
+  chooseBuild(unitType: UnitType): void;
 };
 
 export function createInputController(
   renderer: CanvasRenderer,
   emitter: Emitter,
   animQueue: AnimationQueue,
-  opts?: { endTurnAllowed?: () => boolean },
+  opts?: { endTurnAllowed?: () => boolean; coarsePointer?: boolean },
 ): InputController {
   let inputState: InputState = { kind: 'idle' };
-  const hud = createHud(renderer);
   // Gate for the Enter-to-end-turn keybind. Defaults to always-allowed so
   // existing call sites (and tests) that omit it keep the old behaviour;
   // main.ts passes a predicate that refuses while an AI turn is in progress or
   // animations are mid-flight, so a stray Enter can't steal the AI's turn.
   const endTurnAllowed = opts?.endTurnAllowed ?? ((): boolean => true);
+  // Coarse-pointer (touch) mode toggles the two-tap attack confirm: the first
+  // tap on an enemy previews the damage, a second tap on the SAME enemy commits.
+  // Detected once at construction so mid-session it never flips under us; tests
+  // inject it directly. Guarded for jsdom, where matchMedia may be absent.
+  const coarsePointer =
+    opts?.coarsePointer ?? (window.matchMedia?.('(pointer: coarse)').matches ?? false);
 
   function logTransition(from: string, to: string, extra?: Record<string, unknown>): void {
     log('render', 'state transition', { from, to, ...extra });
@@ -207,6 +225,11 @@ export function createInputController(
     inputState = next;
     logTransition(from, next.kind);
     emitter.emit({ type: 'stateChanged', state: emitter.getState(), action: null });
+    // Node-only signal for chrome (Cancel chip) — carries just the kind string
+    // so the cancel affordance can show/hide without recomputing the overlay.
+    // All `kind` changes route through here (hover mutations keep the kind), so
+    // this is the single source of truth for "the input node changed".
+    emitter.emit({ type: 'inputStateChanged', kind: next.kind });
   }
 
   function cancel(): void {
@@ -246,6 +269,12 @@ export function createInputController(
   }
 
   function handleHover(x: number, y: number): void {
+    // On touch there is no true hover: a tap synthesizes a mousemove to the tap
+    // point, which would pre-set `hover` to the target and defeat the two-tap
+    // confirm (the following click would see hover===target and commit). So on
+    // coarse pointers hover is driven ONLY by the explicit two-tap tile-click
+    // logic, never by (synthesized) mouse motion.
+    if (coarsePointer) return;
     if (inputState.kind !== 'attack-targeting') return;
     const tile = renderer.pixelToTile(x, y);
     if (!tile) {
@@ -274,13 +303,11 @@ export function createInputController(
     const state = emitter.getState();
     if (state.winner !== null) return;
 
-    // HUD has priority.
-    const hudHit = hud.hit(x, y, state, getOverlay());
-    if (hudHit) {
-      onHudClick(hudHit);
-      return;
-    }
-
+    // Menus are DOM overlays sitting ABOVE the canvas (menus.ts), so a click on
+    // a menu entry is swallowed there and never reaches this canvas handler —
+    // the entry's own listener calls chooseAction/chooseBuild. A click that DOES
+    // reach here landed on the board, so it's a tile click (which, in a menu
+    // state, cancels — see onTileClick).
     const tile = renderer.pixelToTile(x, y);
     if (!tile) {
       cancel();
@@ -298,61 +325,64 @@ export function createInputController(
     onTileClick(tile);
   }
 
-  function onHudClick(target: ReturnType<typeof hud.hit> & object): void {
-    if (target.kind === 'action-menu' && inputState.kind === 'action-menu') {
-      const entry = target.entry;
-      if (!entry.enabled) return;
-      const unit = inputState.unit;
-      if (entry.label === 'Attack') {
-        const targets = attackableTargets(emitter.getState(), unit);
-        setState(
-          { kind: 'attack-targeting', unit, targets, hover: null },
-          'action-menu',
-        );
-      } else if (entry.label === 'Capture') {
-        commit({ type: 'CAPTURE', unitId: unit.id });
-        setState({ kind: 'idle' }, 'action-menu');
-      } else if (entry.label === 'Wait') {
-        commit({ type: 'WAIT', unitId: unit.id });
-        setState({ kind: 'idle' }, 'action-menu');
-      } else if (entry.label === 'Unload') {
-        // Transport with cargo. For v1 we only support cargoCapacity=1, so
-        // there is at most one cargo unit and the picker just chooses an
-        // adjacent destination tile. The cargo to UNLOAD is the first in
-        // the manifest.
-        const state = emitter.getState();
-        const carrier = state.units[unit.id];
-        const cargoId = carrier?.cargo?.[0];
-        if (!carrier || !cargoId) return;
-        const cargo = state.units[cargoId];
-        if (!cargo) return;
-        const destinations = adjacentUnloadDestinations(state, carrier, cargo);
-        if (destinations.length === 0) return;
-        setState(
-          { kind: 'unload-targeting', transport: carrier, cargo, destinations },
-          'action-menu',
-        );
-      } else if (entry.label === 'Dive') {
-        commit({ type: 'DIVE', unitId: unit.id });
-        setState({ kind: 'idle' }, 'action-menu');
-      } else if (entry.label === 'Surface') {
-        commit({ type: 'SURFACE', unitId: unit.id });
-        setState({ kind: 'idle' }, 'action-menu');
-      }
-      return;
-    }
-    if (target.kind === 'build-menu' && inputState.kind === 'build-menu-open') {
-      const entry = target.entry;
-      if (!entry.affordable) return;
+  function chooseAction(label: ActionMenuEntry['label']): void {
+    // Validate against the CURRENT action-menu state: ignore stray calls when no
+    // menu is open, or for a label that isn't offered / is disabled.
+    if (inputState.kind !== 'action-menu') return;
+    const entry = inputState.entries.find((e) => e.label === label);
+    if (!entry || !entry.enabled) return;
+    const unit = inputState.unit;
+    if (label === 'Attack') {
+      const targets = attackableTargets(emitter.getState(), unit);
+      setState(
+        { kind: 'attack-targeting', unit, targets, hover: null },
+        'action-menu',
+      );
+    } else if (label === 'Capture') {
+      commit({ type: 'CAPTURE', unitId: unit.id });
+      setState({ kind: 'idle' }, 'action-menu');
+    } else if (label === 'Wait') {
+      commit({ type: 'WAIT', unitId: unit.id });
+      setState({ kind: 'idle' }, 'action-menu');
+    } else if (label === 'Unload') {
+      // Transport with cargo. For v1 we only support cargoCapacity=1, so
+      // there is at most one cargo unit and the picker just chooses an
+      // adjacent destination tile. The cargo to UNLOAD is the first in
+      // the manifest.
       const state = emitter.getState();
-      commit({
-        type: 'BUILD',
-        at: inputState.tile,
-        unitType: entry.unitType,
-        owner: state.currentPlayer,
-      });
-      setState({ kind: 'idle' }, 'build-menu-open');
+      const carrier = state.units[unit.id];
+      const cargoId = carrier?.cargo?.[0];
+      if (!carrier || !cargoId) return;
+      const cargo = state.units[cargoId];
+      if (!cargo) return;
+      const destinations = adjacentUnloadDestinations(state, carrier, cargo);
+      if (destinations.length === 0) return;
+      setState(
+        { kind: 'unload-targeting', transport: carrier, cargo, destinations },
+        'action-menu',
+      );
+    } else if (label === 'Dive') {
+      commit({ type: 'DIVE', unitId: unit.id });
+      setState({ kind: 'idle' }, 'action-menu');
+    } else if (label === 'Surface') {
+      commit({ type: 'SURFACE', unitId: unit.id });
+      setState({ kind: 'idle' }, 'action-menu');
     }
+  }
+
+  function chooseBuild(unitType: UnitType): void {
+    // Validate against the CURRENT build-menu state + affordability.
+    if (inputState.kind !== 'build-menu-open') return;
+    const entry = inputState.entries.find((e) => e.unitType === unitType);
+    if (!entry || !entry.affordable) return;
+    const state = emitter.getState();
+    commit({
+      type: 'BUILD',
+      at: inputState.tile,
+      unitType,
+      owner: state.currentPlayer,
+    });
+    setState({ kind: 'idle' }, 'build-menu-open');
   }
 
   function onTileClick(tile: Coord): void {
@@ -474,6 +504,17 @@ export function createInputController(
           cancel();
           return;
         }
+        // Two-tap confirm on touch: the first tap on an enemy (or a tap that
+        // switches to a different enemy) sets it as the hover target, which
+        // renders the existing damage-preview overlay; a second tap on the SAME
+        // enemy commits. Mouse (fine pointer) commits on the first click — the
+        // hover tooltip was already visible under the cursor. This is the
+        // touch-friendly guard against a mis-tap immediately dealing damage.
+        if (coarsePointer && inputState.hover?.id !== enemy.id) {
+          inputState = { ...inputState, hover: enemy };
+          emitter.emit({ type: 'stateChanged', state: emitter.getState(), action: null });
+          return;
+        }
         commit({ type: 'ATTACK', attackerId: inputState.unit.id, targetId: enemy.id });
         setState({ kind: 'idle' }, 'attack-targeting');
         return;
@@ -565,6 +606,8 @@ export function createInputController(
     hover: handleHover,
     cancel,
     selectUnit,
+    chooseAction,
+    chooseBuild,
   };
 }
 

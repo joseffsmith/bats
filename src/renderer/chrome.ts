@@ -48,6 +48,9 @@ export type ChromeDeps = {
   /** Reports the measured chrome insets (top header / bottom footer heights,
    *  each plus INSET_GAP) whenever they change. Fires once on mount. */
   onInsetsChange?: (top: number, bottom: number) => void;
+  /** Called when the floating Cancel chip is tapped. main.ts wires it to
+   *  input.cancel. Optional so chrome tests (which omit it) keep working. */
+  onCancel?: () => void;
 };
 
 export function createChrome(deps: ChromeDeps): Chrome {
@@ -94,6 +97,13 @@ export function createChrome(deps: ChromeDeps): Chrome {
   const winner = createWinnerOverlay();
   root.appendChild(winner.root);
 
+  // Floating Cancel chip — a discoverable "escape hatch" out of any non-idle
+  // input node (tile/menu/target picker). Shows on both pointer types (desktop
+  // gains a click-equivalent for Esc); hidden in idle. Driven off the input
+  // controller's `inputStateChanged` node signal, not the game state.
+  const cancelChip = createCancelChip(() => deps.onCancel?.());
+  root.appendChild(cancelChip.root);
+
   deps.parent.appendChild(root);
 
   // ── State refresh ─────────────────────────────────────────────────────────
@@ -107,6 +117,7 @@ export function createChrome(deps: ChromeDeps): Chrome {
 
   const unsub = deps.emitter.on((ev) => {
     if (ev.type === 'stateChanged') refresh(ev.state);
+    else if (ev.type === 'inputStateChanged') cancelChip.setKind(ev.kind);
   });
 
   refresh(deps.emitter.getState());
@@ -615,6 +626,30 @@ function createWinnerOverlay(): WinnerOverlay {
   return { root, update };
 }
 
+// ─────────────────────────── Cancel chip ─────────────────────────────────────
+
+type CancelChip = {
+  root: HTMLElement;
+  /** Show for any non-idle input node; hide in idle. */
+  setKind(kind: string): void;
+};
+
+function createCancelChip(onCancel: () => void): CancelChip {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'cancel-chip';
+  btn.dataset.action = 'cancel';
+  btn.innerHTML = 'Cancel <span class="kbd-esc">esc</span>';
+  btn.hidden = true; // idle at mount
+  btn.addEventListener('click', () => onCancel());
+  return {
+    root: btn,
+    setKind(kind: string): void {
+      btn.hidden = kind === 'idle';
+    },
+  };
+}
+
 // ─────────────────────────── Replay modal ────────────────────────────────────
 
 function openReplayModal(deps: ToolshelfDeps): void {
@@ -1002,8 +1037,11 @@ function ensureStyle(): void {
   pointer-events: auto;
 }
 /* The mobile disclosure toggle is desktop-invisible; the media query reveals it
-   and makes the collapsed state hide the individual tools. Desktop ignores both. */
-.tools-disclosure { display: none; }
+   and makes the collapsed state hide the individual tools. Desktop ignores both.
+   Selector carries a .toolshelf ancestor so it out-specifies the .tool base rule
+   below (both are single-class otherwise, and .tool — appearing later — would
+   otherwise win the tie and leak the button onto desktop). */
+.toolshelf .tools-disclosure { display: none; }
 .tool {
   background: var(--panel);
   border: 1px solid var(--rule);
@@ -1327,6 +1365,48 @@ function ensureStyle(): void {
   justify-content: center;
 }
 
+/* ── Cancel chip ──────────────────────────────────────────────────────────────
+   Floating escape hatch, bottom-centre, clearing the bottom chrome bar. Shows
+   for any non-idle input node (toggled via [hidden]); ≥44px tap target. */
+.cancel-chip {
+  position: fixed;
+  left: 50%;
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 18px;
+  background: var(--panel);
+  border: 1px solid var(--gold-dim);
+  color: var(--ink);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 12px 30px -12px rgba(0,0,0,0.75);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.cancel-chip[hidden] { display: none; }
+.cancel-chip:hover { border-color: var(--gold); background: var(--panel-2); }
+.cancel-chip .kbd-esc {
+  font-size: 10px;
+  background: rgba(0,0,0,0.28);
+  padding: 2px 6px;
+  border-radius: 2px;
+  letter-spacing: 0.04em;
+  color: var(--ink-dim);
+}
+/* On touch the Esc hint is meaningless — drop it, and lift the chip clear of
+   the taller touch action bar / bottom sheet. */
+@media (pointer: coarse) {
+  .cancel-chip .kbd-esc { display: none; }
+}
+
 /* ── Responsive: phones / narrow windows ──────────────────────────────────────
    The repo's first @media query. Pre-fix at 390px the top grid's 1fr player
    panels starved (funds clipped by overflow:hidden), the toolshelf overflowed
@@ -1379,7 +1459,8 @@ function ensureStyle(): void {
     gap: 4px;
     min-width: 0;
   }
-  .tools-disclosure { display: inline-flex; }
+  /* Match the base rule's specificity so this reveal wins inside the query. */
+  .toolshelf .tools-disclosure { display: inline-flex; }
   /* Collapsed (the mobile default): hide every tool but the disclosure toggle. */
   .toolshelf.collapsed .tool:not(.tools-disclosure),
   .toolshelf.collapsed .divider { display: none; }

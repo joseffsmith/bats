@@ -55,7 +55,7 @@ function makeCtxStub(): CanvasRenderingContext2D {
   return stub as unknown as CanvasRenderingContext2D;
 }
 
-function mount(state: GameState) {
+function mount(state: GameState, opts?: { coarsePointer?: boolean }) {
   document.body.innerHTML = '<div id="app"></div>';
   const canvas = document.createElement('canvas');
   document.getElementById('app')!.appendChild(canvas);
@@ -65,8 +65,19 @@ function mount(state: GameState) {
   const renderer = createCanvasRenderer(canvas);
   renderer.resize();
   const animQueue = createAnimationQueue({ now: () => 0 });
-  const input = createInputController(renderer, emitter, animQueue);
+  const input = createInputController(renderer, emitter, animQueue, opts);
   return { canvas, emitter, renderer, input, animQueue };
+}
+
+/** Click a tile's centre through the input controller. */
+function clickTileCentre(
+  input: ReturnType<typeof mount>['input'],
+  renderer: ReturnType<typeof mount>['renderer'],
+  tile: { x: number; y: number },
+): void {
+  const ts = renderer.getViewport().tileSize;
+  const px = renderer.tileToPixel(tile);
+  input.click(px.x + ts / 2, px.y + ts / 2);
 }
 
 describe('input state machine: re-click own selected unit (action-without-move fix)', () => {
@@ -321,14 +332,174 @@ describe('action menu opened via re-click executes Capture without a prior MOVE'
     const capture = ms.entries.find((e) => e.label === 'Capture');
     expect(capture).toBeDefined();
     expect(capture!.enabled).toBe(true);
-    // Click the Capture entry by computing its rect via the HUD click path.
-    // The action menu in the overlay is rendered relative to the anchor tile;
-    // synthetic click on the entry's actual pixel rect would require pulling
-    // it from hud.hit(). Easier route: dispatch directly through the public
-    // emitter, then verify state. (The state-machine transition was already
-    // proven above; we test the engine effect here.)
-    emitter.dispatch({ type: 'CAPTURE', unitId: unit.id });
+    // The DOM menu button calls input.chooseAction directly (menus.ts) — drive
+    // that path here rather than the old canvas hit-test.
+    input.chooseAction('Capture');
     expect(emitter.getState().units[unit.id]!.captureProgress).toBe(10);
     expect(emitter.getState().units[unit.id]!.hasActed).toBe(true);
+    // Committing CAPTURE returns the state machine to idle.
+    expect(input.getState().kind).toBe('idle');
+  });
+});
+
+describe('chooseAction / chooseBuild (DOM menu entry callbacks)', () => {
+  it('chooseAction("Attack") transitions action-menu → attack-targeting', () => {
+    const state = makeState({
+      width: 5,
+      height: 1,
+      defaultTerrain: 'plain',
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 4, y: 0 } },
+      ],
+      units: [
+        { type: 'infantry', owner: 0, pos: { x: 2, y: 0 } },
+        { type: 'infantry', owner: 1, pos: { x: 3, y: 0 } },
+      ],
+    });
+    const { input, renderer, emitter } = mount(state);
+    const unit = Object.values(emitter.getState().units).find((u) => u.owner === 0)!;
+    const ts = renderer.getViewport().tileSize;
+    const px = renderer.tileToPixel(unit.pos);
+    input.click(px.x + ts / 2, px.y + ts / 2); // select
+    input.click(px.x + ts / 2, px.y + ts / 2); // open action menu in place
+    expect(input.getState().kind).toBe('action-menu');
+    input.chooseAction('Attack');
+    const after = input.getState();
+    expect(after.kind).toBe('attack-targeting');
+    if (after.kind === 'attack-targeting') {
+      expect(after.targets.some((t) => t.owner === 1)).toBe(true);
+    }
+  });
+
+  it('chooseAction ignores a call when not in action-menu state', () => {
+    const state = makeState({
+      width: 5,
+      height: 1,
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 4, y: 0 } },
+      ],
+      units: [{ type: 'infantry', owner: 0, pos: { x: 2, y: 0 } }],
+    });
+    const { input } = mount(state);
+    expect(input.getState().kind).toBe('idle');
+    input.chooseAction('Wait'); // no-op — no menu open
+    expect(input.getState().kind).toBe('idle');
+  });
+
+  it('chooseBuild commits a BUILD for an affordable entry and returns to idle', () => {
+    const state = makeState({
+      width: 5,
+      height: 1,
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 4, y: 0 } },
+      ],
+      tiles: [{ pos: { x: 2, y: 0 }, terrain: 'factory', owner: 0 }],
+      units: [],
+    });
+    // Ensure P0 can afford infantry.
+    state.players[0].funds = 99999;
+    const { input, renderer, emitter } = mount(state);
+    const ts = renderer.getViewport().tileSize;
+    const px = renderer.tileToPixel({ x: 2, y: 0 });
+    input.click(px.x + ts / 2, px.y + ts / 2); // open build menu
+    expect(input.getState().kind).toBe('build-menu-open');
+    input.chooseBuild('infantry');
+    expect(input.getState().kind).toBe('idle');
+    const built = Object.values(emitter.getState().units).find(
+      (u) => u.owner === 0 && u.pos.x === 2 && u.pos.y === 0,
+    );
+    expect(built?.type).toBe('infantry');
+  });
+});
+
+describe('two-tap attack confirm on coarse (touch) pointers', () => {
+  // Attacker at (2,0) with an enemy on each side — (1,0) and (3,0) — so both are
+  // in melee range and the target picker has two options to switch between.
+  function twoEnemyState(): GameState {
+    return makeState({
+      width: 5,
+      height: 1,
+      defaultTerrain: 'plain',
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 4, y: 0 } },
+      ],
+      units: [
+        { type: 'infantry', owner: 0, pos: { x: 2, y: 0 } },
+        { type: 'infantry', owner: 1, pos: { x: 1, y: 0 } },
+        { type: 'infantry', owner: 1, pos: { x: 3, y: 0 } },
+      ],
+    });
+  }
+
+  function intoAttackTargeting(coarse: boolean) {
+    const state = twoEnemyState();
+    const h = mount(state, { coarsePointer: coarse });
+    clickTileCentre(h.input, h.renderer, { x: 2, y: 0 }); // select attacker
+    clickTileCentre(h.input, h.renderer, { x: 2, y: 0 }); // open action menu in place
+    expect(h.input.getState().kind).toBe('action-menu');
+    h.input.chooseAction('Attack');
+    expect(h.input.getState().kind).toBe('attack-targeting');
+    return h;
+  }
+
+  it('first tap previews (hover set), second tap on the SAME enemy commits', () => {
+    const h = intoAttackTargeting(true);
+    const enemyBefore = Object.values(h.emitter.getState().units).find(
+      (u) => u.owner === 1 && u.pos.x === 3,
+    )!;
+
+    // First tap: no ATTACK yet, still targeting, hover points at the enemy.
+    clickTileCentre(h.input, h.renderer, { x: 3, y: 0 });
+    const mid = h.input.getState();
+    expect(mid.kind).toBe('attack-targeting');
+    if (mid.kind === 'attack-targeting') {
+      expect(mid.hover?.id).toBe(enemyBefore.id);
+    }
+    expect(h.emitter.getState().units[enemyBefore.id]!.hp).toBe(100);
+
+    // Second tap on the SAME enemy: commits, HP drops, back to idle.
+    clickTileCentre(h.input, h.renderer, { x: 3, y: 0 });
+    expect(h.input.getState().kind).toBe('idle');
+    expect(h.emitter.getState().units[enemyBefore.id]!.hp).toBeLessThan(100);
+  });
+
+  it('tapping a different enemy switches the preview without committing', () => {
+    const h = intoAttackTargeting(true);
+    const right = Object.values(h.emitter.getState().units).find(
+      (u) => u.owner === 1 && u.pos.x === 3,
+    )!;
+    const left = Object.values(h.emitter.getState().units).find(
+      (u) => u.owner === 1 && u.pos.x === 1,
+    )!;
+
+    clickTileCentre(h.input, h.renderer, { x: 3, y: 0 }); // preview right
+    let s = h.input.getState();
+    expect(s.kind === 'attack-targeting' && s.hover?.id).toBe(right.id);
+
+    clickTileCentre(h.input, h.renderer, { x: 1, y: 0 }); // switch to left — no commit
+    s = h.input.getState();
+    expect(s.kind).toBe('attack-targeting');
+    if (s.kind === 'attack-targeting') expect(s.hover?.id).toBe(left.id);
+    // Neither enemy took damage across the switch.
+    expect(h.emitter.getState().units[right.id]!.hp).toBe(100);
+    expect(h.emitter.getState().units[left.id]!.hp).toBe(100);
+
+    clickTileCentre(h.input, h.renderer, { x: 1, y: 0 }); // second tap on left commits
+    expect(h.input.getState().kind).toBe('idle');
+    expect(h.emitter.getState().units[left.id]!.hp).toBeLessThan(100);
+  });
+
+  it('fine pointer (mouse) commits on the FIRST click — unchanged behaviour', () => {
+    const h = intoAttackTargeting(false);
+    const right = Object.values(h.emitter.getState().units).find(
+      (u) => u.owner === 1 && u.pos.x === 3,
+    )!;
+    clickTileCentre(h.input, h.renderer, { x: 3, y: 0 }); // one click commits
+    expect(h.input.getState().kind).toBe('idle');
+    expect(h.emitter.getState().units[right.id]!.hp).toBeLessThan(100);
   });
 });

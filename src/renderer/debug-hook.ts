@@ -18,21 +18,20 @@ import type { CanvasRenderer } from './canvas';
 import type { InputController, InputState } from './input';
 import type { AnimationQueue } from './animations';
 import type { AIDriver } from './ai-driver';
-import { actionMenuLayout, buildMenuLayout } from './hud';
 
 /** Rolling cap for the applied-action history buffer. */
 const HISTORY_CAP = 500;
 
 /**
- * A clickable menu item rect in CSS pixels, with the entry's display label.
- * The canvas menus (action / build) are drawn, not DOM, so an automated driver
- * can't query them via selectors — it reads these rects and clicks the centre.
- * Phase 2 converts menus to DOM and this shape collapses to a selector lookup;
- * only `clickMenuEntry` in the e2e helpers needs to change.
+ * A clickable menu item rect in CSS pixels, with the entry's data-attr label.
+ * The menus are DOM now (menus.ts), so this is a thin query over the mounted
+ * `[data-menu-entry]` / `[data-build-entry]` buttons — the e2e helpers click the
+ * selectors directly and only the `drive` REPL's `menu` command still reads this
+ * shape. `label` is the data-attr value: an action verb ('Attack', 'Wait', …)
+ * for action entries, or the unit type ('infantry', …) for build entries.
  */
 export type MenuRect = {
   kind: 'action' | 'build';
-  /** Entry label — action verb ('Attack', 'Wait', …) or unit label ('Infantry'). */
   label: string;
   x: number;
   y: number;
@@ -59,10 +58,9 @@ export type BatsDebug = {
   tileToScreen(c: Coord): { x: number; y: number };
   pixelToTile(x: number, y: number): Coord | null;
   /**
-   * Item rects for the currently-open canvas menu (action or build), or null
-   * when no menu is open. Computed from the live input overlay via the same
-   * layout functions the renderer + hit-test use, so a click at an item's
-   * centre lands exactly where the human would click.
+   * Item rects for the currently-open DOM menu (action or build), or null when
+   * no menu is open. Read from the mounted menu buttons' bounding rects, so a
+   * click at an item's centre lands exactly where the human would tap.
    */
   menuRects(): MenuRect[] | null;
   animBusy(): boolean;
@@ -77,6 +75,16 @@ declare global {
   interface Window {
     __bats?: BatsDebug;
   }
+}
+
+/** Map a mounted menu button to the stable MenuRect shape via its bounding box. */
+function rectFor(
+  el: HTMLElement,
+  kind: MenuRect['kind'],
+  label: string,
+): MenuRect {
+  const r = el.getBoundingClientRect();
+  return { kind, label, x: r.x, y: r.y, w: r.width, h: r.height };
 }
 
 export type DebugHookDeps = {
@@ -133,29 +141,20 @@ export function installDebugHook(deps: DebugHookDeps): BatsDebug {
     },
     pixelToTile: (x, y) => renderer.pixelToTile(x, y),
     menuRects: () => {
-      // Read the CURRENT overlay (input state machine + game state) and map the
-      // open menu's item rects into the stable MenuRect shape. Build menu wins
-      // over action menu, matching hud.hit's priority.
-      const overlay = input.getOverlay();
-      if (overlay.buildMenu) {
-        return buildMenuLayout(renderer, overlay.buildMenu).items.map((it) => ({
-          kind: 'build' as const,
-          label: it.entry.label,
-          x: it.x,
-          y: it.y,
-          w: it.w,
-          h: it.h,
-        }));
+      // Query the mounted DOM menu buttons and return their bounding rects.
+      // Build entries win over action entries (only one menu is ever open, so
+      // this just mirrors the old priority). `label` is the data-attr value.
+      const build = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-build-entry]'),
+      );
+      if (build.length > 0) {
+        return build.map((el) => rectFor(el, 'build', el.dataset.buildEntry ?? ''));
       }
-      if (overlay.actionMenu) {
-        return actionMenuLayout(renderer, overlay.actionMenu).items.map((it) => ({
-          kind: 'action' as const,
-          label: it.entry.label,
-          x: it.x,
-          y: it.y,
-          w: it.w,
-          h: it.h,
-        }));
+      const action = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-menu-entry]'),
+      );
+      if (action.length > 0) {
+        return action.map((el) => rectFor(el, 'action', el.dataset.menuEntry ?? ''));
       }
       return null;
     },

@@ -4,11 +4,11 @@
 // hot-seat play or AI-vs-AI demos. The flow:
 //   1. Load the `duel` map JSON via the engine loader.
 //   2. Spin up a state emitter holding that initial state.
-//   3. Mount the canvas renderer + animation queue + input controller + canvas
-//      hud (tile-anchored popovers).
+//   3. Mount the canvas renderer + animation queue + input controller.
 //   4. Mount the AI driver. By default both players are 'human'; flip via the
 //      bottom-right controllers strip or `?p0=utility&p1=utility` URL params.
-//   5. Mount the DOM chrome (player HUDs, turn indicator, toolshelf, end-turn).
+//   5. Mount the DOM chrome (player HUDs, turn indicator, toolshelf, end-turn)
+//      and the DOM action/build menus (menus.ts).
 //
 // The canvas fills the viewport; DOM chrome floats over it at top and bottom.
 
@@ -18,7 +18,7 @@ import { enableFogMemory } from './engine/systems/memory';
 import { createEmitter } from './renderer/emitter';
 import { createCanvasRenderer } from './renderer/canvas';
 import { createInputController } from './renderer/input';
-import { createHud } from './renderer/hud';
+import { createMenus } from './renderer/menus';
 import { createAnimationQueue } from './renderer/animations';
 import { createAIDriver, AI_CHOICES } from './renderer/ai-driver';
 import type { AIChoice } from './renderer/ai-driver';
@@ -156,7 +156,6 @@ async function main(): Promise<void> {
     endTurnAllowed: () =>
       !aiDriver.inputLocked(emitter.getState()) && !animQueue.busy(),
   });
-  const hud = createHud(renderer);
 
   // Audio: default muted (so we don't autoplay). The audio module gates its
   // own context init on first canvas click so browsers don't reject it.
@@ -183,8 +182,14 @@ async function main(): Promise<void> {
     onInsetsChange: (t, b) => {
       renderer.setBoardInsets(t, b);
     },
+    // Floating Cancel chip → drop the current input selection/menu/target.
+    onCancel: () => input.cancel(),
   });
   log('render', 'chrome mounted', { muted: audio.isMuted() });
+
+  // DOM action/build menus (Phase 2.3). Mounted after chrome so they layer above
+  // it; they read `input.getOverlay()` and re-render on emitter transitions.
+  createMenus({ parent: appRoot, emitter, input, renderer });
 
   // `?debug=1` installs the window.__bats automation hook (state read, synthetic
   // input, idle-await). Gated so ordinary hot-seat play carries no global. Must
@@ -208,7 +213,6 @@ async function main(): Promise<void> {
     const state = emitter.getState();
     const overlay = input.getOverlay();
     renderer.draw(state, overlay, animQueue);
-    hud.draw(state, overlay);
     rafId = window.requestAnimationFrame(frame);
   }
 

@@ -1093,10 +1093,14 @@ function drawDamagePreview(
   const p = tileTopLeft(vp, preview.tile);
   const w = 130;
   const h = 44;
-  let bx = p.x + ts + 6;
+  // Centre horizontally over the target tile, clamped into the viewport, then
+  // prefer drawing ABOVE the tile. On a touch device the tile is under the
+  // player's thumb, so a below/right tooltip would sit under the finger; above
+  // keeps it readable (and it reads fine on desktop too). Fall BELOW only when
+  // there's no room above the top chrome.
+  let bx = p.x + ts / 2 - w / 2;
+  bx = Math.max(8, Math.min(bx, vp.width - 8 - w));
   let by = p.y - h - 6;
-  // Keep on-screen.
-  if (bx + w > vp.width - 8) bx = p.x - w - 6;
   if (by < vp.insetTop + 4) by = p.y + ts + 6;
   ctx.fillStyle = 'rgba(20,20,20,0.92)';
   ctx.fillRect(bx, by, w, h);

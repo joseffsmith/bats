@@ -1,7 +1,7 @@
 // Shared e2e helpers. Every spec drives the live app exclusively through these,
-// so the "how" of talking to the page (URL building, the `__bats` hook, canvas
-// menu geometry) lives in one place. Phase 2 turns canvas menus into DOM and
-// only `clickMenuEntry` changes.
+// so the "how" of talking to the page (URL building, the `__bats` hook, menu
+// selectors) lives in one place. The menus are DOM (Phase 2.3), so `clickMenuEntry`
+// is a plain selector click.
 //
 // Iron rule: NO fixed sleeps. Every wait is either `awaitIdle` (poll the game's
 // own idle predicate) or a `waitForFunction` on a real observable (input-state
@@ -35,6 +35,11 @@ export type OpenParams = {
   width?: number;
   height?: number;
   deviceScaleFactor?: number;
+  /** Touch emulation — set for the mobile spec so `(pointer: coarse)` matches
+   *  (drives the two-tap attack + touch menu layouts). Applied BEFORE navigation
+   *  so the input controller reads the right pointer type at construction. */
+  hasTouch?: boolean;
+  isMobile?: boolean;
 };
 
 /**
@@ -50,6 +55,8 @@ export async function openMap(page: Page, params: OpenParams = {}): Promise<Capt
     width: params.width ?? 1280,
     height: params.height ?? 900,
     deviceScaleFactor: params.deviceScaleFactor ?? 1,
+    ...(params.hasTouch !== undefined ? { hasTouch: params.hasTouch } : {}),
+    ...(params.isMobile !== undefined ? { isMobile: params.isMobile } : {}),
   });
   const captured = wireConsoleCapture(page);
   const url = gameUrl(port, {
@@ -151,26 +158,25 @@ export async function clickTile(page: Page, tile: { x: number; y: number }): Pro
 }
 
 /**
- * Click a canvas menu entry by its label. THE single place that knows menus are
- * canvas-drawn: it reads item rects from `__bats.menuRects()` and clicks the
- * matching entry's centre. A successful click always transitions the input
- * machine (and usually appends an action), so we poll for that.
+ * Click a menu entry by its label. THE single place that knows how menus are
+ * implemented: the menus are DOM now (menus.ts), so an action entry is
+ * `[data-menu-entry="<verb>"]` and a build entry is `[data-build-entry="<unitType>"]`.
+ * The two label spaces never overlap, so one selector covers both. A successful
+ * click always transitions the input machine (and usually appends an action), so
+ * we poll for that. Puppeteer's `.click()` auto-scrolls the entry into view — the
+ * tall coastal build sheet needs that for its last rows.
  */
 export async function clickMenuEntry(page: Page, label: string): Promise<void> {
   const before = await page.evaluate(() => {
     const b = (window as unknown as BatsWindow).__bats;
     return { kind: b.input.getInputState().kind, hist: b.history.length };
   });
-  const target = await page.evaluate((lbl) => {
-    const rects = (window as unknown as BatsWindow).__bats.menuRects();
-    if (!rects) return null;
-    const hit = rects.find((r) => r.label === lbl);
-    return hit ? { x: hit.x + hit.w / 2, y: hit.y + hit.h / 2 } : null;
-  }, label);
-  if (!target) {
-    throw new Error(`clickMenuEntry: no open menu entry labelled "${label}"`);
+  const selector = `[data-menu-entry="${label}"], [data-build-entry="${label}"]`;
+  const handle = await page.$(selector);
+  if (!handle) {
+    throw new Error(`clickMenuEntry: no open menu entry for "${label}"`);
   }
-  await page.mouse.click(target.x, target.y);
+  await handle.click();
   await page.waitForFunction(
     (b0: { kind: string; hist: number }) => {
       const b = (window as unknown as BatsWindow).__bats;
