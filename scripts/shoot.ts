@@ -22,13 +22,17 @@
 //   --port=N          dev-server port (default 5179)
 //   --wait-ms=N       extra settle delay before screenshot (default 400)
 
-import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import puppeteer, { type Browser } from 'puppeteer';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import type { Browser, Page } from 'puppeteer';
+import {
+  startVite,
+  launchBrowser,
+  gameUrl,
+  openGame,
+  awaitIdle,
+  type ViteHandle,
+} from './lib/browser-harness';
 
 type Args = {
   out: string;
@@ -104,56 +108,79 @@ function parseArgs(): Args {
   return out as Args;
 }
 
-async function waitForServer(port: number, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const r = await fetch(`http://localhost:${port}/`);
-      if (r.ok) return;
-    } catch {
-      // not yet
-    }
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  throw new Error(`Vite dev server did not start on :${port} within ${timeoutMs}ms`);
-}
-
-function spawnVite(port: number): ChildProcess {
-  const proc = spawn('node_modules/.bin/vite', ['--port', String(port), '--strictPort'], {
-    cwd: resolve(__dirname, '..'),
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  proc.stdout?.on('data', (b) => process.stderr.write(`[vite] ${b}`));
-  proc.stderr?.on('data', (b) => process.stderr.write(`[vite!] ${b}`));
-  return proc;
-}
-
-function buildUrl(args: Args): string {
+function buildUrl(args: Args, port: number): string {
+  // Raw --url passthrough is verbatim (no debug injection): the caller owns it.
   if (args.url) return args.url;
-  const u = new URL(`http://localhost:${args.port}/`);
-  if (args.map) u.searchParams.set('map', args.map);
-  if (args.p0) u.searchParams.set('p0', args.p0);
-  if (args.p1) u.searchParams.set('p1', args.p1);
-  if (args.fog) u.searchParams.set('fog', args.fog);
-  if (args.view) u.searchParams.set('view', args.view);
-  if (args.slowmo) u.searchParams.set('slowmo', String(args.slowmo));
-  return u.toString();
+  // Constructed URLs default debug=1 on (via gameUrl) so stepTurns can idle-await
+  // instead of sleeping. Conditional spreads keep exactOptionalPropertyTypes
+  // happy (no `map: undefined`).
+  return gameUrl(port, {
+    ...(args.map !== undefined ? { map: args.map } : {}),
+    ...(args.p0 !== undefined ? { p0: args.p0 } : {}),
+    ...(args.p1 !== undefined ? { p1: args.p1 } : {}),
+    ...(args.fog !== undefined ? { fog: args.fog } : {}),
+    ...(args.view !== undefined ? { view: args.view } : {}),
+    ...(args.slowmo !== undefined ? { slowmo: args.slowmo } : {}),
+  });
 }
 
-async function stepTurns(page: import('puppeteer').Page, turns: number): Promise<void> {
+/** Click the End Turn button (the only DOM button with that text). */
+async function clickEndTurn(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const btns = Array.from(document.querySelectorAll('button'));
+    const target = btns.find((b) => /end turn/i.test(b.textContent ?? ''));
+    if (!target) return false;
+    target.click();
+    return true;
+  });
+}
+
+async function stepTurns(page: Page, turns: number, url: string): Promise<void> {
+  // Raw --url without debug=1 has no __bats hook to poll, so fall back to the
+  // old fixed settle (main.ts's pauseMs default is 250ms; give multi-action AI
+  // turns generously more).
+  const hasHook = /[?&]debug=1(?:&|$)/.test(url);
   for (let i = 0; i < turns; i += 1) {
-    // The End Turn button is the only button with that exact text in the DOM.
-    const clicked = await page.evaluate(() => {
-      const btns = Array.from(document.querySelectorAll('button'));
-      const target = btns.find((b) => /end turn/i.test(b.textContent ?? ''));
-      if (!target) return false;
-      target.click();
-      return true;
-    });
-    if (!clicked) throw new Error(`End Turn button not found on iteration ${i}`);
-    // Let AI animation queue drain. The pauseMs default in main.ts is 250ms;
-    // give it generously more so multi-action AI turns finish.
-    await new Promise((r) => setTimeout(r, 1200));
+    if (hasHook) {
+      // A "step" = advance the turn counter by one. Robust for both hot-seat-vs-
+      // AI (the click ends the human turn) AND AI-vs-AI (the click is an inert
+      // no-op while inputLocked, but the AI advances the turn itself) — and it
+      // sidesteps the transient ~1-frame idle window right after END_TURN,
+      // before the next player's AI has planned. Then idle-await drains the
+      // freshly-ended turn's animations so the screenshot isn't mid-flight.
+      const turnBefore = await page.evaluate(
+        () =>
+          (window as unknown as { __bats: { getState(): { turn: number } } }).__bats.getState()
+            .turn,
+      );
+      if (!(await clickEndTurn(page))) {
+        throw new Error(`End Turn button not found on iteration ${i}`);
+      }
+      await page.waitForFunction(
+        (before: number) => {
+          const b = (
+            window as unknown as {
+              __bats?: { getState(): { turn: number; winner: number | null } };
+            }
+          ).__bats;
+          if (!b) return false;
+          const s = b.getState();
+          return s.turn > before || s.winner !== null;
+        },
+        { timeout: 20_000, polling: 100 },
+        turnBefore,
+      );
+      // Best-effort settle: an unbroken AI-vs-AI churn never holds a stable idle
+      // between turns, so don't let a settle timeout fail the shot — the turn
+      // already advanced. The hot-seat-vs-AI path settles cleanly well inside
+      // the window.
+      await awaitIdle(page, 8_000).catch(() => {});
+    } else {
+      if (!(await clickEndTurn(page))) {
+        throw new Error(`End Turn button not found on iteration ${i}`);
+      }
+      await new Promise((r) => setTimeout(r, 1200));
+    }
   }
 }
 
@@ -161,30 +188,26 @@ async function main(): Promise<void> {
   const args = parseArgs();
   await mkdir(dirname(resolve(args.out)), { recursive: true });
 
-  let vite: ChildProcess | undefined;
+  let vite: ViteHandle | undefined;
+  let port = args.port;
   if (!args.url) {
-    vite = spawnVite(args.port);
-    await waitForServer(args.port, 15_000);
+    vite = await startVite(args.port);
+    port = vite.port;
   }
 
   let browser: Browser | undefined;
   try {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
+    browser = await launchBrowser({ headless: true });
     const page = await browser.newPage();
     await page.setViewport({ width: args.width, height: args.height });
-    const url = buildUrl(args);
+    const url = buildUrl(args, port);
     process.stderr.write(`[shoot] navigating ${url}\n`);
-    // Use 'load' (DOM + module imports complete) rather than 'networkidle0' —
-    // Vite's HMR keeps a WebSocket open, so networkidle0 can hang.
-    await page.goto(url, { waitUntil: 'load' });
+    await openGame(page, url);
     // Page-load settle (canvas first paint).
     await new Promise((r) => setTimeout(r, args.waitMs));
     if (args.turn && args.turn > 0) {
       process.stderr.write(`[shoot] stepping ${args.turn} turn(s)\n`);
-      await stepTurns(page, args.turn);
+      await stepTurns(page, args.turn, url);
       await new Promise((r) => setTimeout(r, args.waitMs));
     }
     const outPath = resolve(args.out);
@@ -192,12 +215,7 @@ async function main(): Promise<void> {
     process.stdout.write(`${outPath}\n`);
   } finally {
     if (browser) await browser.close();
-    if (vite && !vite.killed) {
-      vite.kill('SIGTERM');
-      // Give it a moment to die cleanly.
-      await new Promise((r) => setTimeout(r, 200));
-      if (!vite.killed) vite.kill('SIGKILL');
-    }
+    if (vite) await vite.stop();
   }
 }
 

@@ -30,6 +30,7 @@ import { loadAssets } from './renderer/assets/loader';
 import { createAudio } from './renderer/audio';
 import { createChrome } from './renderer/chrome';
 import { runEditor } from './renderer/editor';
+import { installDebugHook } from './renderer/debug-hook';
 
 // `?render-log=1` flips the render category on for click-by-click traces.
 // `?ai-trace=1` enables the very chatty per-candidate AI score log.
@@ -120,12 +121,19 @@ async function main(): Promise<void> {
   });
 
   const initialAI = parseInitialAI();
+  // `?seed=N` pins the AI driver's RNG so headless tests get reproducible AI
+  // turns. Absent → the driver keeps its `Date.now()` default. Spread the key
+  // in only when present (exactOptionalPropertyTypes forbids `seed: undefined`).
+  const seedRaw = params.get('seed');
+  const seedParsed = seedRaw !== null ? Number(seedRaw) : NaN;
+  const seed = Number.isFinite(seedParsed) ? Math.trunc(seedParsed) : undefined;
   const aiDriver = createAIDriver({
     emitter,
     animQueue,
     initial: initialAI,
     pauseMs: 250,
     fog: fogConfig.on,
+    ...(seed !== undefined ? { seed } : {}),
   });
 
   const input = createInputController(renderer, emitter, animQueue, {
@@ -156,6 +164,14 @@ async function main(): Promise<void> {
     audio,
   });
   log('render', 'chrome mounted', { muted: audio.isMuted() });
+
+  // `?debug=1` installs the window.__bats automation hook (state read, synthetic
+  // input, idle-await). Gated so ordinary hot-seat play carries no global. Must
+  // run after the modules above exist — the hook only delegates to them.
+  if (params.get('debug') === '1') {
+    installDebugHook({ emitter, renderer, input, animQueue, aiDriver });
+    log('render', 'debug hook installed');
+  }
 
   // Wrap input.click so a clicked-on AI player has the input ignored. The
   // input controller doesn't know about the driver — we filter at the boundary.

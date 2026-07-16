@@ -10,7 +10,7 @@
     "test": "vitest run",
     "test:ci": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint src tests",
+    "lint": "eslint src tests scripts",
     "match": "tsx src/cli/run-match.ts",
     "tournament": "tsx src/cli/tournament.ts",
     "round-robin": "tsx src/cli/round-robin.ts",
