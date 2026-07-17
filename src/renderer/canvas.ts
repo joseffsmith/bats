@@ -221,6 +221,12 @@ export type Overlay = {
   moveRange?: Coord[];
   /** Tiles to highlight in the attack-range red. */
   attackRange?: Coord[];
+  /** Border-only trace of the FULL attack area. Indirect units set this to
+   *  their whole donut so "what can I hit if I stay" stays visible even where
+   *  the donut overlaps the (blue-filled) move range — the red outline carries
+   *  the threat read without stacking fills into mud. Falls back to
+   *  `attackRange` when absent (direct units: fringe fill and border match). */
+  attackRangeBorder?: Coord[];
   /** Tiles to highlight as capturable hint. */
   capturable?: Coord[];
   /** Tiles drawn as the currently-previewed move path. */
@@ -544,10 +550,23 @@ function drawOverlays(
   for (const c of overlay.moveRange ?? []) {
     fillTile(ctx, vp, c, 'rgba(60, 120, 230, 0.30)');
   }
-  // Attack range (red).
+  // Attack range (red). Since input.ts subtracts the reachable tiles, this no
+  // longer overlaps the blue fill — the two groups tile disjoint regions.
   for (const c of overlay.attackRange ?? []) {
     fillTile(ctx, vp, c, 'rgba(220, 60, 60, 0.34)');
   }
+  // Crisp 1px outline around the *union boundary* of each group, so a range
+  // reads as one shape instead of a faint stain. Only the outer edges are
+  // stroked (a shared edge between two same-group tiles is skipped), which is
+  // what turns the fill into a contour. Drawn over both fills so the contours
+  // sit on top; the red border sits above blue where they abut.
+  strokeGroupBorder(ctx, vp, overlay.moveRange, 'rgba(120, 175, 255, 0.9)');
+  strokeGroupBorder(
+    ctx,
+    vp,
+    overlay.attackRangeBorder ?? overlay.attackRange,
+    'rgba(240, 105, 95, 0.95)',
+  );
   // Move-preview path.
   for (const c of overlay.movePath ?? []) {
     fillTile(ctx, vp, c, 'rgba(255, 220, 80, 0.45)');
@@ -605,6 +624,40 @@ function fillTile(
   const py = vp.origin.y + c.y * ts;
   ctx.fillStyle = fill;
   ctx.fillRect(px, py, ts, ts);
+}
+
+/**
+ * Stroke only the OUTER boundary of a group of same-coloured overlay tiles: for
+ * each cell, an edge is drawn only when the neighbour on that side isn't also in
+ * the group (a cheap O(4n) neighbour-set lookup). The result is a single crisp
+ * contour around the union instead of a grid of boxed cells — the fix that lets
+ * a range read as a shape. Coords are integer tile indices and origin/tileSize
+ * are integers, so the 0.5px inset keeps the 1px line pixel-crisp.
+ */
+function strokeGroupBorder(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  coords: Coord[] | undefined,
+  stroke: string,
+): void {
+  if (!coords || coords.length === 0) return;
+  const ts = vp.tileSize;
+  const inSet = new Set(coords.map((c) => `${c.x},${c.y}`));
+  const has = (x: number, y: number): boolean => inSet.has(`${x},${y}`);
+  ctx.save();
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (const c of coords) {
+    const px = vp.origin.x + c.x * ts;
+    const py = vp.origin.y + c.y * ts;
+    if (!has(c.x, c.y - 1)) { ctx.moveTo(px, py + 0.5); ctx.lineTo(px + ts, py + 0.5); } // top
+    if (!has(c.x, c.y + 1)) { ctx.moveTo(px, py + ts - 0.5); ctx.lineTo(px + ts, py + ts - 0.5); } // bottom
+    if (!has(c.x - 1, c.y)) { ctx.moveTo(px + 0.5, py); ctx.lineTo(px + 0.5, py + ts); } // left
+    if (!has(c.x + 1, c.y)) { ctx.moveTo(px + ts - 0.5, py); ctx.lineTo(px + ts - 0.5, py + ts); } // right
+  }
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawUnits(

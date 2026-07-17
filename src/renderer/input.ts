@@ -151,19 +151,26 @@ export function createInputController(
   function getOverlay(): Overlay {
     const state = emitter.getState();
     const ov: Overlay = {};
-    // Highlight player-owned capturable tiles faintly so the human sees what's
-    // worth stepping on. Cheap O(map) — no big deal.
-    const capturable: Coord[] = [];
-    for (let y = 0; y < state.map.length; y++) {
-      const row = state.map[y]!;
-      for (let x = 0; x < row.length; x++) {
-        const tile = row[x]!;
-        if (isCapturable(tile.terrain) && tile.owner !== state.currentPlayer) {
-          capturable.push({ x, y });
+    // Capturable wash: a faint hint of which not-yet-ours capturable tiles are
+    // worth stepping on. Gated on a canCapture *selection* (infantry) — it used
+    // to be painted under every state, idle included, which left a permanent
+    // yellow tint fighting the move/attack overlays for a third simultaneous
+    // colour. Now it only appears when the selected unit could actually capture,
+    // so idle shows nothing. Cheap O(map) when it does run.
+    const selUnit = selectedUnit(inputState);
+    if (selUnit && UNITS[selUnit.type].canCapture) {
+      const capturable: Coord[] = [];
+      for (let y = 0; y < state.map.length; y++) {
+        const row = state.map[y]!;
+        for (let x = 0; x < row.length; x++) {
+          const tile = row[x]!;
+          if (isCapturable(tile.terrain) && tile.owner !== state.currentPlayer) {
+            capturable.push({ x, y });
+          }
         }
       }
+      ov.capturable = capturable;
     }
-    ov.capturable = capturable;
 
     switch (inputState.kind) {
       case 'idle':
@@ -174,13 +181,20 @@ export function createInputController(
         ov.moveRange = sel.reachable
           .filter((r) => r.path.length > 0 || coordEq(r.coord, sel.unit.pos))
           .map((r) => r.coord);
-        // Attack-range preview: show every tile this unit could hit this turn,
-        // so the player can see at a glance whether a target is reachable.
-        // Indirect units (artillery, battleship) can't move-and-attack so the
-        // ring is anchored at their current position; direct units union the
-        // attack arc across every reachable tile.
+        // Attack fringe = tiles this unit could hit this turn MINUS the tiles it
+        // can stand on (see attackFringe). Red thus means strictly "can hit but
+        // can't move here" and never stacks over the blue move range, so neither
+        // reads as mud. Direct units are left with the 1-tile ring beyond their
+        // movement. Indirect units additionally trace their FULL donut with the
+        // red border (fills stay subtracted): on open ground the whole donut is
+        // reachable, so without the border the "what can I hit if I stay" read
+        // would vanish entirely — and firing after moving is exactly what an
+        // indirect unit cannot do.
         if (!sel.unit.hasActed) {
-          ov.attackRange = computeAttackArea(state, sel.unit, sel.reachable);
+          ov.attackRange = attackFringe(state, sel.unit, sel.reachable);
+          if (UNITS[sel.unit.type].indirect) {
+            ov.attackRangeBorder = computeAttackArea(state, sel.unit, sel.reachable);
+          }
         }
         break;
       }
@@ -188,6 +202,21 @@ export function createInputController(
         ov.selected = inputState.unit.pos;
         ov.moveRange = inputState.reachable.map((r) => r.coord);
         ov.movePath = inputState.path;
+        // Identical attack fringe to unit-selected — one concept, one palette
+        // across both states (previously the attack overlay vanished here and
+        // the same range flipped to clean blue). Arcs are unioned over the FULL
+        // reachable set, not the previewed destination: the MOVE isn't committed
+        // yet, so the player is still choosing which tile to fire from.
+        if (!inputState.unit.hasActed) {
+          ov.attackRange = attackFringe(state, inputState.unit, inputState.reachable);
+          if (UNITS[inputState.unit.type].indirect) {
+            ov.attackRangeBorder = computeAttackArea(
+              state,
+              inputState.unit,
+              inputState.reachable,
+            );
+          }
+        }
         break;
       case 'action-menu':
         ov.selected = inputState.anchor;
@@ -613,6 +642,43 @@ export function createInputController(
 
 // ─────────────────────────── Helpers ─────────────────────────────────────────
 
+/** The unit a given input node has "selected", or null for states without one
+ *  (idle, build menu). Drives the capturable-wash gate: only a canCapture pick
+ *  should paint the hint. */
+function selectedUnit(s: InputState): Unit | null {
+  switch (s.kind) {
+    case 'unit-selected':
+    case 'move-previewed':
+    case 'action-menu':
+    case 'attack-targeting':
+      return s.unit;
+    case 'unload-targeting':
+      return s.transport;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Attack-range overlay = computeAttackArea MINUS the reachable tiles, keyed by
+ * coord. The subtraction is the crux of the range-overlay redesign: it
+ * guarantees the red fringe never coincides with a blue move tile, so the two
+ * fills can't stack into ambiguous mauve. A direct unit is left with just the
+ * 1-tile ring beyond its movement; an indirect unit anchors its ring at the
+ * current pos (minRange excludes the centre) so a boxed-in artillery keeps its
+ * full donut.
+ */
+function attackFringe(
+  state: GameState,
+  unit: Unit,
+  reachable: ReachableTile[],
+): Coord[] {
+  const reachKeys = new Set(reachable.map((r) => `${r.coord.x},${r.coord.y}`));
+  return computeAttackArea(state, unit, reachable).filter(
+    (c) => !reachKeys.has(`${c.x},${c.y}`),
+  );
+}
+
 function computeAttackArea(
   state: GameState,
   unit: Unit,
@@ -742,5 +808,12 @@ function adjacentUnloadDestinations(
 }
 
 // Expose the helper for tests.
-export const __test = { computeActionMenuEntries, isLoadable, adjacentUnloadDestinations };
+export const __test = {
+  computeActionMenuEntries,
+  isLoadable,
+  adjacentUnloadDestinations,
+  computeAttackArea,
+  attackFringe,
+  selectedUnit,
+};
 export type { PlayerId };

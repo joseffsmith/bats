@@ -147,9 +147,16 @@ display `Day ⌈turn/2⌉` (AW convention) or track rounds in the engine.
 - #7 "1 UNITS" plural nit → **QoL chunk** (units stat label is now
   singular/plural: "1 UNIT" / "0/2 UNITS"; "COFFER" left as identity). See
   `createPlayerPanel` in `src/renderer/chrome.ts`, `tests/chrome.test.ts`.
+- #1 range overlays turn to mud → **range-overlay redesign** (attack overlay is
+  now the reachable-subtracted fringe, so red = "can hit but can't stand" and
+  never stacks over blue; each overlay group gets a crisp 1px union-boundary
+  border so a range reads as a shape; the capturable wash is gated to canCapture
+  selections and no longer washes in idle). See `getOverlay`/`attackFringe` in
+  `src/renderer/input.ts`, `drawOverlays`/`strokeGroupBorder` in
+  `src/renderer/canvas.ts`, `tests/overlay.test.ts`.
 
-Not yet addressed: #1 range overlays, and the remaining #7 nits (capture badge,
-cancel hint, built-this-turn state).
+Not yet addressed: the remaining #7 nits (capture badge, cancel hint,
+built-this-turn state).
 
 The chrome (player panels, turn indicator, toolshelf, win modal) has a
 coherent, confident identity — warm dark panels, mono labels, the
