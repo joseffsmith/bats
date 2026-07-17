@@ -101,6 +101,12 @@ OFL) removes the flake and the FOUT. Also `favicon.ico` 404s on every load.
 
 ### 6. "Turn NN" counts plies, not rounds
 
+**Addressed (QoL chunk):** chrome now displays `Day ⌈turn/2⌉` in the turn
+indicator (`Turn NN` → `Day NN`) and the win-modal subtitle ("on day 15." for
+a 30-ply match). The engine still increments `turn` per ply, and the
+replay/debug surfaces stay raw. See `src/renderer/chrome.ts` (`dayOf`) and
+`tests/chrome.test.ts`.
+
 The engine increments `turn` on every END_TURN, and the chrome displays it
 raw: after each player has moved once the header says "Turn 03"; the win
 modal says "captured the field on turn 30" for a 15-round match. Either
@@ -113,6 +119,10 @@ display `Day ⌈turn/2⌉` (AW convention) or track rounds in the engine.
   still in the suite — worth reconciling).
 - Switching map / toggling fog mid-game reloads the page and silently
   discards the current match. Cheap guard: `confirm()` when `turn > 1`.
+  **Addressed (QoL chunk):** both the map picker and the fog toggle now
+  `confirm('Abandon the current match?')` when `turn > 1 && winner === null`;
+  cancelling the map picker restores the select to the loaded map. See
+  `createMapPicker` / `createFogToggle` in `src/renderer/chrome.ts`.
 - `createInputController` builds its own `createHud(renderer)` while
   `main.ts` builds another for drawing. Layout is pure so it works, but
   it's a trap if the hud ever grows state — worth collapsing to one
@@ -130,8 +140,16 @@ display `Day ⌈turn/2⌉` (AW convention) or track rounds in the engine.
 - #4 HP has no numbers → **Phase 3B** (AW-style baked HP numeral + capture meter).
 - #5 menus feel like a different product → **Phase 2B** (DOM menus, chrome font)
   + **3B** (build entries show baked unit sprite icons).
+- #6 hot-seat fog has no handoff → **QoL chunk** (opaque pass-the-device scrim
+  between two human players under fog; blocks canvas + Enter until "Begin
+  turn"). See `src/renderer/handoff.ts`, `tests/handoff.test.ts`,
+  `e2e/fog-handoff.e2e.ts`.
+- #7 "1 UNITS" plural nit → **QoL chunk** (units stat label is now
+  singular/plural: "1 UNIT" / "0/2 UNITS"; "COFFER" left as identity). See
+  `createPlayerPanel` in `src/renderer/chrome.ts`, `tests/chrome.test.ts`.
 
-Not yet addressed: #1 range overlays, #6 fog handoff, and the #7 nits.
+Not yet addressed: #1 range overlays, and the remaining #7 nits (capture badge,
+cancel hint, built-this-turn state).
 
 The chrome (player panels, turn indicator, toolshelf, win modal) has a
 coherent, confident identity — warm dark panels, mono labels, the
@@ -175,13 +193,14 @@ game lives. Specific critiques, roughly by impact:
    else, these could be DOM popovers (hover states, scrolling for bug #3,
    and font consistency all come free). At minimum, adopt the chrome font
    and add a hover highlight via `hud.hit` on mousemove.
-6. **Hot-seat fog has no handoff moment.** The instant you press End Turn,
+6. **Hot-seat fog has no handoff moment.** *(→ Addressed, QoL chunk — opaque
+   pass-the-device scrim, see above.)* The instant you press End Turn,
    the other player's vision is revealed — with both players at one screen
    the previous player sees it. An interstitial ("pass to Cobalt — click
    when ready") is the genre solution and would also give fog matches a
    rhythm.
 7. **Nits:** "COFFER"/"UNITS" labels read as "$0 COFFER" and "1 UNITS"
-   (singular/plural; maybe "Funds"); capture-progress badge is a ~10px
+   (singular/plural *(→ UNIT/UNITS Addressed, QoL chunk)*; maybe "Funds"); capture-progress badge is a ~10px
    chip that's easy to miss (an AW-style shrinking building meter or a
    progress pie on the flag would read better); Esc/right-click cancel is
    undiscoverable (a one-line hint in the empty bottom-center would do);

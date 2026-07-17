@@ -28,6 +28,7 @@ import { createSpriteCache } from './renderer/sprites';
 import { createTerrainCache } from './renderer/terrain';
 import { createAudio } from './renderer/audio';
 import { createChrome } from './renderer/chrome';
+import { createHandoff } from './renderer/handoff';
 import { runEditor } from './renderer/editor';
 import { installDebugHook } from './renderer/debug-hook';
 
@@ -162,9 +163,17 @@ async function main(): Promise<void> {
     ...(seed !== undefined ? { seed } : {}),
   });
 
+  // Assigned once the fog handoff module is mounted (after chrome). Reads false
+  // until then. Folded into the Enter-to-end-turn predicate so the keyboard can't
+  // end a turn while the pass-the-device scrim is up (canvas clicks are already
+  // blocked natively by the scrim's pointer-events).
+  let handoffActive = (): boolean => false;
+
   const input = createInputController(renderer, emitter, animQueue, {
     endTurnAllowed: () =>
-      !aiDriver.inputLocked(emitter.getState()) && !animQueue.busy(),
+      !aiDriver.inputLocked(emitter.getState()) &&
+      !animQueue.busy() &&
+      !handoffActive(),
   });
 
   // Audio: default muted (so we don't autoplay). The audio module gates its
@@ -196,6 +205,19 @@ async function main(): Promise<void> {
     onCancel: () => input.cancel(),
   });
   log('render', 'chrome mounted', { muted: audio.isMuted() });
+
+  // Hot-seat fog handoff interstitial. Only meaningful with fog on, no fixed
+  // viewer override, and both controllers human (read live — the dropdowns can
+  // switch a controller mid-game). Drops an opaque pass-the-device scrim on each
+  // END_TURN; wired here so the Enter predicate above can suppress while it's up.
+  const handoff = createHandoff({
+    parent: appRoot,
+    emitter,
+    fogOn: fogConfig.on && fogConfig.viewerOverride === null,
+    bothHuman: () =>
+      aiDriver.getPlayerAI(0) === 'human' && aiDriver.getPlayerAI(1) === 'human',
+  });
+  handoffActive = (): boolean => handoff.isActive();
 
   // DOM action/build menus (Phase 2.3). Mounted after chrome so they layer above
   // it; they read `input.getOverlay()` and re-render on emitter transitions.

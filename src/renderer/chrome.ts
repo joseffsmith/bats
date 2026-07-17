@@ -35,6 +35,14 @@ const INSET_GAP = 8;
 const PLAYER_NAMES: Record<PlayerId, string> = { 0: 'Vermilion', 1: 'Cobalt' };
 const PLAYER_NUMERALS: Record<PlayerId, string> = { 0: 'I', 1: 'II' };
 
+/** Player-facing "Day" from the engine's ply counter. The engine increments
+ *  `state.turn` on every END_TURN (a ply); one AW-style Day is a full round of
+ *  both players, so Day = ⌈turn / 2⌉ (turns 1 & 2 → Day 1, turn 3 → Day 2, …).
+ *  Display only — the engine and the replay/debug surfaces keep raw plies. */
+function dayOf(turn: number): number {
+  return Math.ceil(turn / 2);
+}
+
 export type Chrome = {
   destroy(): void;
 };
@@ -207,6 +215,9 @@ function createPlayerPanel(pid: PlayerId): PlayerPanel {
     const count = Object.values(state.units).filter((u) => u.owner === pid).length;
     unitsStat.value.textContent = String(count);
     unitsStat.value.classList.toggle('muted', count === 0);
+    // Singular/plural label ("1 UNIT" vs "0/2 UNITS"). Coffer stays fixed (it's
+    // an identity, not a count). CSS upper-cases the text.
+    unitsStat.label.textContent = count === 1 ? 'Unit' : 'Units';
   }
 
   return { root, update };
@@ -215,7 +226,7 @@ function createPlayerPanel(pid: PlayerId): PlayerPanel {
 function createStat(
   label: string,
   modifier?: string,
-): { root: HTMLElement; value: HTMLElement } {
+): { root: HTMLElement; value: HTMLElement; label: HTMLElement } {
   const root = document.createElement('div');
   root.className = modifier ? `stat ${modifier}` : 'stat';
   const v = document.createElement('span');
@@ -226,7 +237,7 @@ function createStat(
   k.textContent = label;
   root.appendChild(v);
   root.appendChild(k);
-  return { root, value: v };
+  return { root, value: v, label: k };
 }
 
 // ─────────────────────────── Turn indicator ──────────────────────────────────
@@ -261,7 +272,7 @@ function createTurnIndicator(): TurnIndicator {
   root.appendChild(arrow);
 
   function update(state: GameState): void {
-    turnN.innerHTML = `Turn <em>${String(state.turn).padStart(2, '0')}</em>`;
+    turnN.innerHTML = `Day <em>${String(dayOf(state.turn)).padStart(2, '0')}</em>`;
     if (state.winner !== null) {
       phase.textContent = 'Concluded';
       arrowText.textContent = `${PLAYER_NAMES[state.winner]} victorious`;
@@ -364,11 +375,11 @@ function createToolshelf(deps: ToolshelfDeps): { root: HTMLElement } {
 
   // Map picker — reloads the page with `?map=<name>` so we get a fresh state
   // through `main.ts` rather than trying to live-swap.
-  const mapPicker = createMapPicker();
+  const mapPicker = createMapPicker(deps.emitter);
   // Fog toggle — reloads the page with `?fog=on|off` for the same reason
   // (live-swapping fog mid-game is meaningless when the AI was planning
   // omnisciently up to that point).
-  const fogToggle = createFogToggle();
+  const fogToggle = createFogToggle(deps.emitter);
 
   root.appendChild(disclosure);
   root.appendChild(replayBtn);
@@ -385,13 +396,15 @@ function createToolshelf(deps: ToolshelfDeps): { root: HTMLElement } {
   return { root };
 }
 
-function createFogToggle(): HTMLElement {
+function createFogToggle(emitter: Emitter): HTMLElement {
   const params = new URLSearchParams(window.location.search);
   const on = (params.get('fog') ?? 'off').toLowerCase();
   const isOn = on === 'on' || on === '1' || on === 'true';
   const btn = makeTool(isOn ? 'Fog on' : 'Fog off', '◐');
   btn.classList.toggle('off', !isOn);
   btn.addEventListener('click', () => {
+    // Toggling fog reloads the page, discarding any match in progress — guard it.
+    if (!confirmDiscard(emitter)) return;
     const url = new URL(window.location.href);
     url.searchParams.set('fog', isOn ? 'off' : 'on');
     window.location.assign(url.toString());
@@ -399,7 +412,18 @@ function createFogToggle(): HTMLElement {
   return btn;
 }
 
-function createMapPicker(): HTMLElement {
+/** Confirm before a page reload that would silently discard a live match. Returns
+ *  true to proceed. A match is "in progress" once anyone has ended a turn
+ *  (turn > 1) and no one has won yet; a fresh board (turn 1) reloads freely. */
+function confirmDiscard(emitter: Emitter): boolean {
+  const state = emitter.getState();
+  if (state.turn > 1 && state.winner === null) {
+    return window.confirm('Abandon the current match?');
+  }
+  return true;
+}
+
+function createMapPicker(emitter: Emitter): HTMLElement {
   const wrap = document.createElement('label');
   wrap.className = 'map-picker tool';
   const glyph = document.createElement('span');
@@ -420,6 +444,12 @@ function createMapPicker(): HTMLElement {
     sel.appendChild(opt);
   }
   sel.addEventListener('change', () => {
+    // Switching map reloads the page, discarding any match in progress — guard
+    // it, and on cancel restore the select to the currently-loaded map.
+    if (!confirmDiscard(emitter)) {
+      sel.value = current;
+      return;
+    }
     const next = sel.value as MapName;
     const url = new URL(window.location.href);
     url.searchParams.set('map', next);
@@ -620,7 +650,7 @@ function createWinnerOverlay(): WinnerOverlay {
     root.hidden = false;
     root.dataset.player = String(state.winner);
     title.textContent = `${PLAYER_NAMES[state.winner]} victorious`;
-    subtitle.textContent = `Player ${state.winner + 1} captured the field on turn ${state.turn}.`;
+    subtitle.textContent = `Player ${state.winner + 1} captured the field on day ${dayOf(state.turn)}.`;
   }
 
   return { root, update };
@@ -1427,7 +1457,7 @@ function ensureStyle(): void {
     min-width: 0;
     padding: 4px 10px;
   }
-  /* Keep the dot + "Turn NN"; drop the two secondary strings to save width. */
+  /* Keep the dot + "Day NN"; drop the two secondary strings to save width. */
   .turn-indicator .phase { display: none; }
   .turn-indicator .arrow-text { display: none; }
   .turn-indicator .turn-n { font-size: 24px; }
