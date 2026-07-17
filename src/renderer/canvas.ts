@@ -15,7 +15,7 @@ import type {
   Unit,
   UnitType,
 } from '../engine/core/types';
-import { tileAt, unitAt } from '../engine/core/types';
+import { unitAt } from '../engine/core/types';
 import { isVisibleTo, visibleTiles } from '../engine/queries/selectors';
 import type { AnimationQueue, Anim } from './animations';
 import { easeInOutCubic } from './easing';
@@ -24,6 +24,12 @@ import { PLAYER_COLOURS } from './canvas-palette';
 import { drawTerrain, type TerrainCache } from './terrain';
 import { drawColourGrade } from './colour-grade';
 import { drawFactorySmoke } from './terrain-fx';
+import {
+  DIGIT_GLYPHS,
+  DIGIT_W,
+  DIGIT_H,
+  DIGIT_INK,
+} from './assets/pixel-art/digits';
 export type { PlayerPalette } from './canvas-palette';
 export { PLAYER_COLOURS };
 
@@ -93,6 +99,119 @@ export function setAmbientEnabled(on: boolean): void {
  *  constant when off so bob/dash render identically every frame. */
 function ambientPhaseMs(): number {
   return ambientEnabled ? performance.now() : 0;
+}
+
+// ─────────────────────────── Baked digit atlas ───────────────────────────────
+
+// The on-board numerals (HP digit, capture-meter progress) are pixel glyphs
+// baked once into tiny outlined canvases and blitted scaled with imageSmoothing
+// off — sharp at any tile size, unlike fillText which blurs at ~10px. Each cell
+// is (DIGIT_W+2)×(DIGIT_H+2): the 3×5 ink glyph inset by a 1px dark outline so
+// the number reads over any terrain or sprite. Lazily built on first draw; in a
+// canvas-less env (jsdom smoke tests) the build yields null and the number
+// helpers no-op.
+
+const DIGIT_CELL_W = DIGIT_W + 2;
+const DIGIT_CELL_H = DIGIT_H + 2;
+const DIGIT_OUTLINE = '#12100b';
+const DIGIT_INK_COLOUR = '#ffffff';
+
+let digitAtlas: (CanvasImageSource | null)[] | null | undefined;
+
+function bakeDigit(d: number): CanvasImageSource | null {
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function') {
+    return null;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = DIGIT_CELL_W;
+  canvas.height = DIGIT_CELL_H;
+  let ctx: CanvasRenderingContext2D | null = null;
+  try {
+    ctx = canvas.getContext('2d');
+  } catch {
+    return null;
+  }
+  if (!ctx) return null;
+  const glyph = DIGIT_GLYPHS[String(d)];
+  if (!glyph) return null;
+  const img = ctx.createImageData(DIGIT_CELL_W, DIGIT_CELL_H);
+  const data = img.data;
+  const set = (x: number, y: number, hex: string): void => {
+    if (x < 0 || y < 0 || x >= DIGIT_CELL_W || y >= DIGIT_CELL_H) return;
+    const i = (y * DIGIT_CELL_W + x) * 4;
+    data[i] = parseInt(hex.slice(1, 3), 16);
+    data[i + 1] = parseInt(hex.slice(3, 5), 16);
+    data[i + 2] = parseInt(hex.slice(5, 7), 16);
+    data[i + 3] = 255;
+  };
+  // Pass 1: dark outline — dilate every ink cell by 1px into its 8 neighbours.
+  for (let gy = 0; gy < DIGIT_H; gy++) {
+    const row = glyph[gy] ?? '';
+    for (let gx = 0; gx < DIGIT_W; gx++) {
+      if (row[gx] !== DIGIT_INK) continue;
+      for (let oy = 0; oy <= 2; oy++) for (let ox = 0; ox <= 2; ox++) set(gx + ox, gy + oy, DIGIT_OUTLINE);
+    }
+  }
+  // Pass 2: ink on top, inset by the 1px outline margin.
+  for (let gy = 0; gy < DIGIT_H; gy++) {
+    const row = glyph[gy] ?? '';
+    for (let gx = 0; gx < DIGIT_W; gx++) {
+      if (row[gx] === DIGIT_INK) set(gx + 1, gy + 1, DIGIT_INK_COLOUR);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+}
+
+function getDigitAtlas(): (CanvasImageSource | null)[] | null {
+  if (digitAtlas !== undefined) return digitAtlas;
+  const first = bakeDigit(0);
+  if (first === null) {
+    digitAtlas = null;
+    return null;
+  }
+  const atlas: (CanvasImageSource | null)[] = [first];
+  for (let d = 1; d <= 9; d++) atlas.push(bakeDigit(d));
+  digitAtlas = atlas;
+  return atlas;
+}
+
+/** Scaled px width of `text` drawn by drawPixelNumber at ink height `inkH`. */
+function pixelNumberWidth(text: string, inkH: number): number {
+  const s = Math.max(1, inkH / DIGIT_H);
+  const advance = (DIGIT_W + 1) * s; // outlines of adjacent cells touch
+  return (text.length - 1) * advance + DIGIT_CELL_W * s;
+}
+
+/**
+ * Blit a baked pixel number. `x`,`y` anchor per `hAlign`/`vAlign`; `inkH` is the
+ * target glyph-ink height in px (the cell is slightly taller for the outline).
+ * No-op when the atlas couldn't be built.
+ */
+function drawPixelNumber(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  inkH: number,
+  hAlign: 'left' | 'right',
+  vAlign: 'top' | 'bottom',
+): void {
+  const atlas = getDigitAtlas();
+  if (!atlas) return;
+  const s = Math.max(1, inkH / DIGIT_H);
+  const cellW = DIGIT_CELL_W * s;
+  const cellH = DIGIT_CELL_H * s;
+  const advance = (DIGIT_W + 1) * s;
+  const totalW = pixelNumberWidth(text, inkH);
+  const startX = hAlign === 'right' ? x - totalW : x;
+  const topY = vAlign === 'bottom' ? y - cellH : y;
+  for (let i = 0; i < text.length; i++) {
+    const d = text.charCodeAt(i) - 48;
+    const cell = atlas[d];
+    if (!cell) continue;
+    ctx.drawImage(cell, Math.round(startX + i * advance), Math.round(topY), Math.ceil(cellW), Math.ceil(cellH));
+  }
 }
 
 // ─────────────────────────── View state ──────────────────────────────────────
@@ -528,7 +647,6 @@ function drawUnits(
     if (!isVisibleTo(state, unit, observer, fogOn)) continue;
     drawUnit(
       ctx,
-      state,
       vp,
       unit,
       moveAnimById.get(unit.id),
@@ -652,7 +770,6 @@ function drawGhosts(
 
 function drawUnit(
   ctx: CanvasRenderingContext2D,
-  state: GameState,
   vp: Viewport,
   unit: Unit,
   moveAnim: Anim | undefined,
@@ -802,6 +919,11 @@ function drawUnit(
     const filled = Math.max(0, (displayHp / 100) * barW);
     ctx.fillStyle = segments >= 6 ? '#7ed957' : segments >= 3 ? '#ffd84a' : '#ff5050';
     ctx.fillRect(renderX + 3, barY, filled, barH);
+    // AW-style HP numeral (1–9) bottom-right, just above the bar. Baked pixel
+    // digits, not fillText — sharp at tile size. Full-HP units show neither.
+    const hpDigit = Math.max(1, Math.min(9, Math.ceil(displayHp / 10)));
+    const digitH = Math.max(5, Math.round(ts * 0.3));
+    drawPixelNumber(ctx, String(hpDigit), renderX + ts - 3, barY - 1, digitH, 'right', 'bottom');
   }
 
   // Cargo indicator: small filled dot on the top-right when a transport is
@@ -822,18 +944,33 @@ function drawUnit(
     ctx.fillText(String(unit.cargo.length), cx, cy + 1);
   }
 
-  // Capture progress: tiny coloured pip on top-left.
+  // Capture progress: a mini flag-meter on the top-left — a pixel flag in the
+  // capturing player's colour plus the progress number in the baked digit atlas,
+  // on a dark plate so it reads over bright building tiles at 32px.
   if (unit.captureProgress > 0) {
-    const tile = tileAt(state.map, unit.pos);
-    void tile;
-    ctx.fillStyle = '#ffd84a';
-    const pipW = Math.max(3, Math.floor(ts * 0.18));
-    ctx.fillRect(renderX + 3, renderY + 3, pipW, pipW);
-    ctx.fillStyle = '#222';
-    ctx.font = `bold ${Math.floor(ts * 0.18)}px sans-serif`;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillText(String(unit.captureProgress), renderX + 4, renderY + 3);
+    const numText = String(unit.captureProgress);
+    const numH = Math.max(5, Math.round(ts * 0.24));
+    const cellH = Math.ceil((numH * DIGIT_CELL_H) / DIGIT_H);
+    const numW = pixelNumberWidth(numText, numH);
+    const bx = renderX + 3;
+    const by = renderY + 3;
+    const poleW = Math.max(1, Math.round(cellH * 0.14));
+    const pennW = Math.max(3, Math.round(cellH * 0.55));
+    const pennH = Math.max(3, Math.round(cellH * 0.5));
+    const gap = 2;
+    const plateW = poleW + pennW + gap + numW + 4;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(bx - 1, by - 1, plateW, cellH + 2);
+    // Flag: dark pole + team-coloured pennant with a thin outline.
+    ctx.fillStyle = '#12100b';
+    ctx.fillRect(bx, by, poleW, cellH);
+    ctx.fillStyle = palette.fill;
+    ctx.fillRect(bx + poleW, by, pennW, pennH);
+    ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bx + poleW + 0.5, by + 0.5, pennW, pennH);
+    // Progress number beside the flag.
+    drawPixelNumber(ctx, numText, bx + poleW + pennW + gap, by, numH, 'left', 'top');
   }
 }
 

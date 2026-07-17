@@ -122,6 +122,17 @@ display `Day ⌈turn/2⌉` (AW convention) or track rounds in the engine.
 
 ## UI review
 
+**Addressed since this review** (only items that actually shipped):
+
+- #2 board doesn't use the screen → **Phase 2A** (fit-to-viewport tile scaling).
+- #3 ownership legibility → **Phase 3A** (team-ramp unit bodies) + **3B** (team
+  roof/banner/pad baked into city/hq/factory tiles).
+- #4 HP has no numbers → **Phase 3B** (AW-style baked HP numeral + capture meter).
+- #5 menus feel like a different product → **Phase 2B** (DOM menus, chrome font)
+  + **3B** (build entries show baked unit sprite icons).
+
+Not yet addressed: #1 range overlays, #6 fog handoff, and the #7 nits.
+
 The chrome (player panels, turn indicator, toolshelf, win modal) has a
 coherent, confident identity — warm dark panels, mono labels, the
 Vermilion/Cobalt naming is charming. The board art (PixelLab terrain,

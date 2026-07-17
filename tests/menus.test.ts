@@ -19,7 +19,14 @@ import { createMenus } from '../src/renderer/menus';
 import type { CanvasRenderer, Overlay, BuildMenuEntry } from '../src/renderer/canvas';
 import type { InputController } from '../src/renderer/input';
 import type { Emitter } from '../src/renderer/emitter';
+import type { SpriteCache } from '../src/renderer/sprites';
 import { makeState } from './test-helpers';
+
+/** Sprite cache stub in "no data URL" mode → build entries use the letter chip
+ *  fallback, which is what these DOM-structure assertions target. */
+function makeSpritesStub(): SpriteCache {
+  return { toDataURL: () => null } as unknown as SpriteCache;
+}
 
 function makeRendererStub(): CanvasRenderer {
   return {
@@ -106,7 +113,7 @@ describe('DOM menus', () => {
         ],
       },
     });
-    const menus = createMenus({ parent: root, emitter, input, renderer: makeRendererStub() });
+    const menus = createMenus({ parent: root, emitter, input, renderer: makeRendererStub(), sprites: makeSpritesStub() });
 
     const btns = root.querySelectorAll<HTMLButtonElement>('[data-menu-entry]');
     expect(btns).toHaveLength(3);
@@ -123,7 +130,7 @@ describe('DOM menus', () => {
     setOverlay({
       buildMenu: { tile: { x: 1, y: 0 }, entries: build14(true) },
     });
-    createMenus({ parent: root, emitter, input, renderer: makeRendererStub() });
+    createMenus({ parent: root, emitter, input, renderer: makeRendererStub(), sprites: makeSpritesStub() });
 
     const btns = root.querySelectorAll<HTMLButtonElement>('[data-build-entry]');
     expect(btns).toHaveLength(14);
@@ -146,7 +153,7 @@ describe('DOM menus', () => {
     setOverlay({
       buildMenu: { tile: { x: 1, y: 0 }, entries: build14(true) },
     });
-    createMenus({ parent: root, emitter, input, renderer: makeRendererStub() });
+    createMenus({ parent: root, emitter, input, renderer: makeRendererStub(), sprites: makeSpritesStub() });
 
     expect(root.querySelector('.menu-sheet')).not.toBeNull();
     expect(root.querySelectorAll('[data-build-entry]')).toHaveLength(14);
@@ -155,7 +162,7 @@ describe('DOM menus', () => {
   it('re-renders on emitter stateChanged and clears when the menu closes', () => {
     const { input, setOverlay } = makeInputStub();
     setOverlay({ buildMenu: { tile: { x: 1, y: 0 }, entries: build14(true) } });
-    createMenus({ parent: root, emitter, input, renderer: makeRendererStub() });
+    createMenus({ parent: root, emitter, input, renderer: makeRendererStub(), sprites: makeSpritesStub() });
     expect(root.querySelectorAll('[data-build-entry]')).toHaveLength(14);
 
     // Close the menu (idle overlay) and fire a transition — the DOM clears.

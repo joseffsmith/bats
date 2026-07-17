@@ -13,10 +13,17 @@ import { TEAM_CHARS, TRANSPARENT, isKnownChar } from './palette';
 export type Silhouette = boolean[][];
 
 /**
- * Structural check. Returns a list of human-readable problems; empty = valid.
- * `name` is threaded into each message so a failing test names the sprite.
+ * Structural check against an arbitrary "known char" predicate. Returns a list
+ * of human-readable problems; empty = valid. `name` is threaded into each
+ * message so a failing test names the grid. Shared by the unit sprites
+ * (`validateGrid`, via `isKnownChar`) and the terrain tiles (via
+ * `isKnownTerrainChar`), so both palettes go through the same dimension check.
  */
-export function validateGrid(name: string, grid: PixelGrid): string[] {
+export function validateGridWith(
+  name: string,
+  grid: PixelGrid,
+  known: (ch: string) => boolean,
+): string[] {
   const errors: string[] = [];
   if (grid.length !== GRID_SIZE) {
     errors.push(`${name}: expected ${GRID_SIZE} rows, got ${grid.length}`);
@@ -27,12 +34,19 @@ export function validateGrid(name: string, grid: PixelGrid): string[] {
     }
     for (let x = 0; x < row.length; x++) {
       const ch = row[x]!;
-      if (!isKnownChar(ch)) {
+      if (!known(ch)) {
         errors.push(`${name}: unknown char '${ch}' at (${x},${y})`);
       }
     }
   });
   return errors;
+}
+
+/**
+ * Structural check for the unit sprites: 16×16 of `FIXED_PALETTE ∪ {A–D, '.'}`.
+ */
+export function validateGrid(name: string, grid: PixelGrid): string[] {
+  return validateGridWith(name, grid, isKnownChar);
 }
 
 /** Count of non-transparent cells. */

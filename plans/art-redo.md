@@ -1,7 +1,9 @@
-# Art redo — unit sprites (style guide)
+# Art redo — pixel-art style guide
 
-Reference for the in-repo, hand-authored unit pixel art shipped in Phase 3A.
-Read this before touching anything under `src/renderer/assets/pixel-art/`.
+Reference for the in-repo, hand-authored pixel art: the unit sprites (Phase 3A)
+and the terrain tiles + digit atlas (Phase 3B). Read this before touching
+anything under `src/renderer/assets/pixel-art/`. The unit contract is below; the
+terrain + digit conventions are in the **Phase 3B** section near the end.
 
 ## Context
 
@@ -127,16 +129,56 @@ The contact sheet lives behind `?sheet=1` (see `pixel-art/sheet.ts`, wired in
 - Every unit reads as its type and its team on the contact sheet at 24px.
 - Damaged is visibly a dimmed + scorched version of clean.
 
-## Out of scope (Phase 3B owes)
+## Phase 3B — terrain, digits, menu icons (shipped)
 
-- Terrain grids (terrain is still PNG via `assets/loader.ts` + `terrain-raw/`).
-- `digits.ts` (HP/number pixel font).
-- Menu build-icons (wire `SpriteCache.toDataURL(type, owner)` — already exposed —
-  into `menus.ts`, replacing the `UNIT_LETTER` chips).
-- Deleting `src/renderer/assets/raw/` (the dead unit PNGs — kept on disk, no
-  longer referenced).
+Phase 3B finished the sprite redo: terrain is now hand-authored pixel art too,
+the on-board numerals are baked pixel glyphs, and the build menu shows the real
+unit icons. All external PNGs are gone — `assets/loader.ts`, `assets/raw/` (28
+dead unit PNGs) and `assets/terrain-raw/` (8 PNGs) were deleted and `main.ts`
+boots synchronously (no `loadAssets` await).
 
-## Files this phase touched
+### Terrain grids (`assets/pixel-art/terrain/`)
+
+Same char-grid form as the units (16×16 `string[]`), but three rules differ —
+see `terrain/palette.ts`:
+
+- **Full-bleed.** Every cell is opaque; there is **no `.` transparent cell**
+  (the validator rejects one). Tiles butt edge-to-edge, so the bake needs no
+  gutter crop and `drawTerrain` blits the 16×16 source straight to the cell.
+- **Own palette.** `TERRAIN_PALETTE` is terrain-only (greens / blues / warm
+  earth / concrete), tuned to sit with the existing board hue so the per-map
+  colour-grade keeps reading the same. The team-ramp cells (`A/B/C/D`) are
+  shared verbatim with the units.
+- **Owner variants.** The capturables (`city` / `hq` / `factory`) carry a few
+  team-ramp cells on the roof / banner / pad and bake **three ways** — neutral
+  (`NEUTRAL_RAMP`, steel greys) + p0 + p1 — keyed by owner in the cache. Every
+  other terrain has **no** team cells and bakes once. HQ is the grandest (mast +
+  banner), factory industrial (chimney + roll door), city civic (window towers).
+- **Seam-safety.** Because every cell of a type bakes to the *same* tile, any
+  bold or dense feature repeats into a visible grid (worst on open water). Keep
+  the outer 1px ring a single uniform base char, and keep interior texture
+  sparse + low-contrast. `tests/terrain-art.test.ts` enforces the uniform border
+  and the full-opacity / palette-closure / owner-difference bars.
+
+Because ownership is baked into the tile, the baked path drops the LED/stripe
+owner cue entirely; the procedural fallback (jsdom, no canvas) still draws it.
+
+### Digit atlas (`assets/pixel-art/digits.ts`)
+
+`DIGIT_GLYPHS` are 3×5 `#`/`.` glyphs for 0–9. `canvas.ts` bakes each once into a
+tiny outlined canvas (1px dark dilation behind white ink) and blits it scaled
+with imageSmoothing off — sharp at ~10px, unlike `fillText`. Used for the
+AW-style HP numeral (`ceil(hp/10)` → 1–9, bottom-right, alongside the bar) and
+the capture flag-meter (pixel flag + progress number, top-left).
+
+### Menu build-icons
+
+`menus.ts` renders each build entry's chip as an `<img>` from
+`spriteCache.toDataURL(type, currentPlayer)` (nearest-neighbour via
+`image-rendering: pixelated`), falling back to the `UNIT_LETTER` chip when the
+cache is in stub mode (no data URL). The icon tracks `state.currentPlayer`.
+
+## Files Phase 3A touched
 
 - `src/renderer/assets/pixel-art/**` (new: palette, types, validate, soot,
   units/*, sheet)

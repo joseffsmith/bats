@@ -22,10 +22,11 @@
 // the menu panel opts back in, so clicking the board *around* an open menu still
 // reaches the canvas and cancels — matching chrome.ts's pattern.
 
-import type { UnitType } from '../engine/core/types';
+import type { PlayerId, UnitType } from '../engine/core/types';
 import type { BuildMenuEntry, CanvasRenderer, Overlay } from './canvas';
 import type { Emitter } from './emitter';
 import type { InputController } from './input';
+import type { SpriteCache } from './sprites';
 import { UNIT_LETTER } from './hud';
 
 export type Menus = {
@@ -37,6 +38,9 @@ export type MenusDeps = {
   emitter: Emitter;
   input: InputController;
   renderer: CanvasRenderer;
+  /** Baked unit sprites — build entries show the current player's icon, falling
+   *  back to the letter chip when a data URL isn't available (stub-mode cache). */
+  sprites: SpriteCache;
 };
 
 /** True when the primary pointer is coarse (touch). Guarded for jsdom. */
@@ -124,10 +128,13 @@ function renderBuildMenu(
     el.appendChild(title);
   }
 
+  // The current player's colours drive the icon, resolved at render time.
+  const owner: PlayerId = deps.emitter.getState().currentPlayer;
+
   const list = document.createElement('div');
   list.className = 'menu-build-list';
   for (const entry of menu.entries) {
-    list.appendChild(makeBuildEntry(entry, deps.input));
+    list.appendChild(makeBuildEntry(entry, deps.input, deps.sprites, owner));
   }
   el.appendChild(list);
 
@@ -135,17 +142,36 @@ function renderBuildMenu(
   if (!coarse) positionPopover(el, menu.tile, deps.renderer);
 }
 
-function makeBuildEntry(entry: BuildMenuEntry, input: InputController): HTMLButtonElement {
+function makeBuildEntry(
+  entry: BuildMenuEntry,
+  input: InputController,
+  sprites: SpriteCache,
+  owner: PlayerId,
+): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'menu-entry build-entry';
   btn.dataset.buildEntry = entry.unitType;
   btn.disabled = !entry.affordable;
 
-  // Player-neutral letter chip (Phase 3 swaps this for a sprite image).
-  const chip = document.createElement('span');
-  chip.className = 'build-chip';
-  chip.textContent = UNIT_LETTER[entry.unitType as UnitType];
+  // Baked unit icon in the current player's colours, nearest-neighbour scaled.
+  // Falls back to the player-neutral letter chip when the sprite cache is in
+  // stub mode (no canvas backend → toDataURL returns null).
+  const url = sprites.toDataURL(entry.unitType as UnitType, owner);
+  let chip: HTMLElement;
+  if (url !== null) {
+    const img = document.createElement('img');
+    img.className = 'build-chip build-chip-sprite';
+    img.src = url;
+    img.alt = entry.label;
+    img.width = 26;
+    img.height = 26;
+    chip = img;
+  } else {
+    chip = document.createElement('span');
+    chip.className = 'build-chip';
+    chip.textContent = UNIT_LETTER[entry.unitType as UnitType];
+  }
 
   const label = document.createElement('span');
   label.className = 'build-label';
@@ -289,7 +315,16 @@ function ensureStyle(): void {
   font-size: 14px;
   border-radius: 2px;
 }
+/* Sprite icon variant: no chip background, crisp nearest-neighbour upscale of
+   the 16px baked sprite so it stays pixel-sharp at 26px. */
+.build-chip-sprite {
+  background: transparent;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  object-fit: contain;
+}
 .build-entry:disabled .build-chip { background: #2a2a2a; color: var(--ink-faint); }
+.build-entry:disabled .build-chip-sprite { background: transparent; opacity: 0.55; }
 .build-label {
   font-size: 12.5px;
   letter-spacing: 0.02em;

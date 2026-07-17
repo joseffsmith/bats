@@ -11,11 +11,15 @@
 // `window.__sheetReady` when painting finishes so the screenshot harness can
 // wait on a signal rather than a fixed sleep.
 
-import type { PlayerId, UnitType } from '../../../engine/core/types';
+import type { PlayerId, TerrainType, UnitType } from '../../../engine/core/types';
 import { createSpriteCache, type SpriteVariant } from '../../sprites';
+import { createTerrainCache } from '../../terrain';
 import { UNIT_GRIDS } from './units/index';
+import { TERRAIN_GRIDS } from './terrain/index';
 
 const TYPES = Object.keys(UNIT_GRIDS) as UnitType[];
+const TERRAIN_TYPES = Object.keys(TERRAIN_GRIDS) as TerrainType[];
+const OWNED_TERRAIN_TYPES: TerrainType[] = ['city', 'hq', 'factory'];
 
 // Palette lifted from index.html :root so the sheet sits in the game's world.
 const BG = '#14110d';
@@ -46,8 +50,21 @@ const COMBOS: Array<{ owner: PlayerId; variant: SpriteVariant; label: string }> 
 
 const GRID_W = PAD + LABEL_W + COMBOS.length * GROUP_W + (COMBOS.length - 1) * GROUP_GAP + PAD;
 const STRIP_H = 24 * 2 + 90; // two bg bands + labels
+
+// ── Terrain section (Phase 3B) ──
+const T3 = 48; // terrain tile at 3×
+const T_GAP = 12;
+const T_ROW_H = T3 + 30; // tile + label
+const SEAM_TILE = 24; // 4×4 seam-check tile size
+const SEAM_BLOCK = SEAM_TILE * 4;
+const TERRAIN_H =
+  34 + // section title
+  T_ROW_H + // all 8 terrains
+  26 + T_ROW_H + // owned-buildings sub-title + row
+  30 + SEAM_BLOCK + 20; // seam-check title + block + labels
+
 const CANVAS_W = Math.max(GRID_W, 820);
-const CANVAS_H = HEADER_H + TYPES.length * ROW_H + STRIP_H + PAD * 2;
+const CANVAS_H = HEADER_H + TYPES.length * ROW_H + STRIP_H + PAD + TERRAIN_H + PAD * 2;
 
 export function runSheet(parent: HTMLElement): void {
   parent.innerHTML = '';
@@ -149,5 +166,97 @@ export function runSheet(parent: HTMLElement): void {
   ctx.lineTo(CANVAS_W, HEADER_H - 0.5);
   ctx.stroke();
 
+  // ── Terrain section (Phase 3B) ──
+  const terrainTop = stripY + STRIP_H + PAD;
+  drawTerrainSection(ctx, terrainTop);
+
   (window as unknown as { __sheetReady?: boolean }).__sheetReady = true;
+}
+
+/** Baked terrain tiles: all 8 at 3×, the 3 capturables × {neutral,p0,p1}, and a
+ *  4×4 tiling seam check for plain + sea. */
+function drawTerrainSection(ctx: CanvasRenderingContext2D, top: number): void {
+  const terrain = createTerrainCache();
+  let y = top;
+
+  ctx.strokeStyle = RULE;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, y - 0.5);
+  ctx.lineTo(CANVAS_W, y - 0.5);
+  ctx.stroke();
+  y += 22;
+
+  ctx.fillStyle = GOLD;
+  ctx.font = '600 16px ui-monospace, monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText('Terrain — hand-authored 16×16 tiles, baked full-bleed', PAD, y);
+  y += 20;
+
+  // Row 1: all 8 terrains at 3×.
+  let x = PAD;
+  for (const t of TERRAIN_TYPES) {
+    const img = terrain.get(t, null);
+    if (img) ctx.drawImage(img, x, y, T3, T3);
+    ctx.fillStyle = INK_DIM;
+    ctx.font = '11px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(t, x + T3 / 2, y + T3 + 14);
+    x += T3 + T_GAP;
+  }
+  y += T_ROW_H;
+
+  // Row 2: owned buildings × {neutral, p0, p1}.
+  ctx.fillStyle = INK_DIM;
+  ctx.font = '11px ui-monospace, monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('Ownership variants — neutral / p0 / p1 (team ramp on roof/banner/pad)', PAD, y);
+  y += 18;
+  x = PAD;
+  const owners: Array<{ owner: PlayerId | null; tag: string; ink: string }> = [
+    { owner: null, tag: 'neutral', ink: INK_DIM },
+    { owner: 0, tag: 'p0', ink: '#e07a6a' },
+    { owner: 1, tag: 'p1', ink: '#7aa6e0' },
+  ];
+  for (const t of OWNED_TERRAIN_TYPES) {
+    for (const o of owners) {
+      const img = terrain.get(t, o.owner);
+      if (img) ctx.drawImage(img, x, y, T3, T3);
+      ctx.fillStyle = o.ink;
+      ctx.font = '10px ui-monospace, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${t} ${o.tag}`, x + T3 / 2, y + T3 + 13);
+      x += T3 + 6;
+    }
+    x += T_GAP; // gap between types
+  }
+  y += T_ROW_H;
+
+  // Row 3: 4×4 seam check for plain + sea — no visible grid should appear.
+  ctx.fillStyle = GOLD;
+  ctx.font = '12px ui-monospace, monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('Tiling seam check — 4×4 repeat (look for a grid)', PAD, y);
+  y += 16;
+  const seams: Array<{ t: TerrainType; label: string }> = [
+    { t: 'plain', label: 'plain' },
+    { t: 'sea', label: 'sea' },
+  ];
+  x = PAD;
+  for (const s of seams) {
+    const img = terrain.get(s.t, null);
+    if (img) {
+      for (let ty = 0; ty < 4; ty++) {
+        for (let tx = 0; tx < 4; tx++) {
+          ctx.drawImage(img, x + tx * SEAM_TILE, y + ty * SEAM_TILE, SEAM_TILE, SEAM_TILE);
+        }
+      }
+    }
+    ctx.fillStyle = INK_DIM;
+    ctx.font = '11px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(s.label, x + SEAM_BLOCK / 2, y + SEAM_BLOCK + 14);
+    x += SEAM_BLOCK + T_GAP * 2;
+  }
 }

@@ -26,7 +26,6 @@ import { log, setLogEnabled } from './engine/core/logger';
 import type { PlayerId } from './engine/core/types';
 import { createSpriteCache } from './renderer/sprites';
 import { createTerrainCache } from './renderer/terrain';
-import { loadAssets } from './renderer/assets/loader';
 import { createAudio } from './renderer/audio';
 import { createChrome } from './renderer/chrome';
 import { runEditor } from './renderer/editor';
@@ -107,11 +106,12 @@ async function main(): Promise<void> {
   const baseState = loadMap(MAPS[mapName]);
   const initialState = fogConfig.on ? enableFogMemory(baseState) : baseState;
   const emitter = createEmitter(initialState);
-  // Units are generated in-repo (createSpriteCache bakes the pixel-art grids);
-  // only terrain still needs the async PNG load.
-  const assets = await loadAssets();
+  // Units and terrain are both generated in-repo now — createSpriteCache and
+  // createTerrainCache bake the hand-authored pixel-art grids at startup, so
+  // there's nothing to await (the async main() shell is kept for the editor /
+  // sheet dynamic imports above).
   const sprites = createSpriteCache();
-  const terrain = createTerrainCache(assets.terrain);
+  const terrain = createTerrainCache();
   const renderer = createCanvasRenderer(canvas, {
     sprites,
     terrain,
@@ -199,7 +199,8 @@ async function main(): Promise<void> {
 
   // DOM action/build menus (Phase 2.3). Mounted after chrome so they layer above
   // it; they read `input.getOverlay()` and re-render on emitter transitions.
-  createMenus({ parent: appRoot, emitter, input, renderer });
+  // `sprites` lets build entries show the current player's baked unit icon.
+  createMenus({ parent: appRoot, emitter, input, renderer, sprites });
 
   // `?debug=1` installs the window.__bats automation hook (state read, synthetic
   // input, idle-await). Gated so ordinary hot-seat play carries no global. Must
