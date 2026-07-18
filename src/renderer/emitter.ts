@@ -14,7 +14,12 @@ import { reduce } from '../engine/core/reducer';
 export type EmitterEvent =
   | { type: 'stateChanged'; state: GameState; action: Action | null }
   | { type: 'animationStarted'; kind: string }
-  | { type: 'animationEnded'; kind: string };
+  | { type: 'animationEnded'; kind: string }
+  // Input state-machine node changed. `kind` is the InputState['kind'] string
+  // (idle / unit-selected / action-menu / …). Deliberately typed as `string`
+  // rather than the InputState union so emitter.ts never imports input.ts —
+  // that would close an import cycle (input.ts already imports Emitter).
+  | { type: 'inputStateChanged'; kind: string };
 
 export type EmitterListener = (event: EmitterEvent) => void;
 

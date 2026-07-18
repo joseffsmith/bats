@@ -4,11 +4,11 @@
 // hot-seat play or AI-vs-AI demos. The flow:
 //   1. Load the `duel` map JSON via the engine loader.
 //   2. Spin up a state emitter holding that initial state.
-//   3. Mount the canvas renderer + animation queue + input controller + canvas
-//      hud (tile-anchored popovers).
+//   3. Mount the canvas renderer + animation queue + input controller.
 //   4. Mount the AI driver. By default both players are 'human'; flip via the
 //      bottom-right controllers strip or `?p0=utility&p1=utility` URL params.
-//   5. Mount the DOM chrome (player HUDs, turn indicator, toolshelf, end-turn).
+//   5. Mount the DOM chrome (player HUDs, turn indicator, toolshelf, end-turn)
+//      and the DOM action/build menus (menus.ts).
 //
 // The canvas fills the viewport; DOM chrome floats over it at top and bottom.
 
@@ -18,7 +18,7 @@ import { enableFogMemory } from './engine/systems/memory';
 import { createEmitter } from './renderer/emitter';
 import { createCanvasRenderer } from './renderer/canvas';
 import { createInputController } from './renderer/input';
-import { createHud } from './renderer/hud';
+import { createMenus } from './renderer/menus';
 import { createAnimationQueue } from './renderer/animations';
 import { createAIDriver, AI_CHOICES } from './renderer/ai-driver';
 import type { AIChoice } from './renderer/ai-driver';
@@ -26,10 +26,11 @@ import { log, setLogEnabled } from './engine/core/logger';
 import type { PlayerId } from './engine/core/types';
 import { createSpriteCache } from './renderer/sprites';
 import { createTerrainCache } from './renderer/terrain';
-import { loadAssets } from './renderer/assets/loader';
 import { createAudio } from './renderer/audio';
 import { createChrome } from './renderer/chrome';
+import { createHandoff } from './renderer/handoff';
 import { runEditor } from './renderer/editor';
+import { installDebugHook } from './renderer/debug-hook';
 
 // `?render-log=1` flips the render category on for click-by-click traces.
 // `?ai-trace=1` enables the very chatty per-candidate AI score log.
@@ -66,6 +67,9 @@ function setupCanvas(): HTMLCanvasElement {
   const existing = document.querySelector('canvas');
   if (existing) existing.remove();
   const canvas = document.createElement('canvas');
+  // Tag as the board canvas so the global full-viewport / absolute-position CSS
+  // (index.html) applies here but NOT to the editor's own canvas.
+  canvas.className = 'board';
   const app = document.getElementById('app');
   if (app) {
     app.innerHTML = '';
@@ -82,20 +86,39 @@ async function main(): Promise<void> {
     runEditor(document.getElementById('app') ?? document.body);
     return;
   }
+  // `?sheet=1` short-circuits into the sprite contact sheet — the art-review
+  // deliverable (see scripts/sprite-sheet.ts). Dependency-light on purpose: it
+  // only touches the sprite cache, no engine/input/AI wiring.
+  if (params.get('sheet') === '1') {
+    const { runSheet } = await import('./renderer/assets/pixel-art/sheet');
+    runSheet(document.getElementById('app') ?? document.body);
+    return;
+  }
   const canvas = setupCanvas();
   const mapName = resolveMapName(params.get('map'));
   const fogConfig = parseFogConfig();
+  // `?ambient=off` (or `=0`) freezes all continuous idle animation for byte-
+  // stable visual-regression screenshots. The renderer honours the flag for its
+  // own idle terms (unit bob, selection dash) and skips factory smoke; the
+  // `performance.now` freeze below additionally halts terrain.ts's *internal*
+  // time reads (water shimmer, tree sway), which the renderer can't reach.
+  const ambientRaw = (params.get('ambient') ?? 'on').toLowerCase();
+  const ambient = !(ambientRaw === 'off' || ambientRaw === '0');
   const baseState = loadMap(MAPS[mapName]);
   const initialState = fogConfig.on ? enableFogMemory(baseState) : baseState;
   const emitter = createEmitter(initialState);
-  const assets = await loadAssets();
-  const sprites = createSpriteCache(assets.units);
-  const terrain = createTerrainCache(assets.terrain);
+  // Units and terrain are both generated in-repo now — createSpriteCache and
+  // createTerrainCache bake the hand-authored pixel-art grids at startup, so
+  // there's nothing to await (the async main() shell is kept for the editor /
+  // sheet dynamic imports above).
+  const sprites = createSpriteCache();
+  const terrain = createTerrainCache();
   const renderer = createCanvasRenderer(canvas, {
     sprites,
     terrain,
     fog: fogConfig,
     mapName,
+    ambient,
   });
   renderer.resize();
 
@@ -110,6 +133,14 @@ async function main(): Promise<void> {
     const t0 = origNow();
     performance.now = (): number => t0 + (origNow() - t0) / slowmo;
   }
+  // Ambient off pins performance.now to a FIXED constant (not a load-time
+  // reading, which would differ run-to-run) so every terrain frame — water,
+  // trees — is identical across the golden-generate and golden-compare passes.
+  // Safe here because ambient=off is only used for static screenshots, where
+  // nothing is animating and no elapsed-time math needs to progress.
+  if (!ambient) {
+    performance.now = (): number => 1_000;
+  }
   const animQueue = createAnimationQueue({
     onBusyChange: (busy) => {
       log('render', 'animation busy', { busy });
@@ -117,16 +148,33 @@ async function main(): Promise<void> {
   });
 
   const initialAI = parseInitialAI();
+  // `?seed=N` pins the AI driver's RNG so headless tests get reproducible AI
+  // turns. Absent → the driver keeps its `Date.now()` default. Spread the key
+  // in only when present (exactOptionalPropertyTypes forbids `seed: undefined`).
+  const seedRaw = params.get('seed');
+  const seedParsed = seedRaw !== null ? Number(seedRaw) : NaN;
+  const seed = Number.isFinite(seedParsed) ? Math.trunc(seedParsed) : undefined;
   const aiDriver = createAIDriver({
     emitter,
     animQueue,
     initial: initialAI,
     pauseMs: 250,
     fog: fogConfig.on,
+    ...(seed !== undefined ? { seed } : {}),
   });
 
-  const input = createInputController(renderer, emitter, animQueue);
-  const hud = createHud(renderer);
+  // Assigned once the fog handoff module is mounted (after chrome). Reads false
+  // until then. Folded into the Enter-to-end-turn predicate so the keyboard can't
+  // end a turn while the pass-the-device scrim is up (canvas clicks are already
+  // blocked natively by the scrim's pointer-events).
+  let handoffActive = (): boolean => false;
+
+  const input = createInputController(renderer, emitter, animQueue, {
+    endTurnAllowed: () =>
+      !aiDriver.inputLocked(emitter.getState()) &&
+      !animQueue.busy() &&
+      !handoffActive(),
+  });
 
   // Audio: default muted (so we don't autoplay). The audio module gates its
   // own context init on first canvas click so browsers don't reject it.
@@ -148,8 +196,41 @@ async function main(): Promise<void> {
     aiDriver,
     animQueue,
     audio,
+    // Single source of truth for the board insets: the chrome measures its own
+    // header/footer heights and the renderer reserves exactly that much space.
+    onInsetsChange: (t, b) => {
+      renderer.setBoardInsets(t, b);
+    },
+    // Floating Cancel chip → drop the current input selection/menu/target.
+    onCancel: () => input.cancel(),
   });
   log('render', 'chrome mounted', { muted: audio.isMuted() });
+
+  // Hot-seat fog handoff interstitial. Only meaningful with fog on, no fixed
+  // viewer override, and both controllers human (read live — the dropdowns can
+  // switch a controller mid-game). Drops an opaque pass-the-device scrim on each
+  // END_TURN; wired here so the Enter predicate above can suppress while it's up.
+  const handoff = createHandoff({
+    parent: appRoot,
+    emitter,
+    fogOn: fogConfig.on && fogConfig.viewerOverride === null,
+    bothHuman: () =>
+      aiDriver.getPlayerAI(0) === 'human' && aiDriver.getPlayerAI(1) === 'human',
+  });
+  handoffActive = (): boolean => handoff.isActive();
+
+  // DOM action/build menus (Phase 2.3). Mounted after chrome so they layer above
+  // it; they read `input.getOverlay()` and re-render on emitter transitions.
+  // `sprites` lets build entries show the current player's baked unit icon.
+  createMenus({ parent: appRoot, emitter, input, renderer, sprites });
+
+  // `?debug=1` installs the window.__bats automation hook (state read, synthetic
+  // input, idle-await). Gated so ordinary hot-seat play carries no global. Must
+  // run after the modules above exist — the hook only delegates to them.
+  if (params.get('debug') === '1') {
+    installDebugHook({ emitter, renderer, input, animQueue, aiDriver });
+    log('render', 'debug hook installed');
+  }
 
   // Wrap input.click so a clicked-on AI player has the input ignored. The
   // input controller doesn't know about the driver — we filter at the boundary.
@@ -165,7 +246,6 @@ async function main(): Promise<void> {
     const state = emitter.getState();
     const overlay = input.getOverlay();
     renderer.draw(state, overlay, animQueue);
-    hud.draw(state, overlay);
     rafId = window.requestAnimationFrame(frame);
   }
 

@@ -15,7 +15,7 @@ import type {
   Unit,
   UnitType,
 } from '../engine/core/types';
-import { tileAt, unitAt } from '../engine/core/types';
+import { unitAt } from '../engine/core/types';
 import { isVisibleTo, visibleTiles } from '../engine/queries/selectors';
 import type { AnimationQueue, Anim } from './animations';
 import { easeInOutCubic } from './easing';
@@ -24,21 +24,41 @@ import { PLAYER_COLOURS } from './canvas-palette';
 import { drawTerrain, type TerrainCache } from './terrain';
 import { drawColourGrade } from './colour-grade';
 import { drawFactorySmoke } from './terrain-fx';
+import {
+  DIGIT_GLYPHS,
+  DIGIT_W,
+  DIGIT_H,
+  DIGIT_INK,
+} from './assets/pixel-art/digits';
 export type { PlayerPalette } from './canvas-palette';
 export { PLAYER_COLOURS };
 
 // ─────────────────────────── Constants ───────────────────────────────────────
 
-export const TILE_SIZE_DESKTOP = 48;
-export const TILE_SIZE_MOBILE = 32;
-export const MOBILE_BREAKPOINT = 768;
+/** Provisional tile edge (CSS px) for the initial viewport. draw() overwrites
+ *  this with the map-aware fit (see fitTileSize) on the first frame; it only
+ *  survives in tests that resize() but never draw(). */
+const DEFAULT_TILE_SIZE = 48;
 
-/** Vertical space reserved at the top of the canvas for the DOM chrome
- *  (mirrored player HUDs + turn indicator). */
+/** Outer gutter (CSS px) kept clear on every side of the grid when fitting. */
+const MARGIN = 12;
+
+/** Fitted tile size is clamped to this closed range [16, 64]. */
+const MIN_TILE_SIZE = 16;
+const MAX_TILE_SIZE = 64;
+
+/** Floor for the measured chrome insets: a mis-measured (near-zero) chrome
+ *  height can't let the grid collide with the DOM bars. */
+const MIN_INSET = 40;
+
+/** DEFAULT vertical space reserved at the top of the canvas for the DOM chrome
+ *  (mirrored player HUDs + turn indicator). The live value lives on the viewport
+ *  (`insetTop`) and is overwritten by setBoardInsets from the measured chrome;
+ *  this constant only seeds the initial viewport. */
 export const BOARD_TOP_INSET = 110;
 
-/** Vertical space reserved at the bottom of the canvas for the DOM chrome
- *  (toolshelf + AI config + end-turn cluster). */
+/** DEFAULT vertical space reserved at the bottom of the canvas for the DOM
+ *  chrome (toolshelf + AI config + end-turn cluster). See BOARD_TOP_INSET. */
 export const BOARD_BOTTOM_INSET = 110;
 
 const UNIT_LETTER: Record<UnitType, string> = {
@@ -58,6 +78,142 @@ const UNIT_LETTER: Record<UnitType, string> = {
   carrier: 'V',
 };
 
+// ─────────────────────────── Ambient (idle-animation) gate ───────────────────
+
+// Continuous, time-driven idle effects — the unit idle bob and the selection-
+// ring dash phase here, plus water shimmer / tree sway (terrain.ts) and factory
+// smoke (terrain-fx.ts) — make every rendered frame differ from the last, which
+// is fatal to byte-stable screenshot goldens. `?ambient=off` (main.ts) flips
+// this OFF for visual regression captures. Module-level rather than threaded
+// through every draw fn to keep the churn minimal; it's set once at boot from
+// `CanvasRendererDeps.ambient`. main.ts additionally freezes `performance.now`
+// so terrain.ts's *internal* time reads freeze too (we don't edit terrain.ts).
+let ambientEnabled = true;
+
+/** Enable/disable continuous idle animations. See `?ambient=off`. */
+export function setAmbientEnabled(on: boolean): void {
+  ambientEnabled = on;
+}
+
+/** Phase source for the idle terms: real time when ambient is on, a fixed
+ *  constant when off so bob/dash render identically every frame. */
+function ambientPhaseMs(): number {
+  return ambientEnabled ? performance.now() : 0;
+}
+
+// ─────────────────────────── Baked digit atlas ───────────────────────────────
+
+// The on-board numerals (HP digit, capture-meter progress) are pixel glyphs
+// baked once into tiny outlined canvases and blitted scaled with imageSmoothing
+// off — sharp at any tile size, unlike fillText which blurs at ~10px. Each cell
+// is (DIGIT_W+2)×(DIGIT_H+2): the 3×5 ink glyph inset by a 1px dark outline so
+// the number reads over any terrain or sprite. Lazily built on first draw; in a
+// canvas-less env (jsdom smoke tests) the build yields null and the number
+// helpers no-op.
+
+const DIGIT_CELL_W = DIGIT_W + 2;
+const DIGIT_CELL_H = DIGIT_H + 2;
+const DIGIT_OUTLINE = '#12100b';
+const DIGIT_INK_COLOUR = '#ffffff';
+
+let digitAtlas: (CanvasImageSource | null)[] | null | undefined;
+
+function bakeDigit(d: number): CanvasImageSource | null {
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function') {
+    return null;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = DIGIT_CELL_W;
+  canvas.height = DIGIT_CELL_H;
+  let ctx: CanvasRenderingContext2D | null = null;
+  try {
+    ctx = canvas.getContext('2d');
+  } catch {
+    return null;
+  }
+  if (!ctx) return null;
+  const glyph = DIGIT_GLYPHS[String(d)];
+  if (!glyph) return null;
+  const img = ctx.createImageData(DIGIT_CELL_W, DIGIT_CELL_H);
+  const data = img.data;
+  const set = (x: number, y: number, hex: string): void => {
+    if (x < 0 || y < 0 || x >= DIGIT_CELL_W || y >= DIGIT_CELL_H) return;
+    const i = (y * DIGIT_CELL_W + x) * 4;
+    data[i] = parseInt(hex.slice(1, 3), 16);
+    data[i + 1] = parseInt(hex.slice(3, 5), 16);
+    data[i + 2] = parseInt(hex.slice(5, 7), 16);
+    data[i + 3] = 255;
+  };
+  // Pass 1: dark outline — dilate every ink cell by 1px into its 8 neighbours.
+  for (let gy = 0; gy < DIGIT_H; gy++) {
+    const row = glyph[gy] ?? '';
+    for (let gx = 0; gx < DIGIT_W; gx++) {
+      if (row[gx] !== DIGIT_INK) continue;
+      for (let oy = 0; oy <= 2; oy++) for (let ox = 0; ox <= 2; ox++) set(gx + ox, gy + oy, DIGIT_OUTLINE);
+    }
+  }
+  // Pass 2: ink on top, inset by the 1px outline margin.
+  for (let gy = 0; gy < DIGIT_H; gy++) {
+    const row = glyph[gy] ?? '';
+    for (let gx = 0; gx < DIGIT_W; gx++) {
+      if (row[gx] === DIGIT_INK) set(gx + 1, gy + 1, DIGIT_INK_COLOUR);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+}
+
+function getDigitAtlas(): (CanvasImageSource | null)[] | null {
+  if (digitAtlas !== undefined) return digitAtlas;
+  const first = bakeDigit(0);
+  if (first === null) {
+    digitAtlas = null;
+    return null;
+  }
+  const atlas: (CanvasImageSource | null)[] = [first];
+  for (let d = 1; d <= 9; d++) atlas.push(bakeDigit(d));
+  digitAtlas = atlas;
+  return atlas;
+}
+
+/** Scaled px width of `text` drawn by drawPixelNumber at ink height `inkH`. */
+function pixelNumberWidth(text: string, inkH: number): number {
+  const s = Math.max(1, inkH / DIGIT_H);
+  const advance = (DIGIT_W + 1) * s; // outlines of adjacent cells touch
+  return (text.length - 1) * advance + DIGIT_CELL_W * s;
+}
+
+/**
+ * Blit a baked pixel number. `x`,`y` anchor per `hAlign`/`vAlign`; `inkH` is the
+ * target glyph-ink height in px (the cell is slightly taller for the outline).
+ * No-op when the atlas couldn't be built.
+ */
+function drawPixelNumber(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  inkH: number,
+  hAlign: 'left' | 'right',
+  vAlign: 'top' | 'bottom',
+): void {
+  const atlas = getDigitAtlas();
+  if (!atlas) return;
+  const s = Math.max(1, inkH / DIGIT_H);
+  const cellW = DIGIT_CELL_W * s;
+  const cellH = DIGIT_CELL_H * s;
+  const advance = (DIGIT_W + 1) * s;
+  const totalW = pixelNumberWidth(text, inkH);
+  const startX = hAlign === 'right' ? x - totalW : x;
+  const topY = vAlign === 'bottom' ? y - cellH : y;
+  for (let i = 0; i < text.length; i++) {
+    const d = text.charCodeAt(i) - 48;
+    const cell = atlas[d];
+    if (!cell) continue;
+    ctx.drawImage(cell, Math.round(startX + i * advance), Math.round(topY), Math.ceil(cellW), Math.ceil(cellH));
+  }
+}
+
 // ─────────────────────────── View state ──────────────────────────────────────
 
 export type Overlay = {
@@ -65,6 +221,12 @@ export type Overlay = {
   moveRange?: Coord[];
   /** Tiles to highlight in the attack-range red. */
   attackRange?: Coord[];
+  /** Border-only trace of the FULL attack area. Indirect units set this to
+   *  their whole donut so "what can I hit if I stay" stays visible even where
+   *  the donut overlaps the (blue-filled) move range — the red outline carries
+   *  the threat read without stacking fills into mud. Falls back to
+   *  `attackRange` when absent (direct units: fringe fill and border match). */
+  attackRangeBorder?: Coord[];
   /** Tiles to highlight as capturable hint. */
   capturable?: Coord[];
   /** Tiles drawn as the currently-previewed move path. */
@@ -99,6 +261,10 @@ export type Viewport = {
   dpr: number;
   tileSize: number;
   origin: { x: number; y: number }; // top-left of grid in CSS pixels
+  /** Vertical space reserved at the top for the DOM chrome (measured, live). */
+  insetTop: number;
+  /** Vertical space reserved at the bottom for the DOM chrome (measured, live). */
+  insetBottom: number;
 };
 
 // ─────────────────────────── Public renderer API ─────────────────────────────
@@ -125,11 +291,20 @@ export type CanvasRendererDeps = {
   mapName?: import('./maps').MapName;
   /** Optional sheet-loaded terrain cache. Falls back to procedural per-tile. */
   terrain?: TerrainCache;
+  /** Continuous idle animations (bob, dash, water, smoke). Defaults to true;
+   *  the `?ambient=off` visual-regression param passes false. */
+  ambient?: boolean;
 };
 
 export type CanvasRenderer = {
   readonly canvas: HTMLCanvasElement;
   resize(): Viewport;
+  /**
+   * Update the reserved chrome insets (measured from the DOM header/footer).
+   * Clamps to a sane floor, integer-compares, and no-ops when unchanged so an
+   * observer callback can't feed a render loop. The next draw() re-fits tiles.
+   */
+  setBoardInsets(top: number, bottom: number): void;
   /** Render the full frame given current state + overlay. */
   draw(state: GameState, overlay: Overlay, anim: AnimationQueue): void;
   /** CSS-pixel → tile coord. Returns null if outside the grid. */
@@ -146,19 +321,31 @@ export function createCanvasRenderer(
 ): CanvasRenderer {
   let viewport: Viewport = computeViewport(canvas);
   const fog: FogConfig = deps.fog ?? { on: false, viewerOverride: null };
+  // Only flip the module gate when the caller explicitly opts out, so the many
+  // tests that construct a renderer without this dep keep the default (on).
+  if (deps.ambient === false) setAmbientEnabled(false);
 
   function computeViewport(c: HTMLCanvasElement): Viewport {
     const dpr = window.devicePixelRatio || 1;
     // jsdom sometimes has 0 inner sizes — fall back to a sensible default.
     const w = window.innerWidth || 1024;
     const h = window.innerHeight || 768;
-    const tileSize = w < MOBILE_BREAKPOINT ? TILE_SIZE_MOBILE : TILE_SIZE_DESKTOP;
     c.width = Math.max(1, Math.floor(w * dpr));
     c.height = Math.max(1, Math.floor(h * dpr));
     c.style.width = `${w}px`;
     c.style.height = `${h}px`;
-    // Origin set when we know the map size — recomputed each draw.
-    return { width: w, height: h, dpr, tileSize, origin: { x: 0, y: 0 } };
+    // tileSize is provisional (draw() re-fits it map-aware); origin is set once
+    // the map size is known, recomputed each draw. Insets seed from the default
+    // constants — setBoardInsets overwrites them from the measured DOM chrome.
+    return {
+      width: w,
+      height: h,
+      dpr,
+      tileSize: DEFAULT_TILE_SIZE,
+      origin: { x: 0, y: 0 },
+      insetTop: BOARD_TOP_INSET,
+      insetBottom: BOARD_BOTTOM_INSET,
+    };
   }
 
   function originFor(state: GameState, vp: Viewport): { x: number; y: number } {
@@ -168,19 +355,35 @@ export function createCanvasRenderer(
     const gridW = cols * vp.tileSize;
     const gridH = rows * vp.tileSize;
     const x = Math.floor((vp.width - gridW) / 2);
-    // Centre the grid inside the chrome-bounded area: between BOARD_TOP_INSET
-    // and (height - BOARD_BOTTOM_INSET). Clamp to never overlap the top chrome.
-    const usableH = vp.height - BOARD_TOP_INSET - BOARD_BOTTOM_INSET;
+    // Centre the grid inside the chrome-bounded area: between the measured top
+    // inset and (height - bottom inset). Clamp to never overlap the top chrome.
+    const usableH = vp.height - vp.insetTop - vp.insetBottom;
     const y = Math.max(
-      BOARD_TOP_INSET + 8,
-      BOARD_TOP_INSET + Math.floor((usableH - gridH) / 2),
+      vp.insetTop + 8,
+      vp.insetTop + Math.floor((usableH - gridH) / 2),
     );
     return { x, y };
   }
 
   function resize(): Viewport {
+    // Preserve the measured insets across a resize — the DOM chrome's height is
+    // reported independently by the ResizeObserver (setBoardInsets), and a
+    // window resize shouldn't stomp it back to the defaults.
+    const prev = viewport;
     viewport = computeViewport(canvas);
+    viewport.insetTop = prev.insetTop;
+    viewport.insetBottom = prev.insetBottom;
     return viewport;
+  }
+
+  function setBoardInsets(top: number, bottom: number): void {
+    const t = Math.max(MIN_INSET, Math.round(top));
+    const b = Math.max(MIN_INSET, Math.round(bottom));
+    // Integer-compare + no-op guard: the caller is a ResizeObserver, and
+    // re-writing an unchanged value could churn (observer → layout → observer).
+    if (t === viewport.insetTop && b === viewport.insetBottom) return;
+    viewport.insetTop = t;
+    viewport.insetBottom = b;
   }
 
   function pixelToTile(px: number, py: number): Coord | null {
@@ -203,10 +406,21 @@ export function createCanvasRenderer(
 
   function draw(state: GameState, overlay: Overlay, anim: AnimationQueue): void {
     const vp = viewport;
+    // Re-fit the tile size every frame: it depends on the map dimensions (which
+    // computeViewport can't see) plus the viewport + measured insets, any of
+    // which may have changed since the last frame. Cheap arithmetic.
+    const rows = state.map.length;
+    const cols = state.map[0]?.length ?? 0;
+    vp.tileSize = fitTileSize(cols, rows, vp.width, vp.height, vp.insetTop, vp.insetBottom);
     vp.origin = originFor(state, vp);
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('2D context unavailable');
     ctx.setTransform(vp.dpr, 0, 0, vp.dpr, 0, 0);
+    // Nearest-neighbour scaling: the unit PNGs are authored at 48px and the fit
+    // routinely up/down-scales them; crisp pixels beat bilinear mush here (and
+    // Phase 3's pixel art will want the same). Context state, so once per frame
+    // suffices — the later shake setTransform doesn't reset it.
+    ctx.imageSmoothingEnabled = false;
     // Transparent clear — the body background (warm dark + noise) shows
     // through, unifying the canvas with the DOM chrome.
     ctx.clearRect(0, 0, vp.width, vp.height);
@@ -230,7 +444,10 @@ export function createCanvasRenderer(
     drawTerrain(ctx, state, vp, deps.terrain);
     drawOverlays(ctx, vp, overlay);
     drawUnits(ctx, state, vp, anim, overlay, deps.sprites, fog.on ? viewer : null);
-    drawFactorySmoke(ctx, state, vp);
+    // Skip the continuous smoke pass entirely when ambient is off (visual
+    // goldens) — a frozen puff would still be deterministic, but omitting it
+    // keeps the reference image clean.
+    if (ambientEnabled) drawFactorySmoke(ctx, state, vp);
     if (fog.on) drawFogMask(ctx, state, vp, viewer);
     drawVignette(ctx, vp);
     drawColourGrade(ctx, vp, deps.mapName);
@@ -240,6 +457,7 @@ export function createCanvasRenderer(
   return {
     canvas,
     resize,
+    setBoardInsets,
     draw,
     pixelToTile,
     tileToPixel,
@@ -332,10 +550,23 @@ function drawOverlays(
   for (const c of overlay.moveRange ?? []) {
     fillTile(ctx, vp, c, 'rgba(60, 120, 230, 0.30)');
   }
-  // Attack range (red).
+  // Attack range (red). Since input.ts subtracts the reachable tiles, this no
+  // longer overlaps the blue fill — the two groups tile disjoint regions.
   for (const c of overlay.attackRange ?? []) {
     fillTile(ctx, vp, c, 'rgba(220, 60, 60, 0.34)');
   }
+  // Crisp 1px outline around the *union boundary* of each group, so a range
+  // reads as one shape instead of a faint stain. Only the outer edges are
+  // stroked (a shared edge between two same-group tiles is skipped), which is
+  // what turns the fill into a contour. Drawn over both fills so the contours
+  // sit on top; the red border sits above blue where they abut.
+  strokeGroupBorder(ctx, vp, overlay.moveRange, 'rgba(120, 175, 255, 0.9)');
+  strokeGroupBorder(
+    ctx,
+    vp,
+    overlay.attackRangeBorder ?? overlay.attackRange,
+    'rgba(240, 105, 95, 0.95)',
+  );
   // Move-preview path.
   for (const c of overlay.movePath ?? []) {
     fillTile(ctx, vp, c, 'rgba(255, 220, 80, 0.45)');
@@ -347,8 +578,9 @@ function drawOverlays(
     ctx.save();
     ctx.lineWidth = 2.5;
     ctx.strokeStyle = '#ffd84a';
-    // Dash pattern: 4 dashes per cycle, ~6deg/cycle phase per ms.
-    const phase = (performance.now() / 1000) * 30; // deg/s
+    // Dash pattern: 4 dashes per cycle, ~6deg/cycle phase per ms. Frozen when
+    // ambient is off so the ring doesn't rotate between golden captures.
+    const phase = (ambientPhaseMs() / 1000) * 30; // deg/s
     ctx.setLineDash([Math.max(6, ts * 0.18), Math.max(4, ts * 0.12)]);
     ctx.lineDashOffset = -phase;
     // Slightly inset rounded square — easier on the eye than a hard corner.
@@ -394,6 +626,40 @@ function fillTile(
   ctx.fillRect(px, py, ts, ts);
 }
 
+/**
+ * Stroke only the OUTER boundary of a group of same-coloured overlay tiles: for
+ * each cell, an edge is drawn only when the neighbour on that side isn't also in
+ * the group (a cheap O(4n) neighbour-set lookup). The result is a single crisp
+ * contour around the union instead of a grid of boxed cells — the fix that lets
+ * a range read as a shape. Coords are integer tile indices and origin/tileSize
+ * are integers, so the 0.5px inset keeps the 1px line pixel-crisp.
+ */
+function strokeGroupBorder(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  coords: Coord[] | undefined,
+  stroke: string,
+): void {
+  if (!coords || coords.length === 0) return;
+  const ts = vp.tileSize;
+  const inSet = new Set(coords.map((c) => `${c.x},${c.y}`));
+  const has = (x: number, y: number): boolean => inSet.has(`${x},${y}`);
+  ctx.save();
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (const c of coords) {
+    const px = vp.origin.x + c.x * ts;
+    const py = vp.origin.y + c.y * ts;
+    if (!has(c.x, c.y - 1)) { ctx.moveTo(px, py + 0.5); ctx.lineTo(px + ts, py + 0.5); } // top
+    if (!has(c.x, c.y + 1)) { ctx.moveTo(px, py + ts - 0.5); ctx.lineTo(px + ts, py + ts - 0.5); } // bottom
+    if (!has(c.x - 1, c.y)) { ctx.moveTo(px + 0.5, py); ctx.lineTo(px + 0.5, py + ts); } // left
+    if (!has(c.x + 1, c.y)) { ctx.moveTo(px + ts - 0.5, py); ctx.lineTo(px + ts - 0.5, py + ts); } // right
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawUnits(
   ctx: CanvasRenderingContext2D,
   state: GameState,
@@ -434,7 +700,6 @@ function drawUnits(
     if (!isVisibleTo(state, unit, observer, fogOn)) continue;
     drawUnit(
       ctx,
-      state,
       vp,
       unit,
       moveAnimById.get(unit.id),
@@ -558,7 +823,6 @@ function drawGhosts(
 
 function drawUnit(
   ctx: CanvasRenderingContext2D,
-  state: GameState,
   vp: Viewport,
   unit: Unit,
   moveAnim: Anim | undefined,
@@ -611,7 +875,9 @@ function drawUnit(
     // bob; mid-MOVE units don't either (handled above).
     if (!(unit.hasMoved && unit.hasActed)) {
       const hash = idleHash(unit.id);
-      const wobble = Math.sin(performance.now() / 600 + hash * Math.PI * 2);
+      // ambientPhaseMs() freezes this to a constant when ambient is off so the
+      // platoon holds still for byte-stable screenshots.
+      const wobble = Math.sin(ambientPhaseMs() / 600 + hash * Math.PI * 2);
       renderY += wobble * Math.max(0.7, ts * 0.025);
     }
   }
@@ -706,6 +972,11 @@ function drawUnit(
     const filled = Math.max(0, (displayHp / 100) * barW);
     ctx.fillStyle = segments >= 6 ? '#7ed957' : segments >= 3 ? '#ffd84a' : '#ff5050';
     ctx.fillRect(renderX + 3, barY, filled, barH);
+    // AW-style HP numeral (1–9) bottom-right, just above the bar. Baked pixel
+    // digits, not fillText — sharp at tile size. Full-HP units show neither.
+    const hpDigit = Math.max(1, Math.min(9, Math.ceil(displayHp / 10)));
+    const digitH = Math.max(5, Math.round(ts * 0.3));
+    drawPixelNumber(ctx, String(hpDigit), renderX + ts - 3, barY - 1, digitH, 'right', 'bottom');
   }
 
   // Cargo indicator: small filled dot on the top-right when a transport is
@@ -726,18 +997,33 @@ function drawUnit(
     ctx.fillText(String(unit.cargo.length), cx, cy + 1);
   }
 
-  // Capture progress: tiny coloured pip on top-left.
+  // Capture progress: a mini flag-meter on the top-left — a pixel flag in the
+  // capturing player's colour plus the progress number in the baked digit atlas,
+  // on a dark plate so it reads over bright building tiles at 32px.
   if (unit.captureProgress > 0) {
-    const tile = tileAt(state.map, unit.pos);
-    void tile;
-    ctx.fillStyle = '#ffd84a';
-    const pipW = Math.max(3, Math.floor(ts * 0.18));
-    ctx.fillRect(renderX + 3, renderY + 3, pipW, pipW);
-    ctx.fillStyle = '#222';
-    ctx.font = `bold ${Math.floor(ts * 0.18)}px sans-serif`;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillText(String(unit.captureProgress), renderX + 4, renderY + 3);
+    const numText = String(unit.captureProgress);
+    const numH = Math.max(5, Math.round(ts * 0.24));
+    const cellH = Math.ceil((numH * DIGIT_CELL_H) / DIGIT_H);
+    const numW = pixelNumberWidth(numText, numH);
+    const bx = renderX + 3;
+    const by = renderY + 3;
+    const poleW = Math.max(1, Math.round(cellH * 0.14));
+    const pennW = Math.max(3, Math.round(cellH * 0.55));
+    const pennH = Math.max(3, Math.round(cellH * 0.5));
+    const gap = 2;
+    const plateW = poleW + pennW + gap + numW + 4;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(bx - 1, by - 1, plateW, cellH + 2);
+    // Flag: dark pole + team-coloured pennant with a thin outline.
+    ctx.fillStyle = '#12100b';
+    ctx.fillRect(bx, by, poleW, cellH);
+    ctx.fillStyle = palette.fill;
+    ctx.fillRect(bx + poleW, by, pennW, pennH);
+    ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bx + poleW + 0.5, by + 0.5, pennW, pennH);
+    // Progress number beside the flag.
+    drawPixelNumber(ctx, numText, bx + poleW + pennW + gap, by, numH, 'left', 'top');
   }
 }
 
@@ -841,7 +1127,7 @@ function drawAttackEffects(
   // ── Projectile (first projFrac of window) ───────────────────────────────
   if (t < projFrac) {
     const p = t / projFrac;
-    let px = ax + dx * p;
+    const px = ax + dx * p;
     let py = ay + dy * p;
     if (anim.arc) {
       // Parabolic arc: deflect upward by an amount proportional to distance.
@@ -997,11 +1283,15 @@ function drawDamagePreview(
   const p = tileTopLeft(vp, preview.tile);
   const w = 130;
   const h = 44;
-  let bx = p.x + ts + 6;
+  // Centre horizontally over the target tile, clamped into the viewport, then
+  // prefer drawing ABOVE the tile. On a touch device the tile is under the
+  // player's thumb, so a below/right tooltip would sit under the finger; above
+  // keeps it readable (and it reads fine on desktop too). Fall BELOW only when
+  // there's no room above the top chrome.
+  let bx = p.x + ts / 2 - w / 2;
+  bx = Math.max(8, Math.min(bx, vp.width - 8 - w));
   let by = p.y - h - 6;
-  // Keep on-screen.
-  if (bx + w > vp.width - 8) bx = p.x - w - 6;
-  if (by < BOARD_TOP_INSET + 4) by = p.y + ts + 6;
+  if (by < vp.insetTop + 4) by = p.y + ts + 6;
   ctx.fillStyle = 'rgba(20,20,20,0.92)';
   ctx.fillRect(bx, by, w, h);
   ctx.strokeStyle = '#ffd84a';
@@ -1071,9 +1361,37 @@ function drawWinnerBanner(
   ctx.fillText(`Player ${state.winner + 1} wins!`, x + w / 2, y + h / 2);
 }
 
-// Re-export for hud / input to share the same constants.
-export function tileSizeFor(width: number): number {
-  return width < MOBILE_BREAKPOINT ? TILE_SIZE_MOBILE : TILE_SIZE_DESKTOP;
+/**
+ * Largest tile edge (CSS px) at which a `cols`×`rows` grid fits inside the
+ * chrome-bounded viewport, snapped and clamped for crisp rendering. Pure — the
+ * renderer calls it every frame from draw() (the map size lives on the state,
+ * not the viewport), and the unit tests exercise it directly.
+ *
+ *   availW = width  - 2*MARGIN
+ *   availH = height - insetTop - insetBottom - 2*MARGIN
+ *   fit    = floor(min(availW/cols, availH/rows))
+ *
+ * At >=32px we snap DOWN to the nearest multiple of 16 (32/48/64) so the 48px
+ * source PNGs scale by clean ratios; below 32 every integer size is allowed so
+ * dense maps on phones surrender as little board as possible. Final clamp to
+ * [16, 64].
+ */
+export function fitTileSize(
+  cols: number,
+  rows: number,
+  width: number,
+  height: number,
+  insetTop: number,
+  insetBottom: number,
+): number {
+  if (cols <= 0 || rows <= 0) return DEFAULT_TILE_SIZE;
+  const availW = width - 2 * MARGIN;
+  const availH = height - insetTop - insetBottom - 2 * MARGIN;
+  let fit = Math.floor(Math.min(availW / cols, availH / rows));
+  // Snap down to a multiple of 16 at desktop-ish sizes so sprites scale cleanly;
+  // leave sub-32 sizes unsnapped so tight phone fits aren't rounded away.
+  if (fit >= 32) fit = Math.floor(fit / 16) * 16;
+  return Math.max(MIN_TILE_SIZE, Math.min(MAX_TILE_SIZE, fit));
 }
 
 export function isUnitAt(state: GameState, c: Coord): Unit | undefined {

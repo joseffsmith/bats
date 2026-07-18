@@ -10,8 +10,10 @@
 // pointer-events on the root is `none` so canvas clicks pass through the void;
 // individual interactive controls opt back in with `auto`.
 //
-// CHROME_TOP_HEIGHT / CHROME_BOTTOM_HEIGHT are exported so canvas.ts can
-// reserve grid space.
+// The chrome measures its own header/footer heights via a ResizeObserver and
+// reports them (plus a small breathing gap) through `onInsetsChange`, so the
+// canvas renderer reserves exactly as much grid space as the chrome occupies —
+// the single source of truth for the board's top/bottom insets.
 
 import type { GameState, PlayerId } from '../engine/core/types';
 import type { Emitter } from './emitter';
@@ -26,11 +28,20 @@ import { MAPS, MAP_NAMES, mapLabel, resolveMapName } from './maps';
 import type { MapName } from './maps';
 import { log } from '../engine/core/logger';
 
-export const CHROME_TOP_HEIGHT = 96;
-export const CHROME_BOTTOM_HEIGHT = 96;
+/** Breathing gap (CSS px) added to each measured chrome height so the board
+ *  never butts flush against the DOM bars. */
+const INSET_GAP = 8;
 
 const PLAYER_NAMES: Record<PlayerId, string> = { 0: 'Vermilion', 1: 'Cobalt' };
 const PLAYER_NUMERALS: Record<PlayerId, string> = { 0: 'I', 1: 'II' };
+
+/** Player-facing "Day" from the engine's ply counter. The engine increments
+ *  `state.turn` on every END_TURN (a ply); one AW-style Day is a full round of
+ *  both players, so Day = ⌈turn / 2⌉ (turns 1 & 2 → Day 1, turn 3 → Day 2, …).
+ *  Display only — the engine and the replay/debug surfaces keep raw plies. */
+function dayOf(turn: number): number {
+  return Math.ceil(turn / 2);
+}
 
 export type Chrome = {
   destroy(): void;
@@ -42,6 +53,12 @@ export type ChromeDeps = {
   aiDriver: AIDriver;
   animQueue: AnimationQueue;
   audio: AudioModule;
+  /** Reports the measured chrome insets (top header / bottom footer heights,
+   *  each plus INSET_GAP) whenever they change. Fires once on mount. */
+  onInsetsChange?: (top: number, bottom: number) => void;
+  /** Called when the floating Cancel chip is tapped. main.ts wires it to
+   *  input.cancel. Optional so chrome tests (which omit it) keep working. */
+  onCancel?: () => void;
 };
 
 export function createChrome(deps: ChromeDeps): Chrome {
@@ -75,6 +92,7 @@ export function createChrome(deps: ChromeDeps): Chrome {
   const actions = createActions({
     emitter: deps.emitter,
     aiDriver: deps.aiDriver,
+    animQueue: deps.animQueue,
   });
 
   bottom.appendChild(toolshelf.root);
@@ -86,6 +104,13 @@ export function createChrome(deps: ChromeDeps): Chrome {
   // state machine has locked canvas events because `state.winner !== null`.
   const winner = createWinnerOverlay();
   root.appendChild(winner.root);
+
+  // Floating Cancel chip — a discoverable "escape hatch" out of any non-idle
+  // input node (tile/menu/target picker). Shows on both pointer types (desktop
+  // gains a click-equivalent for Esc); hidden in idle. Driven off the input
+  // controller's `inputStateChanged` node signal, not the game state.
+  const cancelChip = createCancelChip(() => deps.onCancel?.());
+  root.appendChild(cancelChip.root);
 
   deps.parent.appendChild(root);
 
@@ -100,13 +125,40 @@ export function createChrome(deps: ChromeDeps): Chrome {
 
   const unsub = deps.emitter.on((ev) => {
     if (ev.type === 'stateChanged') refresh(ev.state);
+    else if (ev.type === 'inputStateChanged') cancelChip.setKind(ev.kind);
   });
 
   refresh(deps.emitter.getState());
 
+  // ── Measured board insets ───────────────────────────────────────────────────
+  // Observe the top header and bottom footer heights and report them (plus a
+  // small breathing gap) to the renderer so it reserves exactly the chrome's
+  // footprint. Integer-guarded so an unchanged measurement doesn't re-fire — the
+  // renderer's setBoardInsets also no-ops, but stopping here avoids the churn.
+  let lastTop = -1;
+  let lastBottom = -1;
+  function reportInsets(): void {
+    if (!deps.onInsetsChange) return;
+    const t = Math.round(top.offsetHeight) + INSET_GAP;
+    const b = Math.round(bottom.offsetHeight) + INSET_GAP;
+    if (t === lastTop && b === lastBottom) return;
+    lastTop = t;
+    lastBottom = b;
+    deps.onInsetsChange(t, b);
+  }
+  let observer: ResizeObserver | null = null;
+  if (typeof ResizeObserver !== 'undefined') {
+    observer = new ResizeObserver(() => reportInsets());
+    observer.observe(top);
+    observer.observe(bottom);
+  }
+  // Fire once on mount even if the observer is unavailable (or hasn't ticked).
+  reportInsets();
+
   return {
     destroy(): void {
       unsub();
+      observer?.disconnect();
       root.remove();
     },
   };
@@ -141,8 +193,11 @@ function createPlayerPanel(pid: PlayerId): PlayerPanel {
   const stats = document.createElement('div');
   stats.className = 'stats';
 
-  const fundsStat = createStat('Coffer');
-  const unitsStat = createStat('Units');
+  // Stable per-kind modifier classes so the responsive CSS can target them
+  // individually — the mobile breakpoint hides `.stat-units` so the
+  // gameplay-critical Coffer always fits.
+  const fundsStat = createStat('Coffer', 'stat-coffer');
+  const unitsStat = createStat('Units', 'stat-units');
   stats.appendChild(fundsStat.root);
   stats.appendChild(unitsStat.root);
 
@@ -160,14 +215,20 @@ function createPlayerPanel(pid: PlayerId): PlayerPanel {
     const count = Object.values(state.units).filter((u) => u.owner === pid).length;
     unitsStat.value.textContent = String(count);
     unitsStat.value.classList.toggle('muted', count === 0);
+    // Singular/plural label ("1 UNIT" vs "0/2 UNITS"). Coffer stays fixed (it's
+    // an identity, not a count). CSS upper-cases the text.
+    unitsStat.label.textContent = count === 1 ? 'Unit' : 'Units';
   }
 
   return { root, update };
 }
 
-function createStat(label: string): { root: HTMLElement; value: HTMLElement } {
+function createStat(
+  label: string,
+  modifier?: string,
+): { root: HTMLElement; value: HTMLElement; label: HTMLElement } {
   const root = document.createElement('div');
-  root.className = 'stat';
+  root.className = modifier ? `stat ${modifier}` : 'stat';
   const v = document.createElement('span');
   v.className = 'v';
   v.textContent = '—';
@@ -176,7 +237,7 @@ function createStat(label: string): { root: HTMLElement; value: HTMLElement } {
   k.textContent = label;
   root.appendChild(v);
   root.appendChild(k);
-  return { root, value: v };
+  return { root, value: v, label: k };
 }
 
 // ─────────────────────────── Turn indicator ──────────────────────────────────
@@ -211,7 +272,7 @@ function createTurnIndicator(): TurnIndicator {
   root.appendChild(arrow);
 
   function update(state: GameState): void {
-    turnN.innerHTML = `Turn <em>${String(state.turn).padStart(2, '0')}</em>`;
+    turnN.innerHTML = `Day <em>${String(dayOf(state.turn)).padStart(2, '0')}</em>`;
     if (state.winner !== null) {
       phase.textContent = 'Concluded';
       arrowText.textContent = `${PLAYER_NAMES[state.winner]} victorious`;
@@ -236,7 +297,18 @@ type ToolshelfDeps = {
 
 function createToolshelf(deps: ToolshelfDeps): { root: HTMLElement } {
   const root = document.createElement('div');
-  root.className = 'toolshelf';
+  // `collapsed` only bites under the mobile media query — on desktop the class
+  // is inert (all tools stay visible and the disclosure button is display:none),
+  // so starting collapsed is safe everywhere.
+  root.className = 'toolshelf collapsed';
+
+  // Mobile disclosure: a "Tools" button (desktop-hidden via the media query)
+  // toggles `.collapsed`, which the media query uses to show/hide the tools.
+  const disclosure = makeTool('Tools', '☰');
+  disclosure.classList.add('tools-disclosure');
+  disclosure.addEventListener('click', () => {
+    root.classList.toggle('collapsed');
+  });
 
   const replayBtn = makeTool('Replay', '⤺');
   const saveBtn = makeTool('Save', '◊');
@@ -303,12 +375,13 @@ function createToolshelf(deps: ToolshelfDeps): { root: HTMLElement } {
 
   // Map picker — reloads the page with `?map=<name>` so we get a fresh state
   // through `main.ts` rather than trying to live-swap.
-  const mapPicker = createMapPicker();
+  const mapPicker = createMapPicker(deps.emitter);
   // Fog toggle — reloads the page with `?fog=on|off` for the same reason
   // (live-swapping fog mid-game is meaningless when the AI was planning
   // omnisciently up to that point).
-  const fogToggle = createFogToggle();
+  const fogToggle = createFogToggle(deps.emitter);
 
+  root.appendChild(disclosure);
   root.appendChild(replayBtn);
   root.appendChild(makeDivider());
   root.appendChild(saveBtn);
@@ -323,13 +396,15 @@ function createToolshelf(deps: ToolshelfDeps): { root: HTMLElement } {
   return { root };
 }
 
-function createFogToggle(): HTMLElement {
+function createFogToggle(emitter: Emitter): HTMLElement {
   const params = new URLSearchParams(window.location.search);
   const on = (params.get('fog') ?? 'off').toLowerCase();
   const isOn = on === 'on' || on === '1' || on === 'true';
   const btn = makeTool(isOn ? 'Fog on' : 'Fog off', '◐');
   btn.classList.toggle('off', !isOn);
   btn.addEventListener('click', () => {
+    // Toggling fog reloads the page, discarding any match in progress — guard it.
+    if (!confirmDiscard(emitter)) return;
     const url = new URL(window.location.href);
     url.searchParams.set('fog', isOn ? 'off' : 'on');
     window.location.assign(url.toString());
@@ -337,7 +412,18 @@ function createFogToggle(): HTMLElement {
   return btn;
 }
 
-function createMapPicker(): HTMLElement {
+/** Confirm before a page reload that would silently discard a live match. Returns
+ *  true to proceed. A match is "in progress" once anyone has ended a turn
+ *  (turn > 1) and no one has won yet; a fresh board (turn 1) reloads freely. */
+function confirmDiscard(emitter: Emitter): boolean {
+  const state = emitter.getState();
+  if (state.turn > 1 && state.winner === null) {
+    return window.confirm('Abandon the current match?');
+  }
+  return true;
+}
+
+function createMapPicker(emitter: Emitter): HTMLElement {
   const wrap = document.createElement('label');
   wrap.className = 'map-picker tool';
   const glyph = document.createElement('span');
@@ -358,6 +444,12 @@ function createMapPicker(): HTMLElement {
     sel.appendChild(opt);
   }
   sel.addEventListener('change', () => {
+    // Switching map reloads the page, discarding any match in progress — guard
+    // it, and on cancel restore the select to the currently-loaded map.
+    if (!confirmDiscard(emitter)) {
+      sel.value = current;
+      return;
+    }
     const next = sel.value as MapName;
     const url = new URL(window.location.href);
     url.searchParams.set('map', next);
@@ -406,6 +498,7 @@ function flashTool(btn: HTMLElement, msg: string, err = false): void {
 type ActionsDeps = {
   emitter: Emitter;
   aiDriver: AIDriver;
+  animQueue: AnimationQueue;
 };
 
 type Actions = {
@@ -466,7 +559,13 @@ function createActions(deps: ActionsDeps): Actions {
   endTurn.dataset.action = 'end-turn';
   endTurn.innerHTML = 'End Turn <span class="kbd-ret">↵</span>';
   endTurn.addEventListener('click', () => {
-    if (deps.emitter.getState().winner !== null) return;
+    const state = deps.emitter.getState();
+    if (state.winner !== null) return;
+    // Same turn-steal guard as the Enter keybind: while the AI holds input lock
+    // it is mid-plan, and while animations are settling the board is between
+    // states. A click in either window would flip currentPlayer and let the
+    // AI's trailing END_TURN end the human's turn — so refuse the click.
+    if (deps.aiDriver.inputLocked(state) || deps.animQueue.busy()) return;
     deps.emitter.dispatch({ type: 'END_TURN' });
   });
 
@@ -482,9 +581,12 @@ function createActions(deps: ActionsDeps): Actions {
     const remaining = owned.filter((u) => !u.hasActed).length;
     movesV.innerHTML = `<em>${remaining}</em> / ${owned.length}`;
     cluster.dataset.player = String(current);
-    const concluded = state.winner !== null;
-    endTurn.disabled = concluded;
-    endTurn.classList.toggle('disabled', concluded);
+    // Disable when the match is over, and also during an AI turn: the click
+    // handler is inert then (see its guard), so the button must read as
+    // disabled rather than falsely inviting a click.
+    const disabled = state.winner !== null || deps.aiDriver.inputLocked(state);
+    endTurn.disabled = disabled;
+    endTurn.classList.toggle('disabled', disabled);
   }
 
   return { root, update };
@@ -548,10 +650,34 @@ function createWinnerOverlay(): WinnerOverlay {
     root.hidden = false;
     root.dataset.player = String(state.winner);
     title.textContent = `${PLAYER_NAMES[state.winner]} victorious`;
-    subtitle.textContent = `Player ${state.winner + 1} captured the field on turn ${state.turn}.`;
+    subtitle.textContent = `Player ${state.winner + 1} captured the field on day ${dayOf(state.turn)}.`;
   }
 
   return { root, update };
+}
+
+// ─────────────────────────── Cancel chip ─────────────────────────────────────
+
+type CancelChip = {
+  root: HTMLElement;
+  /** Show for any non-idle input node; hide in idle. */
+  setKind(kind: string): void;
+};
+
+function createCancelChip(onCancel: () => void): CancelChip {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'cancel-chip';
+  btn.dataset.action = 'cancel';
+  btn.innerHTML = 'Cancel <span class="kbd-esc">esc</span>';
+  btn.hidden = true; // idle at mount
+  btn.addEventListener('click', () => onCancel());
+  return {
+    root: btn,
+    setKind(kind: string): void {
+      btn.hidden = kind === 'idle';
+    },
+  };
 }
 
 // ─────────────────────────── Replay modal ────────────────────────────────────
@@ -940,6 +1066,12 @@ function ensureStyle(): void {
   align-items: center;
   pointer-events: auto;
 }
+/* The mobile disclosure toggle is desktop-invisible; the media query reveals it
+   and makes the collapsed state hide the individual tools. Desktop ignores both.
+   Selector carries a .toolshelf ancestor so it out-specifies the .tool base rule
+   below (both are single-class otherwise, and .tool — appearing later — would
+   otherwise win the tie and leak the button onto desktop). */
+.toolshelf .tools-disclosure { display: none; }
 .tool {
   background: var(--panel);
   border: 1px solid var(--rule);
@@ -1110,7 +1242,9 @@ function ensureStyle(): void {
 .end-turn:disabled, .end-turn.disabled {
   background: var(--panel-2);
   color: var(--ink-faint);
-  cursor: not-allowed;
+  opacity: 0.55;
+  cursor: default;
+  filter: none;
 }
 .end-turn .kbd-ret {
   font-family: 'IBM Plex Mono', monospace;
@@ -1259,6 +1393,119 @@ function ensureStyle(): void {
   display: flex;
   gap: 10px;
   justify-content: center;
+}
+
+/* ── Cancel chip ──────────────────────────────────────────────────────────────
+   Floating escape hatch, bottom-centre, clearing the bottom chrome bar. Shows
+   for any non-idle input node (toggled via [hidden]); ≥44px tap target. */
+.cancel-chip {
+  position: fixed;
+  left: 50%;
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 18px;
+  background: var(--panel);
+  border: 1px solid var(--gold-dim);
+  color: var(--ink);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 12px 30px -12px rgba(0,0,0,0.75);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.cancel-chip[hidden] { display: none; }
+.cancel-chip:hover { border-color: var(--gold); background: var(--panel-2); }
+.cancel-chip .kbd-esc {
+  font-size: 10px;
+  background: rgba(0,0,0,0.28);
+  padding: 2px 6px;
+  border-radius: 2px;
+  letter-spacing: 0.04em;
+  color: var(--ink-dim);
+}
+/* On touch the Esc hint is meaningless — drop it, and lift the chip clear of
+   the taller touch action bar / bottom sheet. */
+@media (pointer: coarse) {
+  .cancel-chip .kbd-esc { display: none; }
+}
+
+/* ── Responsive: phones / narrow windows ──────────────────────────────────────
+   The repo's first @media query. Pre-fix at 390px the top grid's 1fr player
+   panels starved (funds clipped by overflow:hidden), the toolshelf overflowed
+   with no wrap, and the end-turn cluster ran off-screen. This breakpoint tightens
+   the top chrome so Coffer always fits, wraps + collapses the toolshelf behind a
+   disclosure, drops the AI config, and guarantees a full-size End Turn button. */
+@media (max-width: 720px) {
+  /* Top chrome: tighter, honour the notch/status-bar safe area. */
+  .chrome-top {
+    padding: calc(8px + env(safe-area-inset-top)) 10px 0;
+    gap: 8px;
+  }
+  /* Grid children must be allowed to shrink below their content size, or the
+     player panels overflow and clip .stats (funds) again. */
+  .chrome-top > * { min-width: 0; }
+
+  .turn-indicator {
+    min-width: 0;
+    padding: 4px 10px;
+  }
+  /* Keep the dot + "Day NN"; drop the two secondary strings to save width. */
+  .turn-indicator .phase { display: none; }
+  .turn-indicator .arrow-text { display: none; }
+  .turn-indicator .turn-n { font-size: 24px; }
+
+  .player-panel {
+    min-height: auto;
+    padding: 8px 10px;
+    gap: 8px;
+  }
+  .marker { width: 24px; height: 24px; font-size: 11px; }
+  .meta .label { display: none; }
+  .meta .name { font-size: 13px; }
+  .stat .v { font-size: 15px; }
+  .stat .k { font-size: 8px; letter-spacing: 0.12em; }
+  /* Units count is expendable; hiding it guarantees the gameplay-critical
+     Coffer (funds) never gets clipped. */
+  .stat-units { display: none; }
+
+  /* Bottom chrome: toolshelf (left, shrinkable) + end-turn cluster (right,
+     never shrinks), honouring the bottom safe area. */
+  .chrome-bottom {
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  }
+
+  .toolshelf {
+    flex-wrap: wrap;
+    gap: 4px;
+    min-width: 0;
+  }
+  /* Match the base rule's specificity so this reveal wins inside the query. */
+  .toolshelf .tools-disclosure { display: inline-flex; }
+  /* Collapsed (the mobile default): hide every tool but the disclosure toggle. */
+  .toolshelf.collapsed .tool:not(.tools-disclosure),
+  .toolshelf.collapsed .divider { display: none; }
+
+  /* AI controllers strip is desktop-only chrome; URL params still configure AI. */
+  .ai-config { display: none; }
+
+  .end-turn-cluster { flex-shrink: 0; }
+  .end-turn { min-height: 48px; padding: 0 18px; font-size: 16px; }
+}
+
+/* Below 400px the "Units to Act" meta is dropped so the End Turn button keeps
+   its full tap target on the smallest phones. */
+@media (max-width: 400px) {
+  .end-turn-cluster .turn-meta { display: none; }
 }
 `;
   const style = document.createElement('style');

@@ -25,19 +25,10 @@ Each plan has these sections, in order:
 
 ## Active plans
 
-- [`amphibious-ai.md`](amphibious-ai.md) — teach the AI to use transports,
-  landers, carriers, and submarines, so `armada` and `island_hop` become
-  contested games.
-- [`visual-polish.md`](visual-polish.md) — pixel-art unit sprites,
-  autotiled terrain, and a juice pass (projectile arcs, muzzle flash,
-  hit pause, damage numbers, capture flash, vignette). Stays on plain
-  Canvas — no Phaser/Pixi.
+None right now.
 
-## Shipped
-
-- [`fog-v1.1.md`](fog-v1.1.md) — mountain vision bonus, forest-hides-ground,
-  and last-known-position ghosts (with Aggressive AI phantom injection).
-  See PLAN.md's fog section for the runtime entry points.
+Completed plan briefs are deleted once shipped — they go stale against the
+code that overtakes them — and remain retrievable via git history.
 
 ## Working in a worktree
 

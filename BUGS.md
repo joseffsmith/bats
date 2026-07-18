@@ -7,8 +7,13 @@ Tracked by the tester. Builder/fixer triages.
 ## Bug 1 — Spurious rout winner when both players have 0 units
 
 **File:** `src/engine/systems/win.ts` → `checkWinner`
-**Status:** Fixed (Phase 1 commit). Tracked by `test.fails(...)` in `tests/win-acceptance.test.ts`
-("BUG: checkWinner reports spurious winner when BOTH players have 0 units").
+**Status:** Fixed. `checkWinner` returns `null` when both players have zero
+units, via the one-line guard
+`if ((counts[0] ?? 0) === 0 && (counts[1] ?? 0) === 0) return null;` (Suggested
+fix, Option 1). Covered by passing regression tests in
+`tests/win-acceptance.test.ts` ("returns null when BOTH players have 0 units
+(draw, no spurious winner)" plus the direct `checkWinner` cases). No
+`test.fails(...)` marker remains.
 
 ### Expected (per PLAN.md)
 

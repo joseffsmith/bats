@@ -1,24 +1,30 @@
-// Terrain rendering — modern tactical icon set.
+// Terrain rendering — hand-authored 16×16 pixel-art tiles (Phase 3B), baked at
+// startup, with the older procedural painters kept as a no-canvas fallback.
 //
-// Each terrain type has a dedicated painter:
-//   plain    soft olive with subtle dappling
-//   road     connected lanes with dashed centerline
-//   forest   simplified pine clusters
-//   mountain bare rock with geometric facet shading
-//   sea      gradient water with cyan glints
-//   city     modern high-rises with lit window grids
-//   hq       command bunker + antenna mast with LED beacon
-//   factory  industrial plant: building + cooling tower with steam
+// The primary path bakes each terrain's char-grid (assets/pixel-art/terrain/*)
+// into a full-bleed 16×16 tile that `drawTerrain` blits scaled to the cell with
+// imageSmoothing off (crisp on the 16→48/64 upscale). Full-bleed means every
+// pixel is opaque and tiles butt edge-to-edge — no gutter crop, no plain
+// underlay. Capturable tiles (city/HQ/factory) bake three ways: neutral (steel
+// greys) and per-owner (team ramp on the roof/banner/pad), so ownership is
+// painted into the tile and the LED/stripe HUD cue is unnecessary on this path.
 //
-// Ownership for capturable tiles (city/HQ/factory) is communicated with a
-// player-coloured LED dot at the top-right of the tile plus a thin top-edge
-// stripe — a modern HUD cue rather than a medieval flag.
-//
-// Deterministic per-tile variation comes from a coord hash so the map looks
-// organic without flickering across redraws.
+// The procedural painters below are unchanged and still run whenever no baked
+// tile is available (jsdom without a canvas backend — the unit-test path):
+//   plain/road/forest/mountain/sea/city/hq/factory, plus the LED owner cue.
+// Deterministic per-tile variation there comes from a coord hash.
 
 import type { GameState, PlayerId, TerrainType } from '../engine/core/types';
 import type { Viewport } from './canvas';
+import { PLAYER_COLOURS } from './canvas-palette';
+import { TERRAIN_GRIDS, OWNED_TERRAIN } from './assets/pixel-art/terrain/index';
+import {
+  TERRAIN_PALETTE,
+  TERRAIN_TEAM_CHARS,
+  NEUTRAL_RAMP,
+} from './assets/pixel-art/terrain/palette';
+import { hexToRgba, type Rgba } from './assets/pixel-art/palette';
+import { GRID_SIZE } from './assets/pixel-art/types';
 
 // ─────────────────────────── Palette ─────────────────────────────────────────
 
@@ -91,29 +97,108 @@ const GRID = 'rgba(0,0,0,0.10)';
 // ─────────────────────────── Public entry point ──────────────────────────────
 
 export type TerrainCache = {
-  get(terrain: TerrainType): CanvasImageSource | undefined;
+  /** Baked tile for `terrain`, resolved for `owner` on capturables (null =
+   *  neutral). `undefined` when nothing was baked (no canvas → procedural). */
+  get(terrain: TerrainType, owner?: PlayerId | null): CanvasImageSource | undefined;
 };
 
-/** Wrap a TerrainImages map (from `assets/loader.ts`) in a thin lookup. */
-export function createTerrainCache(
-  images: Map<TerrainType, CanvasImageSource>,
-): TerrainCache {
-  return { get: (t) => images.get(t) };
+// ── Bake pipeline ─────────────────────────────────────────────────────────
+//
+// Resolve each terrain grid char to RGBA — the team cells (A/B/C/D) through a
+// 4-stop ramp (the owner's for owned tiles, steel greys for neutral), everything
+// else through TERRAIN_PALETTE — and paint a 16×16 canvas via ImageData, mirror
+// of the unit bake in sprites.ts.
+
+type AnyCanvas = OffscreenCanvas | HTMLCanvasElement;
+type AnyCtx = OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
+
+function makeTileCanvas(): { canvas: AnyCanvas; ctx: AnyCtx } | null {
+  let canvas: AnyCanvas | null = null;
+  if (typeof document !== 'undefined' && typeof document.createElement === 'function') {
+    const c = document.createElement('canvas');
+    c.width = GRID_SIZE;
+    c.height = GRID_SIZE;
+    canvas = c;
+  } else if (typeof OffscreenCanvas !== 'undefined') {
+    canvas = new OffscreenCanvas(GRID_SIZE, GRID_SIZE);
+  }
+  if (!canvas) return null;
+  let ctx: AnyCtx | null = null;
+  try {
+    ctx = canvas.getContext('2d') as AnyCtx | null;
+  } catch {
+    return null;
+  }
+  if (!ctx) return null;
+  return { canvas, ctx };
 }
 
-/** Terrains that don't fully cover the tile in PixelLab art — they need a
- *  plain underlay so the page background doesn't show through. */
-const LAYERED_OVER_PLAIN: ReadonlySet<TerrainType> = new Set(['forest', 'mountain']);
+function resolveTerrainColour(ch: string, ramp: readonly Rgba[]): Rgba {
+  const teamIdx = (TERRAIN_TEAM_CHARS as readonly string[]).indexOf(ch);
+  if (teamIdx >= 0) return ramp[teamIdx]!;
+  const hex = TERRAIN_PALETTE[ch];
+  return hex ? hexToRgba(hex) : [0, 0, 0, 255]; // unknown — validators reject
+}
 
-// PixelLab tile PNGs are 48×48 but ship with a 6px transparent gutter on each
-// side (road is full-height but gutter on the sides). Blitting them edge-to-
-// edge lets the board-frame brown show through. We crop the gutter at draw
-// time with the 9-arg drawImage so each tile fills its cell.
-type SrcRect = { sx: number; sy: number; sw: number; sh: number };
-const FULL_BLEED: SrcRect = { sx: 6, sy: 6, sw: 36, sh: 36 };
-const ROAD_BLEED: SrcRect = { sx: 6, sy: 0, sw: 36, sh: 48 };
-function srcRectFor(t: TerrainType): SrcRect {
-  return t === 'road' ? ROAD_BLEED : FULL_BLEED;
+/** Bake one terrain grid onto a fresh 16×16 canvas (fully opaque). */
+function bakeTerrain(grid: readonly string[], ramp: readonly Rgba[]): AnyCanvas | null {
+  const made = makeTileCanvas();
+  if (!made) return null;
+  const { canvas, ctx } = made;
+  const img = ctx.createImageData(GRID_SIZE, GRID_SIZE);
+  const data = img.data;
+  for (let y = 0; y < GRID_SIZE; y++) {
+    const row = grid[y] ?? '';
+    for (let x = 0; x < GRID_SIZE; x++) {
+      const rgba = resolveTerrainColour(row[x] ?? 'g', ramp);
+      const i = (y * GRID_SIZE + x) * 4;
+      data[i] = rgba[0];
+      data[i + 1] = rgba[1];
+      data[i + 2] = rgba[2];
+      data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+}
+
+const TERRAIN_TYPES = Object.keys(TERRAIN_GRIDS) as TerrainType[];
+const NEUTRAL_RGBA: readonly Rgba[] = NEUTRAL_RAMP.map(hexToRgba);
+function ownerRamp(owner: PlayerId): readonly Rgba[] {
+  return PLAYER_COLOURS[owner].ramp.map(hexToRgba);
+}
+function tileKey(terrain: TerrainType, owner: PlayerId | null): string {
+  return `${terrain}-${owner === null ? 'neutral' : owner}`;
+}
+
+/**
+ * Bake every terrain tile at startup. Capturables (city/HQ/factory) bake three
+ * ways — neutral + p0 + p1 — keyed by owner; everything else bakes once. When no
+ * 2d context is obtainable (jsdom), returns an empty cache so `drawTerrain`
+ * falls through to the procedural painters exactly as before.
+ */
+export function createTerrainCache(): TerrainCache {
+  const map = new Map<string, CanvasImageSource>();
+  if (makeTileCanvas() === null) {
+    return { get: () => undefined };
+  }
+  for (const terrain of TERRAIN_TYPES) {
+    const grid = TERRAIN_GRIDS[terrain];
+    const neutral = bakeTerrain(grid, NEUTRAL_RGBA);
+    if (neutral) map.set(tileKey(terrain, null), neutral);
+    if (OWNED_TERRAIN.has(terrain)) {
+      for (const owner of [0, 1] as PlayerId[]) {
+        const baked = bakeTerrain(grid, ownerRamp(owner));
+        if (baked) map.set(tileKey(terrain, owner), baked);
+      }
+    }
+  }
+  return {
+    get(terrain, owner) {
+      const ownerKey = OWNED_TERRAIN.has(terrain) ? (owner ?? null) : null;
+      return map.get(tileKey(terrain, ownerKey));
+    },
+  };
 }
 
 export function drawTerrain(
@@ -123,7 +208,7 @@ export function drawTerrain(
   cache?: TerrainCache,
 ): void {
   const map = state.map;
-  // Preserve the pixel-art look across the 36→48 upscale.
+  // Preserve the pixel-art look across the 16→tile upscale (nearest-neighbour).
   const prevSmoothing = ctx.imageSmoothingEnabled;
   ctx.imageSmoothingEnabled = false;
   for (let y = 0; y < map.length; y++) {
@@ -135,23 +220,12 @@ export function drawTerrain(
       const ts = vp.tileSize;
       const seed = hash2(x, y);
 
-      const sheet = cache ? cache.get(tile.terrain) : undefined;
-      if (sheet && cache) {
-        // Sheet path: blit the PNG, plus a plain underlay for thin-canopy
-        // terrains, plus the ownership LED cue for capturables.
-        if (LAYERED_OVER_PLAIN.has(tile.terrain)) {
-          const plain = cache.get('plain');
-          if (plain) {
-            const r = FULL_BLEED;
-            ctx.drawImage(plain, r.sx, r.sy, r.sw, r.sh, px, py, ts, ts);
-          } else drawPlain(ctx, px, py, ts, seed);
-        }
-        const r = srcRectFor(tile.terrain);
-        ctx.drawImage(sheet, r.sx, r.sy, r.sw, r.sh, px, py, ts, ts);
-        if (tile.owner !== null &&
-            (tile.terrain === 'city' || tile.terrain === 'hq' || tile.terrain === 'factory')) {
-          drawOwnerCue(ctx, px, py, ts, tile.owner);
-        }
+      const sheet = cache ? cache.get(tile.terrain, tile.owner) : undefined;
+      if (sheet) {
+        // Baked path: full-bleed blit of the 16×16 tile scaled to the cell.
+        // Ownership is baked into the tile (team roof/banner/pad on capturables),
+        // so no plain underlay and no LED overlay are needed here.
+        ctx.drawImage(sheet, px, py, ts, ts);
       } else {
         // Procedural fallback — preserved for tests + transitional builds.
         switch (tile.terrain) {

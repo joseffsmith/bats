@@ -7,12 +7,14 @@
 //
 // Acceptance bar (from plans/visual-polish.md): p95 ≤ 16 ms, p99 ≤ 24 ms.
 
-import { spawn, type ChildProcess } from 'node:child_process';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import puppeteer, { type Browser } from 'puppeteer';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import type { Browser } from 'puppeteer';
+import {
+  startVite,
+  launchBrowser,
+  gameUrl,
+  openGame,
+  type ViteHandle,
+} from './lib/browser-harness';
 
 type Args = {
   map: string;
@@ -37,25 +39,6 @@ function parseArgs(): Args {
   return out;
 }
 
-async function waitForServer(port: number, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const r = await fetch(`http://localhost:${port}/`);
-      if (r.ok) return;
-    } catch { /* not yet */ }
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  throw new Error(`Vite did not start on :${port}`);
-}
-
-function spawnVite(port: number): ChildProcess {
-  return spawn('node_modules/.bin/vite', ['--port', String(port), '--strictPort'], {
-    cwd: resolve(__dirname, '..'),
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-}
-
 function percentile(sorted: number[], q: number): number {
   if (sorted.length === 0) return NaN;
   const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * q));
@@ -64,17 +47,16 @@ function percentile(sorted: number[], q: number): number {
 
 async function main(): Promise<void> {
   const args = parseArgs();
-  const vite = spawnVite(args.port);
+  let vite: ViteHandle | undefined;
   let browser: Browser | undefined;
   try {
-    await waitForServer(args.port, 15_000);
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
+    vite = await startVite(args.port);
+    browser = await launchBrowser({ headless: true });
     const page = await browser.newPage();
     await page.setViewport({ width: args.width, height: args.height });
-    await page.goto(`http://localhost:${args.port}/?map=${args.map}`, { waitUntil: 'load' });
+    // No debug hook needed — we only sample rAF deltas, so keep the page as
+    // close to production as possible (debug:false).
+    await openGame(page, gameUrl(vite.port, { map: args.map, debug: false }));
     // Settle: first paint + async asset decode.
     await new Promise((r) => setTimeout(r, 800));
     const samples = await page.evaluate((durationMs) => {
@@ -82,13 +64,20 @@ async function main(): Promise<void> {
         const out: number[] = [];
         let last = performance.now();
         const start = last;
-        function tick(now: number): void {
+        // NB: the rAF callback is kept anonymous (pushed into `slot`, called by
+        // reference) on purpose. tsx compiles this file with esbuild keepNames,
+        // which injects a module-scope `__name(...)` helper call into any *named*
+        // function — but puppeteer serializes only the callback body to the
+        // browser, without that helper, so a named inner function throws
+        // "__name is not defined". An anonymous arg dodges the wrap entirely.
+        const slot: Array<(now: number) => void> = [];
+        slot.push((now: number): void => {
           out.push(now - last);
           last = now;
           if (now - start >= durationMs) resolve(out);
-          else requestAnimationFrame(tick);
-        }
-        requestAnimationFrame(tick);
+          else requestAnimationFrame(slot[0]!);
+        });
+        requestAnimationFrame(slot[0]!);
       });
     }, args.durationMs);
     // Drop the first 5 samples (warm-up).
@@ -109,11 +98,7 @@ async function main(): Promise<void> {
     if (!ok) process.exitCode = 1;
   } finally {
     if (browser) await browser.close();
-    if (!vite.killed) {
-      vite.kill('SIGTERM');
-      await new Promise((r) => setTimeout(r, 200));
-      if (!vite.killed) vite.kill('SIGKILL');
-    }
+    if (vite) await vite.stop();
   }
 }
 
