@@ -41,6 +41,7 @@ import { computeThreatMap, computeValueMap } from './threatMap';
 import type { ThreatMap, ValueMap } from './threatMap';
 import { hiddenTiles, viewStateForPlayer } from '../queries/selectors';
 import {
+  DEFENDER_PROXIMITY,
   ROLE_MULTIPLIERS,
   applyRoleMultipliers,
   assignRoles,
@@ -139,6 +140,12 @@ const VALUE_MAP_WEIGHT = 0.1;
  * toward its role objective. PLAN.md specifies +3.
  */
 const OBJECTIVE_BONUS = 3;
+
+/** Raw bonus for attacking an enemy mid-capture on an owned tile; scaled up
+ *  to 2× as the capture bar fills. Sized against OBJECTIVE_BONUS so a
+ *  reachable capturer outbids one step of any march objective even before
+ *  damage terms are counted. */
+const DEFEND_PROPERTY_BONUS = 4;
 
 /**
  * Soft cap on Tier-3 owned-unit count to keep per-turn AI time under the
@@ -666,6 +673,23 @@ export function scoreAction(
     }
   }
 
+  // Property defense: attacking an enemy that stands on OUR capturable is
+  // worth a flat bonus on top of the damage terms, growing with the capture
+  // bar. Deliberately raw (no persona weight, no role multiplier): no
+  // playstyle should shrug while its factory is flipped. The scorer had no
+  // term for this at all — every persona ignored capturers it couldn't
+  // kill profitably on generic damage numbers alone.
+  let defense = 0;
+  if (candidate.followUp.type === 'ATTACK') {
+    const target = state.units[candidate.followUp.targetId];
+    if (target) {
+      const tile = state.map[target.pos.y]?.[target.pos.x];
+      if (tile && tile.owner === unit.owner && isCapturable(tile.terrain)) {
+        defense = DEFEND_PROPERTY_BONUS * (1 + target.captureProgress / 20);
+      }
+    }
+  }
+
   const dd = damageDealt(state, after, unit.owner) * w.damageDealt;
   const cp = captureProgressScore(state, after, movedUnit, candidate.followUp) * w.capture;
   const ca = counterAttackDamage(state, after, unit) * w.counterRisk * riskScale;
@@ -680,8 +704,9 @@ export function scoreAction(
     out.positional = pvw;
     out.objective = obw;
     if (navalPull !== 0) out.naval = navalPull;
+    if (defense !== 0) out.defense = defense;
   }
-  return dd + cp - ca - ftw + pvw + obw + navalPull;
+  return dd + cp - ca - ftw + pvw + obw + navalPull + defense;
 }
 
 // ─────────────────────────── Amphibious scorers ──────────────────────────────
@@ -1161,9 +1186,15 @@ function objectiveBonusForRole(
       return dAfter < dBefore ? OBJECTIVE_BONUS : 0;
     }
     case 'defender': {
-      const hq = before.players[unit.owner].hq;
-      const dBefore = manhattan(unit.pos, hq);
-      const dAfter = manhattan(movedUnit.pos, hq);
+      // March toward the actual intruder, not the HQ tile. "Toward own HQ"
+      // (the old target) combined with a threat map that blankets the home
+      // zone meant defenders drifted to whatever safe tile was left —
+      // usually a far corner — while the intruder captured freely. Fall back
+      // to the HQ as a garrison point only when no intruder is on the board.
+      const tgt =
+        nearestHomeIntruder(before, unit.owner)?.pos ?? before.players[unit.owner].hq;
+      const dBefore = manhattan(unit.pos, tgt);
+      const dAfter = manhattan(movedUnit.pos, tgt);
       return dAfter < dBefore ? OBJECTIVE_BONUS : 0;
     }
     case 'support': {
@@ -1219,6 +1250,38 @@ function nearestUnownedCapturable(
     }
   }
   return best;
+}
+
+/**
+ * The enemy unit most urgently violating `player`'s home zone: any enemy
+ * mid-capture on a tile `player` owns, or (failing that) any enemy within
+ * DEFENDER_PROXIMITY + 1 of the HQ. Capturers win ties by progress — a
+ * 15/20 capture is a strictly hotter fire than a fresh one. Used as the
+ * defender role's objective target.
+ */
+export function nearestHomeIntruder(state: GameState, player: PlayerId): Unit | null {
+  const hq = state.players[player].hq;
+  let bestCapturer: Unit | null = null;
+  let bestProgress = -1;
+  let bestNear: Unit | null = null;
+  let bestNearD = Infinity;
+  for (const u of Object.values(state.units)) {
+    if (u.owner === player) continue;
+    const tile = state.map[u.pos.y]?.[u.pos.x];
+    if (tile && tile.owner === player && isCapturable(tile.terrain)) {
+      if (u.captureProgress > bestProgress) {
+        bestProgress = u.captureProgress;
+        bestCapturer = u;
+      }
+      continue;
+    }
+    const d = manhattan(u.pos, hq);
+    if (d <= DEFENDER_PROXIMITY + 1 && d < bestNearD) {
+      bestNearD = d;
+      bestNear = u;
+    }
+  }
+  return bestCapturer ?? bestNear;
 }
 
 function nearestEnemy(

@@ -768,3 +768,49 @@ Decided to land. The headline acceptance criteria split:
 
 Round 7 closed.
 
+
+---
+
+## Iteration 8 — defender actually defends (pilot, 10/pair/map, land maps)
+
+**Trigger:** live-site match report — "balanced parked a unit in the corner
+and let me sit on his factory." First bug found via the replay/live-play
+channel rather than tournaments. Scenario repro + `ai-trace` showed
+defender-role units scoring on nothing but positional/futureThreat: the
+role's ×3 self-threat multiplier plus a toward-own-HQ objective made every
+tile near the (threat-blanketed) home zone score negative, so defenders
+drifted to the safest far tile and parked. No scoring term valued attacking
+an enemy mid-capture on owned property, for any persona.
+
+**Changes:**
+- `roles.ts` defender multipliers: `{futureThreat: 3, capture: 0}` →
+  `{damageDealt: 1.5, futureThreat: 0.5, capture: 0}` — defenders accept
+  personal risk to hold ground.
+- `utility.ts` defender objective: step-toward-own-HQ → step-toward
+  `nearestHomeIntruder` (enemy mid-capture on owned tile, by progress;
+  else enemy within DEFENDER_PROXIMITY+1 of HQ; HQ as garrison fallback).
+- `utility.ts` new raw term: `DEFEND_PROPERTY_BONUS = 4` (up to ×2 as the
+  capture bar fills) for ATTACKing an enemy standing on an owned
+  capturable. Deliberately unweighted — no persona shrugs at a flip.
+- Doctrine regression suite: `tests/ai-defense.test.ts`.
+
+**Results (180 matches, 10/pair/map, duel+crossroads+canyon):**
+
+| persona   | pre-fix WR | post-fix WR | Δ        |
+|-----------|-----------|-------------|----------|
+| economist | 72.2%     | 77.8%       | +5.6 pp  |
+| aggressor | 61.1%     | 38.9%       | −22.2 pp |
+| turtle    | 50.0%     | 50.0%       | 0        |
+| balanced  | 16.7%     | 33.3%       | +16.6 pp |
+
+**Interpretation:** balanced (the biggest victim of cowardly defense)
+doubles its record; aggressor pays because its capturer-rush now meets
+defenders that fight back. Both directions are the fix working. Known
+NON-regressions (verified present in the pre-fix baseline run): turtle
+beats balanced 30/30; crossroads still produces ~121-turn cap games;
+economist remains strongest.
+
+**Next-iteration candidates:** retune aggressor against live defenses;
+turtle-vs-balanced 100%; crossroads cap-stalemates; symmetric
+utility-vs-utility never terminates on duel (found same day via headless
+live-site run).
