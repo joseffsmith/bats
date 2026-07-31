@@ -6,9 +6,16 @@ RUN npm ci
 COPY tsconfig.json vite.config.ts index.html ./
 COPY src ./src
 COPY tests ./tests
+# Stamped into replay-log headers (see vite.config.ts define).
+ARG BUILD_SHA=dev
+ENV BUILD_SHA=$BUILD_SHA
 RUN npm run build
 
-FROM nginx:alpine
-COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/dist /usr/share/nginx/html
-EXPOSE 80
+FROM node:22-alpine
+WORKDIR /app
+ARG BUILD_SHA=dev
+ENV BUILD_SHA=$BUILD_SHA
+COPY server ./server
+COPY --from=build /app/dist ./dist
+EXPOSE 8000
+CMD ["node", "server/index.mjs"]

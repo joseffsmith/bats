@@ -14,6 +14,8 @@
     "test:all": "npm test && npm run test:e2e",
     "lint": "eslint src tests scripts e2e",
     "match": "tsx src/cli/run-match.ts",
+    "replay": "tsx src/cli/replay-file.ts",
+    "serve": "node server/index.mjs",
     "tournament": "tsx src/cli/tournament.ts",
     "round-robin": "tsx src/cli/round-robin.ts",
     "shoot": "tsx scripts/shoot.ts",

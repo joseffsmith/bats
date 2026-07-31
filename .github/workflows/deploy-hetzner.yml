@@ -28,6 +28,8 @@ jobs:
           context: .
           platforms: linux/arm64
           push: true
+          build-args: |
+            BUILD_SHA=${{ github.sha }}
           tags: |
             ghcr.io/joseffsmith/bats:latest
             ghcr.io/joseffsmith/bats:${{ github.sha }}
