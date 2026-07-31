@@ -4,6 +4,7 @@ ENV PUPPETEER_SKIP_DOWNLOAD=1
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY tsconfig.json vite.config.ts index.html ./
+COPY public ./public
 COPY src ./src
 COPY tests ./tests
 # Stamped into replay-log headers (see vite.config.ts define).
