@@ -145,6 +145,15 @@ export type GameUrlParams = {
   seed?: number;
   /** `off`/`0` freezes continuous idle animation for byte-stable screenshots. */
   ambient?: string;
+  /**
+   * Force the mobile board on (`1`) or off (`0`). Absent → the page decides
+   * from `(pointer: coarse)`, so a plain narrow viewport still shoots desktop
+   * and only real touch emulation flips it.
+   */
+  mobile?: string;
+  /** Campaign entry point (owned by the campaign work; plumbed here so both
+   *  the shoot script and the e2e specs can reach it). */
+  campaign?: string;
   /** Install the window.__bats hook. Defaults to true (enables idle-await). */
   debug?: boolean;
 };
@@ -160,6 +169,8 @@ export function gameUrl(port: number, params: GameUrlParams = {}): string {
   if (params.slowmo) u.searchParams.set('slowmo', String(params.slowmo));
   if (params.seed !== undefined) u.searchParams.set('seed', String(params.seed));
   if (params.ambient !== undefined) u.searchParams.set('ambient', params.ambient);
+  if (params.mobile !== undefined) u.searchParams.set('mobile', params.mobile);
+  if (params.campaign !== undefined) u.searchParams.set('campaign', params.campaign);
   // Default debug ON so callers get the __bats hook (and idle-await) for free.
   if (params.debug !== false) u.searchParams.set('debug', '1');
   return u.toString();

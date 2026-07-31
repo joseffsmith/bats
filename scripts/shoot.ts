@@ -21,6 +21,11 @@
 //   --url=URL         override constructed URL entirely; skip dev-server spawn
 //   --port=N          dev-server port (default 5179)
 //   --wait-ms=N       extra settle delay before screenshot (default 400)
+//   --mobile=1|0      force the mobile (camera + full-bleed) board on/off. A
+//                     narrow --width alone does NOT trigger it: the page reads
+//                     `(pointer: coarse)`, which headless Chromium won't report
+//                     without touch emulation. Pair with --width=390 --height=844.
+//   --campaign=...    campaign entry point (passed straight through)
 
 import { mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -49,6 +54,8 @@ type Args = {
   view?: string;
   slowmo?: number;
   scene?: string;
+  mobile?: string;
+  campaign?: string;
 };
 
 /**
@@ -87,6 +94,8 @@ function parseArgs(): Args {
     else if (k === 'view') out.view = v;
     else if (k === 'slowmo') out.slowmo = Number(v);
     else if (k === 'scene') out.scene = v;
+    else if (k === 'mobile') out.mobile = v;
+    else if (k === 'campaign') out.campaign = v;
   }
   if (!out.out) {
     console.error('--out=PATH is required');
@@ -121,6 +130,8 @@ function buildUrl(args: Args, port: number): string {
     ...(args.fog !== undefined ? { fog: args.fog } : {}),
     ...(args.view !== undefined ? { view: args.view } : {}),
     ...(args.slowmo !== undefined ? { slowmo: args.slowmo } : {}),
+    ...(args.mobile !== undefined ? { mobile: args.mobile } : {}),
+    ...(args.campaign !== undefined ? { campaign: args.campaign } : {}),
   });
 }
 

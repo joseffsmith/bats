@@ -18,6 +18,7 @@ import type { CanvasRenderer } from './canvas';
 import type { InputController, InputState } from './input';
 import type { AnimationQueue } from './animations';
 import type { AIDriver } from './ai-driver';
+import type { Camera } from './camera';
 
 /** Rolling cap for the applied-action history buffer. */
 const HISTORY_CAP = 500;
@@ -37,6 +38,21 @@ export type MenuRect = {
   y: number;
   w: number;
   h: number;
+};
+
+/**
+ * Camera controls, exposed only in mobile mode (there is no camera on desktop —
+ * the renderer fits the whole board itself). Present-or-absent is therefore also
+ * the hook's answer to "is this session running the mobile board?", which is why
+ * drivers should feature-detect it rather than assume.
+ */
+export type BatsCamera = {
+  setZoom(tileSize: number, focus?: { x: number; y: number }): void;
+  centerOn(tile: Coord, animate?: boolean): void;
+  fitMap(): void;
+  toggleOverview(): void;
+  /** Current transform — what the renderer will paint with on the next frame. */
+  get(): { tileSize: number; origin: { x: number; y: number } };
 };
 
 export type BatsDebug = {
@@ -69,6 +85,8 @@ export type BatsDebug = {
   idle(): boolean;
   /** Last 500 APPLIED actions, oldest first. */
   history: Action[];
+  /** Mobile board camera. Absent on desktop. */
+  camera?: BatsCamera;
 };
 
 declare global {
@@ -93,6 +111,8 @@ export type DebugHookDeps = {
   input: InputController;
   animQueue: AnimationQueue;
   aiDriver: AIDriver;
+  /** Mobile only — omitted on desktop, where nothing owns a camera. */
+  camera?: Camera;
 };
 
 /**
@@ -101,7 +121,7 @@ export type DebugHookDeps = {
  * `window`). Idempotent-ish: a second call overwrites the previous hook.
  */
 export function installDebugHook(deps: DebugHookDeps): BatsDebug {
-  const { emitter, renderer, input, animQueue, aiDriver } = deps;
+  const { emitter, renderer, input, animQueue, aiDriver, camera } = deps;
 
   const history: Action[] = [];
   // The emitter emits `stateChanged` after every dispatch, but sets
@@ -162,6 +182,21 @@ export function installDebugHook(deps: DebugHookDeps): BatsDebug {
     aiBusy,
     idle: () => !animBusy() && !aiBusy(),
     history,
+    // Spread conditionally rather than assigning `camera: undefined` —
+    // exactOptionalPropertyTypes draws a hard line between "absent" and
+    // "present but undefined", and drivers feature-detect on absence.
+    ...(camera
+      ? {
+          camera: {
+            setZoom: (ts: number, focus?: { x: number; y: number }) =>
+              camera.setZoom(ts, focus),
+            centerOn: (c: Coord, animate?: boolean) => camera.centerOn(c, animate),
+            fitMap: () => camera.fitMap(),
+            toggleOverview: () => camera.toggleOverview(),
+            get: () => ({ tileSize: camera.tileSize(), origin: camera.origin() }),
+          },
+        }
+      : {}),
   };
 
   // `globalThis` rather than `window` so this is safe under jsdom/node tests

@@ -23,7 +23,10 @@ import { createAnimationQueue } from './renderer/animations';
 import { createAIDriver, AI_CHOICES } from './renderer/ai-driver';
 import type { AIChoice } from './renderer/ai-driver';
 import { log, setLogEnabled } from './engine/core/logger';
-import type { PlayerId } from './engine/core/types';
+import type { Coord, PlayerId } from './engine/core/types';
+import { resolveMobileMode } from './renderer/mobile/mode';
+import { createCamera } from './renderer/camera';
+import { mountGestures } from './renderer/mobile/gestures';
 import { createSpriteCache } from './renderer/sprites';
 import { createTerrainCache } from './renderer/terrain';
 import { createAudio } from './renderer/audio';
@@ -113,12 +116,39 @@ async function main(): Promise<void> {
   // sheet dynamic imports above).
   const sprites = createSpriteCache();
   const terrain = createTerrainCache();
+
+  // Mobile mode is resolved ONCE here (`?mobile=1|0`, else `(pointer: coarse)`)
+  // and is the single switch for the camera + gesture board. Everything it turns
+  // on is additive: with it off, the renderer takes the identical desktop path
+  // it always has. The desktop chrome/menus/handoff still mount in BOTH modes —
+  // replacing them with the mobile HUD strip + verb tray is a later phase.
+  const mobileMode = resolveMobileMode(params);
+  const camera = mobileMode
+    ? createCamera({
+        getMapSize: () => {
+          const s = emitter.getState();
+          return { cols: s.map[0]?.length ?? 0, rows: s.map.length };
+        },
+        getViewSize: () => ({
+          width: window.innerWidth || 1024,
+          height: window.innerHeight || 768,
+        }),
+        // Boot centred on whoever is about to play. Read lazily (on the camera's
+        // first frame) so it sees the settled state, not the pre-fog one.
+        getInitialFocus: () => {
+          const s = emitter.getState();
+          return s.players[s.currentPlayer]?.hq ?? null;
+        },
+      })
+    : undefined;
+
   const renderer = createCanvasRenderer(canvas, {
     sprites,
     terrain,
     fog: fogConfig,
     mapName,
     ambient,
+    ...(camera !== undefined ? { camera } : {}),
   });
   renderer.resize();
 
@@ -176,6 +206,36 @@ async function main(): Promise<void> {
       !handoffActive(),
   });
 
+  if (camera) {
+    // Drag-to-pan + pinch-to-zoom. Mounted AFTER the input controller so its
+    // capture-phase touch listeners are the first to see a gesture; taps are
+    // deliberately left alone and reach `input` as the browser's synthetic
+    // click, exactly as they do today (see gestures.ts).
+    mountGestures({ canvas, camera });
+
+    // AI auto-follow. An off-screen AI turn on a phone is just the board sitting
+    // still while funds change, so during an input-locked (AI) turn the camera
+    // pans to wherever the action landed. Cosmetic only — it never touches the
+    // engine, and a human turn is never moved out from under the player's thumb.
+    emitter.on((ev) => {
+      if (ev.type !== 'stateChanged' || ev.action === null) return;
+      if (!aiDriver.inputLocked(ev.state)) return;
+      const a = ev.action;
+      let focus: Coord | null = null;
+      if (a.type === 'MOVE') {
+        focus = a.path[a.path.length - 1] ?? null;
+      } else if (a.type === 'ATTACK') {
+        // A killed target is already gone from the post-action state; fall back
+        // to the attacker, which is on the same screenful of board.
+        focus =
+          ev.state.units[a.targetId]?.pos ?? ev.state.units[a.attackerId]?.pos ?? null;
+      } else if (a.type === 'BUILD') {
+        focus = a.at;
+      }
+      if (focus) camera.centerOn(focus, true);
+    });
+  }
+
   // Audio: default muted (so we don't autoplay). The audio module gates its
   // own context init on first canvas click so browsers don't reject it.
   const audio = createAudio({
@@ -228,7 +288,14 @@ async function main(): Promise<void> {
   // input, idle-await). Gated so ordinary hot-seat play carries no global. Must
   // run after the modules above exist — the hook only delegates to them.
   if (params.get('debug') === '1') {
-    installDebugHook({ emitter, renderer, input, animQueue, aiDriver });
+    installDebugHook({
+      emitter,
+      renderer,
+      input,
+      animQueue,
+      aiDriver,
+      ...(camera !== undefined ? { camera } : {}),
+    });
     log('render', 'debug hook installed');
   }
 
@@ -290,6 +357,7 @@ async function main(): Promise<void> {
     units: Object.keys(initialState.units).length,
     p0: initialAI[0],
     p1: initialAI[1],
+    mobile: mobileMode,
   });
 }
 

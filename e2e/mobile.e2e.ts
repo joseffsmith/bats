@@ -1,12 +1,16 @@
 // Mobile / touch flows on an iPhone-13-ish emulated viewport (390×844, touch).
 // Covers the Phase 2.3/2.5/2.6 mobile work: chrome fits the viewport, the DOM
 // menus render as touch layouts (bottom sheet / action bar), the two-tap attack
-// confirm, the floating Cancel chip, and that the board fits the small screen.
+// confirm, the floating Cancel chip — plus the camera board (Phase A): a
+// tactical boot zoom and a reachable overview.
 //
 // Touch emulation is applied BEFORE navigation (helpers.openMap → setViewport)
 // so the input controller reads `(pointer: coarse)` at construction and arms the
-// two-tap path. Enemy taps go through `page.touchscreen.tap`; everything else
-// drives the app through the shared helpers.
+// two-tap path. The same media query is what puts the page in mobile mode, so
+// every spec in this file exercises the camera + gesture board. Enemy taps go
+// through `page.touchscreen.tap` — which is also the standing proof that the
+// gesture layer leaves sub-threshold taps alone: they still arrive at the input
+// controller as the browser's synthetic click.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Browser } from 'puppeteer';
@@ -23,6 +27,7 @@ import {
   newPage,
   openMap,
   setGameState,
+  settleFrames,
   state,
 } from './helpers';
 
@@ -202,10 +207,39 @@ describe('mobile / touch', () => {
     }
   });
 
-  it('the whole board fits inside the mobile viewport', async () => {
+  // The mobile board is camera-driven: it boots at a TACTICAL zoom (readable,
+  // thumb-sized tiles) and deliberately runs past the screen edges, which is the
+  // opposite of the old "shrink the whole map until it fits" behaviour that made
+  // a 20×12 map land at ~19px tiles. So the invariant that matters is no longer
+  // "everything is on screen at once" but "everything is REACHABLE": zooming out
+  // to the overview must show the entire board inside the visible band.
+  it('boots at a readable tactical zoom, larger than the screen', async () => {
     const page = await newPage(browser);
     try {
       await openMap(page, { map: 'duel', ...MOBILE });
+      const cam = await bats<{ tileSize: number; origin: { x: number; y: number } }>(
+        page,
+        'camera.get()',
+      );
+      const s = await state(page);
+      const cols = s.map[0]!.length;
+      // Big enough to read a sprite and hit with a thumb.
+      expect(cam.tileSize).toBeGreaterThanOrEqual(48);
+      // Full-bleed: 12 columns at that zoom overflow a 390px phone, so the board
+      // is pannable rather than shrunk to fit.
+      expect(cols * cam.tileSize).toBeGreaterThan(W);
+    } finally {
+      await page.close();
+    }
+  });
+
+  it('zooming out to the overview brings the whole board into view', async () => {
+    const page = await newPage(browser);
+    try {
+      await openMap(page, { map: 'duel', ...MOBILE });
+      await page.evaluate(() => (window as unknown as BatsWindow).__bats.camera!.fitMap());
+      await settleFrames(page, 2);
+
       const s = await state(page);
       const rows = s.map.length;
       const cols = s.map[0]!.length;
