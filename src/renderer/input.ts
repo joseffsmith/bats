@@ -31,6 +31,29 @@
 //
 // Input is locked while animations are in progress (`animQueue.busy()`); we
 // simply ignore mouse events during that window — see PLAN.md "lock or queue".
+//
+// ─── Mobile grammar (opts.grammar === 'mobile') ──────────────────────────────
+//
+// A second, opt-in grammar for touch: select → stage → commit. It lives beside
+// the desktop machine above, never inside it — `click()` routes a tile tap to
+// exactly one of the two handlers and every desktop branch is untouched.
+//
+//   tap 1  selects or inspects. Own unit → unit-selected. Enemy → enemy-inspect
+//          (with a toggleable threat overlay). Terrain/property → tile-inspect.
+//          Own empty factory → build-menu-open, same as desktop. NEVER commits.
+//   tap 2  stages a verb inferred from what was tapped (mobile/verbs.ts):
+//          reachable tile → move-previewed, enemy in reach → attack-staged with
+//          an auto-picked firing tile, capturable property → capture-staged.
+//          NEVER commits — the board does not change under the player's finger.
+//   tap 3  on the SAME staged tile commits, guarded by a 150ms debounce so a
+//          double-tap can't fire the action. Tapping a different legal target
+//          re-stages instead; anything else deselects.
+//
+// A commit is a SEQUENCE of the existing engine actions — MOVE then ATTACK, or
+// MOVE then CAPTURE — dispatched synchronously in one handler. No new reducer
+// action types, no engine changes. If the follow-up after the MOVE is genuinely
+// ambiguous (`needsOrders`), the MOVE lands alone and the existing action menu
+// opens to ask.
 
 import type {
   Action,
@@ -55,6 +78,7 @@ import type { AnimationQueue } from './animations';
 import { enqueueAttackEffects } from './attack-effects';
 import { buildMenuEntries } from './hud';
 import type { ActionMenuEntry, BuildMenuEntry } from './canvas';
+import { bestAttackPosition, inferVerb, needsOrders } from './mobile/verbs';
 
 export type InputState =
   | { kind: 'idle' }
@@ -69,6 +93,10 @@ export type InputState =
       reachable: ReachableTile[];
       destination: Coord;
       path: Coord[];
+      /** Mobile grammar only: clock reading when this move was staged. Absent
+       *  under the desktop grammar, which commits on the confirming click with
+       *  no debounce. */
+      stagedAt?: number;
     }
   | {
       kind: 'action-menu';
@@ -96,6 +124,48 @@ export type InputState =
       kind: 'build-menu-open';
       tile: Coord;
       entries: BuildMenuEntry[];
+      /** Mobile grammar only: the entry the player has staged but not yet
+       *  confirmed. `confirmStaged()` turns it into a BUILD. */
+      staged?: UnitType;
+    }
+  // ── Mobile grammar nodes ──────────────────────────────────────────────────
+  // These never occur under the desktop grammar.
+  | {
+      /** Tap-1 on an enemy unit: pure inspection, no action possible. */
+      kind: 'enemy-inspect';
+      unit: Unit;
+      /** When true, `getOverlay` paints everything this enemy could hit. */
+      showThreat: boolean;
+    }
+  | {
+      /** Tap-1 on terrain or a property with nothing selectable on it. */
+      kind: 'tile-inspect';
+      tile: Coord;
+    }
+  | {
+      /** Tap-2 staged an attack. Committing dispatches MOVE (if `path` is
+       *  non-empty) then ATTACK. Forecast: `previewAttack(state, unit.id,
+       *  target.id)`. */
+      kind: 'attack-staged';
+      unit: Unit;
+      reachable: ReachableTile[];
+      target: Unit;
+      /** Tile the unit fires from — `unit.pos` for indirect units. */
+      firingPos: Coord;
+      /** Path to `firingPos`; empty means fire in place (no MOVE). */
+      path: Coord[];
+      stagedAt: number;
+    }
+  | {
+      /** Tap-2 staged a capture. Committing dispatches MOVE (if `path` is
+       *  non-empty) then CAPTURE. */
+      kind: 'capture-staged';
+      unit: Unit;
+      reachable: ReachableTile[];
+      destination: Coord;
+      /** Path to `destination`; empty means capture in place (no MOVE). */
+      path: Coord[];
+      stagedAt: number;
     };
 
 export type InputController = {
@@ -123,13 +193,41 @@ export type InputController = {
    * `build-menu-open` state and the entry exists + is affordable.
    */
   chooseBuild(unitType: UnitType): void;
+  /**
+   * Mobile grammar: commit whatever is currently staged — the tray's Confirm
+   * button, equivalent to the third tap but WITHOUT the debounce (an explicit
+   * button press is never an accidental double-tap). Handles `move-previewed`,
+   * `attack-staged`, `capture-staged` and a staged `build-menu-open`. No-op in
+   * every other state.
+   */
+  confirmStaged(): void;
+  /**
+   * Mobile grammar: stage a build-menu entry without committing it. Ignored
+   * unless we're in `build-menu-open` and the entry exists + is affordable.
+   * `confirmStaged()` then routes through the usual `chooseBuild` path.
+   */
+  stageBuild(unitType: UnitType): void;
+  /**
+   * Mobile grammar: flip the threat overlay on an `enemy-inspect` node.
+   * Ignored in every other state.
+   */
+  toggleThreat(): void;
 };
 
 export function createInputController(
   renderer: CanvasRenderer,
   emitter: Emitter,
   animQueue: AnimationQueue,
-  opts?: { endTurnAllowed?: () => boolean; coarsePointer?: boolean },
+  opts?: {
+    endTurnAllowed?: () => boolean;
+    coarsePointer?: boolean;
+    /** Which tap grammar tile clicks route through. Defaults to 'desktop', so
+     *  nothing about the existing behaviour changes until a caller opts in. */
+    grammar?: 'desktop' | 'mobile';
+    /** Clock for the mobile grammar's stage/commit debounce. Injectable for
+     *  tests; defaults to wall time. */
+    now?: () => number;
+  },
 ): InputController {
   let inputState: InputState = { kind: 'idle' };
   // Gate for the Enter-to-end-turn keybind. Defaults to always-allowed so
@@ -143,9 +241,32 @@ export function createInputController(
   // inject it directly. Guarded for jsdom, where matchMedia may be absent.
   const coarsePointer =
     opts?.coarsePointer ?? (window.matchMedia?.('(pointer: coarse)').matches ?? false);
+  // Tap grammar. 'desktop' keeps the machine documented at the top of this
+  // file; 'mobile' routes tile taps through the select → stage → commit
+  // handlers below. Fixed at construction — a grammar that flipped mid-gesture
+  // would strand the machine in a node the other grammar can't read.
+  const grammar: 'desktop' | 'mobile' = opts?.grammar ?? 'desktop';
+  const now = opts?.now ?? ((): number => Date.now());
 
   function logTransition(from: string, to: string, extra?: Record<string, unknown>): void {
     log('render', 'state transition', { from, to, ...extra });
+  }
+
+  // `getOverlay` runs every frame (main.ts), and the enemy threat overlay is
+  // the one overlay whose input isn't already cached on the input node — it has
+  // to path-find from the ENEMY's tile. Memoise on state identity: the reducer
+  // hands back a fresh object on every committed action, so a hit means nothing
+  // that could move the threat has happened. Same trick as
+  // `selectors.visibleTiles`.
+  let threatMemo: { state: GameState; unitId: string; area: Coord[] } | null = null;
+
+  function threatAreaFor(state: GameState, enemy: Unit): Coord[] {
+    if (threatMemo && threatMemo.state === state && threatMemo.unitId === enemy.id) {
+      return threatMemo.area;
+    }
+    const area = computeAttackArea(state, enemy, reachableTiles(state, enemy));
+    threatMemo = { state, unitId: enemy.id, area };
+    return area;
   }
 
   function getOverlay(): Overlay {
@@ -246,6 +367,50 @@ export function createInputController(
       case 'build-menu-open':
         ov.buildMenu = { tile: inputState.tile, entries: inputState.entries };
         break;
+      // ── Mobile grammar nodes ────────────────────────────────────────────
+      // Every one of these reuses the overlay fields the canvas already knows
+      // how to draw — the renderer is untouched by this phase.
+      case 'enemy-inspect': {
+        const sel = inputState;
+        ov.selected = sel.unit.pos;
+        if (sel.showThreat) {
+          // Threat = everything this enemy could hit if it moved first, which
+          // is exactly the attack area over its own reachable set. Fill AND
+          // border so it reads at a glance on a small screen.
+          const area = threatAreaFor(state, sel.unit);
+          ov.attackRange = area;
+          ov.attackRangeBorder = area;
+        }
+        break;
+      }
+      case 'tile-inspect':
+        ov.selected = inputState.tile;
+        break;
+      case 'attack-staged': {
+        const sel = inputState;
+        // Firing tile carries the selection ring, the walk to it is the move
+        // path, and the victim is the (single-tile) attack range.
+        ov.selected = sel.firingPos;
+        ov.moveRange = sel.reachable.map((r) => r.coord);
+        ov.movePath = sel.path;
+        ov.attackRange = [sel.target.pos];
+        if (state.units[sel.unit.id] && state.units[sel.target.id]) {
+          const dmg = previewAttack(state, sel.unit.id, sel.target.id);
+          ov.damagePreview = {
+            tile: sel.target.pos,
+            dealt: dmg.dealt,
+            received: dmg.counterReceived,
+          };
+        }
+        break;
+      }
+      case 'capture-staged': {
+        const sel = inputState;
+        ov.selected = sel.destination;
+        ov.moveRange = sel.reachable.map((r) => r.coord);
+        ov.movePath = sel.path;
+        break;
+      }
     }
     return ov;
   }
@@ -351,7 +516,10 @@ export function createInputController(
       return;
     }
 
-    onTileClick(tile);
+    // The only fork between the two grammars. Everything below `onTileClick`
+    // is the original desktop machine, byte for byte.
+    if (grammar === 'mobile') onTileClickMobile(tile);
+    else onTileClick(tile);
   }
 
   function chooseAction(label: ActionMenuEntry['label']): void {
@@ -569,6 +737,308 @@ export function createInputController(
     }
   }
 
+  // ─────────────────── Mobile grammar: select → stage → commit ───────────────
+  //
+  // Only reachable when `opts.grammar === 'mobile'`. See the file header for
+  // the tap flow. Invariants worth keeping in mind while reading:
+  //   - tap 1 and tap 2 never dispatch. Not once, not for "obvious" cases.
+  //   - a commit only ever happens on a re-tap of the staged tile (after the
+  //     debounce) or through the explicit `confirmStaged()` button.
+  //   - every commit is a sequence of EXISTING actions; the engine is untouched.
+
+  /** Minimum ms between staging and the confirming tap. Below this the second
+   *  tap is a double-tap, not a decision, and is dropped. */
+  const STAGE_DEBOUNCE_MS = 150;
+
+  function debouncePassed(stagedAt: number): boolean {
+    return now() - stagedAt >= STAGE_DEBOUNCE_MS;
+  }
+
+  function onTileClickMobile(tile: Coord): void {
+    switch (inputState.kind) {
+      case 'idle':
+      case 'enemy-inspect':
+      case 'tile-inspect':
+        mobileSelect(tile);
+        return;
+      case 'unit-selected':
+        mobileStage(inputState.unit, inputState.reachable, tile, 'unit-selected');
+        return;
+      case 'move-previewed': {
+        const sel = inputState;
+        if (coordEq(tile, sel.destination)) {
+          if (!debouncePassed(sel.stagedAt ?? 0)) return;
+          commitStagedMove(sel.unit, sel.path, sel.destination);
+          return;
+        }
+        mobileStage(sel.unit, sel.reachable, tile, 'move-previewed');
+        return;
+      }
+      case 'attack-staged': {
+        const sel = inputState;
+        if (coordEq(tile, sel.target.pos)) {
+          if (!debouncePassed(sel.stagedAt)) return;
+          commitStagedAttack(sel.unit, sel.target, sel.path);
+          return;
+        }
+        mobileStage(sel.unit, sel.reachable, tile, 'attack-staged');
+        return;
+      }
+      case 'capture-staged': {
+        const sel = inputState;
+        if (coordEq(tile, sel.destination)) {
+          if (!debouncePassed(sel.stagedAt)) return;
+          commitStagedCapture(sel.unit, sel.path);
+          return;
+        }
+        mobileStage(sel.unit, sel.reachable, tile, 'capture-staged');
+        return;
+      }
+      case 'action-menu':
+      case 'attack-targeting':
+      case 'unload-targeting':
+      case 'build-menu-open':
+        // Menu-ish nodes, only reachable here via `needsOrders`. The desktop
+        // handler already does the right thing (cancel / pick a target), so
+        // reuse it rather than growing a second copy of that logic.
+        onTileClick(tile);
+        return;
+    }
+  }
+
+  /** Tap 1: select an own unit, inspect anything else. Never dispatches. */
+  function mobileSelect(tile: Coord): void {
+    const state = emitter.getState();
+    const occupant = unitAt(state, tile);
+    const t = tileAt(state.map, tile);
+    // Own, unoccupied factory jumps straight to the build menu — same
+    // affordance the desktop grammar gives, and building is the only thing a
+    // factory tile is for.
+    if (t.terrain === 'factory' && t.owner === state.currentPlayer && !occupant) {
+      const entries = buildMenuEntries(state, state.currentPlayer, tile);
+      log('render', 'build menu open', { tile });
+      setState({ kind: 'build-menu-open', tile, entries }, inputState.kind);
+      return;
+    }
+    if (occupant && occupant.owner === state.currentPlayer) {
+      // A spent unit can't be selected (selectUnit would no-op and leave the
+      // machine on the previous node); inspect its tile instead.
+      if (occupant.hasActed) {
+        setState({ kind: 'tile-inspect', tile }, inputState.kind);
+        return;
+      }
+      selectUnit(occupant);
+      return;
+    }
+    if (occupant) {
+      setState(
+        { kind: 'enemy-inspect', unit: occupant, showThreat: false },
+        inputState.kind,
+      );
+      return;
+    }
+    setState({ kind: 'tile-inspect', tile }, inputState.kind);
+  }
+
+  /**
+   * Tap 2 (and every re-stage): turn a tap into a staged verb. Never
+   * dispatches. A tap with no verb deselects — except on the unit's own tile,
+   * which is an explicit request for the orders menu (Wait / Dive / Surface /
+   * Unload, and attack-in-place for a direct unit with no enemy tapped).
+   */
+  function mobileStage(
+    unit: Unit,
+    reachable: ReachableTile[],
+    tile: Coord,
+    from: string,
+  ): void {
+    const state = emitter.getState();
+    const occupant = unitAt(state, tile);
+
+    // Another friendly unit: a boardable transport in reach stages the LOAD
+    // (committed on the confirming tap); anything else switches selection.
+    if (occupant && occupant.owner === unit.owner && occupant.id !== unit.id) {
+      const reach = reachable.find((r) => coordEq(r.coord, tile));
+      if (reach && reach.path.length > 0 && isLoadable(occupant, unit)) {
+        setState(
+          {
+            kind: 'move-previewed',
+            unit,
+            reachable,
+            destination: tile,
+            path: reach.path,
+            stagedAt: now(),
+          },
+          from,
+        );
+        return;
+      }
+      mobileSelect(tile);
+      return;
+    }
+
+    const verb = inferVerb(state, unit, reachable, tile);
+    if (verb === 'attack') {
+      const target = occupant;
+      const firing = target
+        ? bestAttackPosition(state, unit, reachable, target)
+        : null;
+      if (!target || !firing) {
+        cancel();
+        return;
+      }
+      setState(
+        {
+          kind: 'attack-staged',
+          unit,
+          reachable,
+          target,
+          firingPos: firing.coord,
+          path: firing.path,
+          stagedAt: now(),
+        },
+        from,
+      );
+      return;
+    }
+    if (verb === 'capture' || verb === 'move') {
+      const reach = reachable.find((r) => coordEq(r.coord, tile));
+      if (!reach) {
+        cancel();
+        return;
+      }
+      setState(
+        verb === 'capture'
+          ? {
+              kind: 'capture-staged',
+              unit,
+              reachable,
+              destination: tile,
+              path: reach.path,
+              stagedAt: now(),
+            }
+          : {
+              kind: 'move-previewed',
+              unit,
+              reachable,
+              destination: tile,
+              path: reach.path,
+              stagedAt: now(),
+            },
+        from,
+      );
+      return;
+    }
+    if (coordEq(tile, unit.pos)) {
+      openActionMenuFor(unit, unit.pos);
+      return;
+    }
+    cancel();
+  }
+
+  /**
+   * Dispatch the MOVE leg of a fused commit and re-read the unit from the
+   * fresh state (positions and flags changed under us). An empty path means
+   * "act in place" — MOVE with an empty path is illegal, so we skip it.
+   * Returns null when the leg failed and the machine was already reset.
+   */
+  function moveLeg(unit: Unit, path: Coord[]): Unit | null {
+    if (path.length > 0) {
+      const ok = commit({ type: 'MOVE', unitId: unit.id, path });
+      if (!ok) {
+        cancel();
+        return null;
+      }
+    }
+    const fresh = emitter.getState().units[unit.id];
+    if (!fresh) {
+      setState({ kind: 'idle' }, inputState.kind);
+      return null;
+    }
+    return fresh;
+  }
+
+  /** Commit a staged plain move: MOVE (or LOAD), then close the unit out. */
+  function commitStagedMove(unit: Unit, path: Coord[], destination: Coord): void {
+    const state = emitter.getState();
+    const occupant = unitAt(state, destination);
+    if (occupant && occupant.owner === unit.owner && occupant.id !== unit.id) {
+      // Staged boarding: LOAD already absorbs the movement.
+      commit({ type: 'LOAD', cargoId: unit.id, transportId: occupant.id, path });
+      setState({ kind: 'idle' }, inputState.kind);
+      return;
+    }
+    const moved = moveLeg(unit, path);
+    if (!moved) return;
+    if (needsOrders(emitter.getState(), moved)) {
+      openActionMenuFor(moved, moved.pos);
+      return;
+    }
+    // MOVE marks hasMoved but NOT hasActed (see reducer.applyMove), so a bare
+    // move would leave the unit hanging around as still-actionable. The mobile
+    // grammar treats "I tapped this tile" as the unit's whole turn, so close it
+    // out with the same WAIT the action menu's Wait entry dispatches.
+    commit({ type: 'WAIT', unitId: moved.id });
+    setState({ kind: 'idle' }, inputState.kind);
+  }
+
+  /** Commit a staged attack: MOVE (if any) then ATTACK, in one handler. */
+  function commitStagedAttack(unit: Unit, target: Unit, path: Coord[]): void {
+    const moved = moveLeg(unit, path);
+    if (!moved) return;
+    if (path.length > 0 && needsOrders(emitter.getState(), moved)) {
+      openActionMenuFor(moved, moved.pos);
+      return;
+    }
+    commit({ type: 'ATTACK', attackerId: moved.id, targetId: target.id });
+    setState({ kind: 'idle' }, inputState.kind);
+  }
+
+  /** Commit a staged capture: MOVE (if any) then CAPTURE, in one handler. */
+  function commitStagedCapture(unit: Unit, path: Coord[]): void {
+    const moved = moveLeg(unit, path);
+    if (!moved) return;
+    if (path.length > 0 && needsOrders(emitter.getState(), moved)) {
+      openActionMenuFor(moved, moved.pos);
+      return;
+    }
+    commit({ type: 'CAPTURE', unitId: moved.id });
+    setState({ kind: 'idle' }, inputState.kind);
+  }
+
+  function confirmStaged(): void {
+    switch (inputState.kind) {
+      case 'move-previewed':
+        commitStagedMove(inputState.unit, inputState.path, inputState.destination);
+        return;
+      case 'attack-staged':
+        commitStagedAttack(inputState.unit, inputState.target, inputState.path);
+        return;
+      case 'capture-staged':
+        commitStagedCapture(inputState.unit, inputState.path);
+        return;
+      case 'build-menu-open': {
+        const staged = inputState.staged;
+        if (staged !== undefined) chooseBuild(staged);
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
+  function stageBuild(unitType: UnitType): void {
+    if (inputState.kind !== 'build-menu-open') return;
+    const entry = inputState.entries.find((e) => e.unitType === unitType);
+    if (!entry || !entry.affordable) return;
+    setState({ ...inputState, staged: unitType }, 'build-menu-open');
+  }
+
+  function toggleThreat(): void {
+    if (inputState.kind !== 'enemy-inspect') return;
+    setState({ ...inputState, showThreat: !inputState.showThreat }, 'enemy-inspect');
+  }
+
   function commit(action: Action): boolean {
     const before = emitter.getState();
     // Enqueue animation BEFORE dispatching so the renderer can interpolate
@@ -637,6 +1107,9 @@ export function createInputController(
     selectUnit,
     chooseAction,
     chooseBuild,
+    confirmStaged,
+    stageBuild,
+    toggleThreat,
   };
 }
 
@@ -651,6 +1124,11 @@ function selectedUnit(s: InputState): Unit | null {
     case 'move-previewed':
     case 'action-menu':
     case 'attack-targeting':
+    // Mobile staged nodes hold our own unit too — the capturable wash should
+    // stay lit while a capture/attack is staged. `enemy-inspect` deliberately
+    // does NOT count: that unit is theirs, not a selection of ours.
+    case 'attack-staged':
+    case 'capture-staged':
       return s.unit;
     case 'unload-targeting':
       return s.transport;
@@ -679,7 +1157,14 @@ function attackFringe(
   );
 }
 
-function computeAttackArea(
+/**
+ * Every tile `unit` could hit this turn: its attack ring taken over each tile
+ * it can move to (indirect units fire only from where they stand, so theirs is
+ * anchored at `unit.pos`). Feeds both the desktop attack fringe and the mobile
+ * grammar's enemy threat overlay — hence a real export rather than a test-only
+ * helper.
+ */
+export function computeAttackArea(
   state: GameState,
   unit: Unit,
   reachable: ReachableTile[],
