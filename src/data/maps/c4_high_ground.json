@@ -1,0 +1,41 @@
+{
+  "name": "c4_high_ground",
+  "width": 8,
+  "height": 11,
+  "tiles": [
+    "...1....",
+    "..F..F..",
+    "........",
+    "F......F",
+    "MMMRRMMM",
+    "MMMRRMMM",
+    "..F..F..",
+    "........",
+    ".F....F.",
+    "........",
+    "....0..."
+  ],
+  "tileLegend": {
+    ".": { "terrain": "plain" },
+    "F": { "terrain": "forest" },
+    "C": { "terrain": "city" },
+    "M": { "terrain": "mountain" },
+    "R": { "terrain": "road" },
+    "S": { "terrain": "sea" },
+    "0": { "terrain": "hq", "owner": 0 },
+    "1": { "terrain": "hq", "owner": 1 }
+  },
+  "players": {
+    "0": { "funds": 0, "hq": { "x": 4, "y": 10 } },
+    "1": { "funds": 0, "hq": { "x": 3, "y": 0 } }
+  },
+  "units": [
+    { "type": "artillery", "owner": 0, "pos": { "x": 4, "y": 8 } },
+    { "type": "tank", "owner": 0, "pos": { "x": 3, "y": 7 } },
+    { "type": "tank", "owner": 0, "pos": { "x": 5, "y": 7 } },
+    { "type": "infantry", "owner": 0, "pos": { "x": 5, "y": 6 } },
+    { "type": "tank", "owner": 1, "pos": { "x": 3, "y": 2 } },
+    { "type": "tank", "owner": 1, "pos": { "x": 4, "y": 2 } },
+    { "type": "infantry", "owner": 1, "pos": { "x": 5, "y": 1 } }
+  ]
+}

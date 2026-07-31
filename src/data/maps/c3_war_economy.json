@@ -1,0 +1,37 @@
+{
+  "name": "c3_war_economy",
+  "width": 7,
+  "height": 10,
+  "tiles": [
+    "...1...",
+    "...b...",
+    "..FRF..",
+    ".C.R.C.",
+    "...R...",
+    "...R...",
+    ".C.R.C.",
+    "..FRF..",
+    "...a...",
+    "...0..."
+  ],
+  "tileLegend": {
+    ".": { "terrain": "plain" },
+    "F": { "terrain": "forest" },
+    "C": { "terrain": "city" },
+    "M": { "terrain": "mountain" },
+    "R": { "terrain": "road" },
+    "S": { "terrain": "sea" },
+    "0": { "terrain": "hq", "owner": 0 },
+    "1": { "terrain": "hq", "owner": 1 },
+    "a": { "terrain": "factory", "owner": 0 },
+    "b": { "terrain": "factory", "owner": 1 }
+  },
+  "players": {
+    "0": { "funds": 3000, "hq": { "x": 3, "y": 9 } },
+    "1": { "funds": 1000, "hq": { "x": 3, "y": 0 } }
+  },
+  "units": [
+    { "type": "infantry", "owner": 0, "pos": { "x": 2, "y": 8 } },
+    { "type": "infantry", "owner": 1, "pos": { "x": 4, "y": 1 } }
+  ]
+}

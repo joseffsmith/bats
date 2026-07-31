@@ -1,0 +1,283 @@
+{
+  "version": 1,
+  "missions": [
+    {
+      "id": "m1_first_strike",
+      "n": 1,
+      "title": "First Strike",
+      "map": "c1_first_strike",
+      "opponent": {
+        "persona": "turtle",
+        "name": "Warden Kessel",
+        "flavor": "Digs in, waits, and expects you to bleed on her line."
+      },
+      "objective": "Destroy both of Kessel's soldiers.",
+      "intro": [
+        "Two tanks, one soldier, and a scout report that says Warden Kessel left only a picket in the valley.",
+        "She is not wrong to be confident — she has held this ground for a year. She has simply never been rushed.",
+        "Select. Move. Strike. That is the whole of it today."
+      ],
+      "fog": false,
+      "hints": [
+        {
+          "id": "h1_select",
+          "show": { "on": "immediate" },
+          "clear": { "on": "input", "kind": "unit-selected" },
+          "text": "Tap one of your tanks. Every tile it can reach this turn lights up."
+        },
+        {
+          "id": "h2_stage_move",
+          "show": { "on": "input", "kind": "unit-selected" },
+          "clear": { "on": "action", "type": "MOVE" },
+          "text": "Tap a highlighted tile to stage a move — tap it again to confirm."
+        },
+        {
+          "id": "h3_attack",
+          "show": { "on": "action", "type": "MOVE" },
+          "clear": { "on": "action", "type": "ATTACK" },
+          "text": "Now tap the enemy to stage an attack. The tray shows the damage forecast before you commit."
+        },
+        {
+          "id": "h4_end_turn",
+          "show": { "on": "action", "type": "ATTACK" },
+          "clear": { "on": "action", "type": "END_TURN" },
+          "text": "Each unit gets one move and one action a day. When your second tank has swung too, end the turn."
+        },
+        {
+          "id": "h5_their_turn",
+          "show": { "on": "action", "type": "END_TURN" },
+          "clear": { "on": "turn", "day": 2 },
+          "text": "Kessel's turn. Watch what she does with the forest — trees are armour out here."
+        },
+        {
+          "id": "h6_finish",
+          "show": { "on": "turn", "day": 2 },
+          "clear": { "on": "turn", "day": 5 },
+          "text": "Day two. Wounds don't heal on their own — finish the survivor and the valley is yours."
+        }
+      ],
+      "stars": { "winByDay": 3, "noUnitLost": true },
+      "defeat": { "dayLimit": 8 }
+    },
+    {
+      "id": "m2_flag_country",
+      "n": 2,
+      "title": "Flag Country",
+      "map": "c2_flag_country",
+      "opponent": {
+        "persona": "balanced",
+        "name": "Captain Vayle",
+        "flavor": "Plays the percentages, never overreaches, never panics."
+      },
+      "objective": "Take the three cities on the road, then capture Vayle's HQ.",
+      "intro": [
+        "One road, three towns, and Captain Vayle coming down it from the north with a soldier and a scout car.",
+        "Ground you stand on is worth nothing. Ground you have raised a flag over pays you every single day.",
+        "Take the flags first. The HQ is only the last one on the list."
+      ],
+      "fog": false,
+      "hints": [
+        {
+          "id": "h1_only_infantry",
+          "show": { "on": "immediate" },
+          "clear": { "on": "input", "kind": "unit-selected" },
+          "text": "Only infantry can capture. Select one of your three soldiers."
+        },
+        {
+          "id": "h2_walk_the_road",
+          "show": { "on": "input", "kind": "unit-selected" },
+          "clear": { "on": "action", "type": "MOVE" },
+          "text": "Roads are the cheapest ground to cross. Stage a move onto the nearest city and confirm."
+        },
+        {
+          "id": "h3_capture",
+          "show": { "on": "action", "type": "MOVE" },
+          "clear": { "on": "action", "type": "CAPTURE" },
+          "text": "Standing on a city isn't owning it. Choose Capture from the menu."
+        },
+        {
+          "id": "h4_hold_it",
+          "show": { "on": "action", "type": "CAPTURE" },
+          "clear": { "on": "turn", "day": 3 },
+          "text": "A capture takes two turns at full health, and stepping off resets it. Hold the tile."
+        },
+        {
+          "id": "h5_escort",
+          "show": { "on": "turn", "day": 3 },
+          "clear": { "on": "turn", "day": 6 },
+          "text": "Your tank cannot raise a flag — its job is to keep Vayle's scout car off the ones who can."
+        },
+        {
+          "id": "h6_hq",
+          "show": { "on": "turn", "day": 6 },
+          "clear": { "on": "turn", "day": 12 },
+          "text": "An HQ captures like any other tile. Walk a healthy soldier onto it and the war ends there."
+        }
+      ],
+      "stars": { "winByDay": 6, "noUnitLost": true },
+      "defeat": { "dayLimit": 14 }
+    },
+    {
+      "id": "m3_war_economy",
+      "n": 3,
+      "title": "War Economy",
+      "map": "c3_war_economy",
+      "opponent": {
+        "persona": "economist",
+        "name": "Quartermaster Penn",
+        "flavor": "Counts every coin twice, then spends all of them on you."
+      },
+      "objective": "Out-build and out-earn Penn, then take his HQ.",
+      "intro": [
+        "Three thousand in the war chest, one soldier on the field, and a factory that has been cold for a month.",
+        "Quartermaster Penn does not fight battles. He fights budgets, and he has never lost one.",
+        "Every property you hold pays a thousand a day. Spend it faster than he does."
+      ],
+      "fog": false,
+      "hints": [
+        {
+          "id": "h1_open_factory",
+          "show": { "on": "immediate" },
+          "clear": { "on": "input", "kind": "build-menu-open" },
+          "text": "Tap your factory — the tile just above your HQ — to open the build menu."
+        },
+        {
+          "id": "h2_build_cheap",
+          "show": { "on": "input", "kind": "build-menu-open" },
+          "clear": { "on": "action", "type": "BUILD" },
+          "text": "Infantry cost 1000. Three of them take three cities; one tank you can't afford yet takes none."
+        },
+        {
+          "id": "h3_fresh_units_wait",
+          "show": { "on": "action", "type": "BUILD" },
+          "clear": { "on": "action", "type": "END_TURN" },
+          "text": "A unit built today can't move today. Spend the rest of your funds, then end the turn."
+        },
+        {
+          "id": "h4_go_capture",
+          "show": { "on": "action", "type": "END_TURN" },
+          "clear": { "on": "action", "type": "CAPTURE" },
+          "text": "Four neutral cities sit between you and Penn. Each one is 1000 a day, forever — go and take them."
+        },
+        {
+          "id": "h5_compound",
+          "show": { "on": "action", "type": "CAPTURE" },
+          "clear": { "on": "turn", "day": 8 },
+          "text": "Income compounds. Two cities ahead by day five is a tank ahead by day eight."
+        },
+        {
+          "id": "h6_spend_it",
+          "show": { "on": "turn", "day": 8 },
+          "clear": { "on": "turn", "day": 16 },
+          "text": "Funds sitting in the chest kill nobody. If you can afford a tank, build the tank."
+        }
+      ],
+      "stars": { "winByDay": 12, "noUnitLost": false },
+      "defeat": { "dayLimit": 20 }
+    },
+    {
+      "id": "m4_high_ground",
+      "n": 4,
+      "title": "The High Ground",
+      "map": "c4_high_ground",
+      "opponent": {
+        "persona": "aggressor",
+        "name": "Red Rask",
+        "flavor": "Charges first, reads the ground never."
+      },
+      "objective": "Hold the pass and destroy Rask's armour.",
+      "intro": [
+        "A wall of mountains with one road cut through it, and Red Rask on the far side with two tanks and no patience.",
+        "He has to come through a gap two tiles wide. You do not have to meet him in it.",
+        "Let the ridge do the work, and let the artillery do the arithmetic."
+      ],
+      "fog": false,
+      "hints": [
+        {
+          "id": "h1_read_the_ground",
+          "show": { "on": "immediate" },
+          "clear": { "on": "input", "kind": "unit-selected" },
+          "text": "Mountains stop tanks dead — only infantry can climb. Rask must use the road pass."
+        },
+        {
+          "id": "h2_terrain_is_armour",
+          "show": { "on": "input", "kind": "unit-selected" },
+          "clear": { "on": "turn", "day": 2 },
+          "text": "Terrain is armour. Forest and mountain soak damage; that bare road soaks none at all."
+        },
+        {
+          "id": "h3_artillery_setup",
+          "show": { "on": "turn", "day": 2 },
+          "clear": { "on": "action", "type": "ATTACK" },
+          "text": "Artillery strikes two to three tiles away but cannot move and fire the same turn. Park it with the pass already in range."
+        },
+        {
+          "id": "h4_no_counter",
+          "show": { "on": "action", "type": "ATTACK" },
+          "clear": { "on": "turn", "day": 5 },
+          "text": "Indirect fire never takes a counterattack. Shell them in the gap before they reach your line."
+        },
+        {
+          "id": "h5_hold",
+          "show": { "on": "turn", "day": 5 },
+          "clear": { "on": "turn", "day": 11 },
+          "text": "Hold the mouth of the pass with your tanks. A charge into the gap gives Rask the fight he wants."
+        }
+      ],
+      "stars": { "winByDay": 6, "noUnitLost": false },
+      "defeat": { "dayLimit": 14 }
+    },
+    {
+      "id": "m5_black_pines",
+      "n": 5,
+      "title": "The Black Pines",
+      "map": "c5_black_pines",
+      "opponent": {
+        "persona": "balanced",
+        "name": "Colonel Wren",
+        "flavor": "Quiet, patient, and entirely comfortable in the dark."
+      },
+      "objective": "Find Wren's column in the pines and take the HQ.",
+      "intro": [
+        "The pines swallow everything: sightlines, scouts, and the last three patrols sent in after Colonel Wren.",
+        "You will see only what your own units can see. Everything else is a memory drawn on a map.",
+        "Send the recon ahead, take the crossroads city for the view, and don't walk into a treeline you haven't checked."
+      ],
+      "fog": true,
+      "hints": [
+        {
+          "id": "h1_fog",
+          "show": { "on": "immediate" },
+          "clear": { "on": "input", "kind": "unit-selected" },
+          "text": "Fog. You see only what your units see — the rest of the board is guesswork."
+        },
+        {
+          "id": "h2_recon",
+          "show": { "on": "input", "kind": "unit-selected" },
+          "clear": { "on": "action", "type": "MOVE" },
+          "text": "Your recon sees five tiles and moves eight. It's a torch, not a hammer — keep it ahead and keep it alive."
+        },
+        {
+          "id": "h3_vision_anchor",
+          "show": { "on": "action", "type": "MOVE" },
+          "clear": { "on": "action", "type": "CAPTURE" },
+          "text": "The city in the middle of the pines watches the whole crossing while you hold it. Take it."
+        },
+        {
+          "id": "h4_treeline",
+          "show": { "on": "action", "type": "CAPTURE" },
+          "clear": { "on": "turn", "day": 6 },
+          "text": "Forest hides whatever stands in it until you're beside it. Treat every treeline as occupied."
+        },
+        {
+          "id": "h5_ghosts",
+          "show": { "on": "turn", "day": 6 },
+          "clear": { "on": "turn", "day": 14 },
+          "text": "Ghost markers show where you last saw something — not where it is now. Wren moves the moment you look away."
+        }
+      ],
+      "stars": { "winByDay": 10, "noUnitLost": false },
+      "defeat": { "dayLimit": 20 }
+    }
+  ]
+}

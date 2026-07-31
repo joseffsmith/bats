@@ -1,0 +1,42 @@
+{
+  "name": "c5_black_pines",
+  "width": 8,
+  "height": 12,
+  "tiles": [
+    "...1....",
+    "..F..F..",
+    ".FF..FF.",
+    "........",
+    "..F..F..",
+    "...C....",
+    "..F..F..",
+    "........",
+    ".FF..FF.",
+    "..F..F..",
+    "........",
+    "....0..."
+  ],
+  "tileLegend": {
+    ".": { "terrain": "plain" },
+    "F": { "terrain": "forest" },
+    "C": { "terrain": "city" },
+    "M": { "terrain": "mountain" },
+    "R": { "terrain": "road" },
+    "S": { "terrain": "sea" },
+    "0": { "terrain": "hq", "owner": 0 },
+    "1": { "terrain": "hq", "owner": 1 }
+  },
+  "players": {
+    "0": { "funds": 0, "hq": { "x": 4, "y": 11 } },
+    "1": { "funds": 0, "hq": { "x": 3, "y": 0 } }
+  },
+  "units": [
+    { "type": "recon", "owner": 0, "pos": { "x": 4, "y": 10 } },
+    { "type": "tank", "owner": 0, "pos": { "x": 3, "y": 10 } },
+    { "type": "infantry", "owner": 0, "pos": { "x": 2, "y": 10 } },
+    { "type": "infantry", "owner": 0, "pos": { "x": 5, "y": 10 } },
+    { "type": "tank", "owner": 1, "pos": { "x": 3, "y": 1 } },
+    { "type": "infantry", "owner": 1, "pos": { "x": 2, "y": 1 } },
+    { "type": "infantry", "owner": 1, "pos": { "x": 4, "y": 1 } }
+  ]
+}
