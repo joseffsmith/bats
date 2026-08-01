@@ -245,8 +245,9 @@ export function wireConsoleCapture(page: Page): { errors: string[]; all: string[
     all.push(text);
     if (msg.type() === 'error') errors.push(text);
   });
+  // Puppeteer types this payload `Error | unknown`, so narrow before reading.
   page.on('pageerror', (err) => {
-    const text = `[pageerror] ${err.message}`;
+    const text = `[pageerror] ${err instanceof Error ? err.message : String(err)}`;
     all.push(text);
     errors.push(text);
   });

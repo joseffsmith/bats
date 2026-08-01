@@ -245,7 +245,10 @@ async function main(): Promise<void> {
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
     page.on('console', (msg) => process.stdout.write(`[page:${msg.type()}] ${msg.text()}\n`));
-    page.on('pageerror', (err) => process.stdout.write(`[page:error] ${err.message}\n`));
+    page.on('pageerror', (err) =>
+      // Puppeteer types this payload `Error | unknown`, so narrow before reading.
+      process.stdout.write(`[page:error] ${err instanceof Error ? err.message : String(err)}\n`),
+    );
     process.stderr.write(`[drive] opening ${url}\n`);
     await openGame(page, url);
     console.log(await summariseState(page));

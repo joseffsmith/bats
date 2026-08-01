@@ -1,0 +1,10 @@
+// Production build project: `src` only.
+//
+// The default tsconfig.json deliberately spans src + tests so `npx tsc --noEmit`
+// (and editors) check the whole tree. The Docker image, however, should compile
+// nothing but shipped code — otherwise the build stage has to COPY tests/ and
+// scripts/ purely to satisfy the type-checker. `npm run build` points here.
+{
+  "extends": "./tsconfig.json",
+  "include": ["src"]
+}

@@ -16,6 +16,20 @@ jobs:
       - run: npm ci
       - run: npm run lint
 
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Two projects: the default tsconfig (src + tests) and tsconfig.e2e.json
+      # (e2e + scripts). The `build` job only compiles src, and vitest strips
+      # types without checking them, so this job is what covers everything else.
+      - run: npm run typecheck
+
   unit:
     runs-on: ubuntu-latest
     steps:
