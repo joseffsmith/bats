@@ -30,6 +30,19 @@ None right now.
 Completed plan briefs are deleted once shipped — they go stale against the
 code that overtakes them — and remain retrievable via git history.
 
+## Shipped
+
+- **Mobile-first shell + teaching campaign** — no brief in-tree (it was planned
+  and executed in one session, so there was never a file to delete). The
+  mobile-first shell is `?mobile=1|0`: a 44px HUD strip over a camera-driven
+  full-bleed board over a command tray, with a select → stage → commit tap
+  grammar. The teaching campaign is `?campaign=menu|1..5`: five coached
+  missions, star scoring, and progress in `localStorage` under
+  `bats.campaign.v1`. See PLAN.md's **Mobile-first shell** and **Teaching
+  campaign** sections for the runtime entry points, and
+  `e2e/{mobile,mobile-grammar,camera,campaign}.e2e.ts` for the pinned
+  behaviour.
+
 ## Working in a worktree
 
 Every plan should be executed in its own git worktree off `main`, so the

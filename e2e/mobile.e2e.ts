@@ -21,7 +21,7 @@
 // `awaitIdle` or a `waitForFunction` on a real observable.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { Browser, Page } from 'puppeteer';
+import type { Browser } from 'puppeteer';
 import { launchBrowser } from '../scripts/lib/browser-harness';
 import { createInitialState } from '../src/engine/core/initial-state';
 import type { GameState } from '../src/engine/core/types';
@@ -30,28 +30,27 @@ import {
   awaitIdle,
   bats,
   clickTile,
+  clickTrayControl,
   endTurn,
   expectNoConsoleErrors,
   historyTypes,
   inputState,
+  MOBILE,
+  MOBILE_H,
+  MOBILE_W,
   newPage,
   openMap,
   setGameState,
   settleFrames,
   state,
+  trayState,
+  waitForTrayState,
 } from './helpers';
 
 type BatsWindow = { __bats: BatsDebug };
 
-const W = 390;
-const H = 844;
-const MOBILE = {
-  width: W,
-  height: H,
-  hasTouch: true,
-  isMobile: true,
-  mobile: '1',
-} as const;
+const W = MOBILE_W;
+const H = MOBILE_H;
 
 /** Two infantry a tile apart on open plain, P0 to act (mirrors combat spec). */
 function adjacencyScenario(): GameState {
@@ -67,41 +66,6 @@ function adjacencyScenario(): GameState {
       { type: 'infantry', owner: 1, pos: { x: 3, y: 2 } },
     ],
   });
-}
-
-/** The tray's current `data-tray-state`, or null when no tray is mounted. */
-function trayState(page: Page): Promise<string | null> {
-  return page.evaluate(
-    () =>
-      document.querySelector<HTMLElement>('[data-tray-state]')?.dataset.trayState ?? null,
-  );
-}
-
-/** Wait until the tray reports a given state. */
-function waitForTrayState(page: Page, want: string): Promise<unknown> {
-  return page.waitForFunction(
-    (w: string) =>
-      document.querySelector<HTMLElement>('[data-tray-state]')?.dataset.trayState === w,
-    { timeout: 10_000, polling: 50 },
-    want,
-  );
-}
-
-/** Click a tray control and wait for the input machine or history to move. */
-async function clickTrayControl(page: Page, selector: string): Promise<void> {
-  const before = await page.evaluate(() => {
-    const b = (window as unknown as BatsWindow).__bats;
-    return { kind: b.input.getInputState().kind, hist: b.history.length };
-  });
-  await page.click(selector);
-  await page.waitForFunction(
-    (b0: { kind: string; hist: number }) => {
-      const b = (window as unknown as BatsWindow).__bats;
-      return b.input.getInputState().kind !== b0.kind || b.history.length !== b0.hist;
-    },
-    { timeout: 10_000, polling: 50 },
-    before,
-  );
 }
 
 describe('mobile shell (HUD strip + command tray)', () => {

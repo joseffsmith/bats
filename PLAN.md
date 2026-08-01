@@ -297,6 +297,70 @@ the threat map plans around them while `unitAt` and `attackableTargets`
 ignore them. Acceptance: tier3-fog still beats tier1-fog ≥7/10 on duel
 under Aggressive ghost consumption.
 
+### Mobile-first shell (supersedes "dedicated mobile touch UI" above)
+
+Shipped behind `?mobile=1|0`; absent, the page reads `(pointer: coarse)`.
+The question is resolved ONCE at boot (`renderer/mobile/mode.ts`) and is the
+single switch for the whole mobile UI. The two shells mount **exclusively** —
+mobile is not a reflow of the desktop chrome, it replaces it:
+
+- **HUD strip** (`mobile/hud-strip.ts`) — a 44px band: whose turn, day, funds,
+  overview toggle. Replaces the mirrored player panels and turn indicator.
+- **Camera board** (`renderer/camera.ts` + `mobile/gestures.ts`) — the board
+  renders at a *tactical* zoom (`BOOT_TILE_SIZE` 56, ceiling 90) and runs past
+  the screen edges instead of being shrunk to fit; drag pans, pinch zooms,
+  overview zooms out to the whole map. The camera owns `tileSize` + `origin`
+  and clamps both against the *band* left by the strip and the tray; the
+  renderer stays dumb and reads the two fields each frame. Desktop has no
+  camera at all, which is also how a driver feature-detects the board
+  (`__bats.camera` is present only on mobile).
+- **Command tray** (`mobile/tray.ts`) — the one surface a phone player issues
+  an order from, replacing the toolshelf, the tile-anchored popover menus, the
+  end-turn cluster, the cancel chip, the fog handoff scrim and the winner
+  modal. It owns no state: it is a pure projection of
+  `input.getState() × emitter.getState()`.
+
+**Select → stage → commit.** Board taps run a second input grammar
+(`grammar: 'mobile'` in `renderer/input.ts`, verb inference in
+`mobile/verbs.ts`), living beside the desktop click machine, never inside it:
+tap 1 selects an own unit or inspects an enemy/tile, tap 2 stages a verb
+(move / attack with an auto-picked firing tile / capture) and shows its
+forecast, and only tap 3 on the SAME target — after a 150ms debounce that eats
+double-taps — or the tray's CONFIRM commits. A commit is a *sequence of
+existing engine actions* (MOVE then ATTACK, MOVE then CAPTURE, MOVE then WAIT):
+no new reducer action types, no engine changes. Desktop takes the identical
+path it always has.
+
+### Teaching campaign
+
+Shipped behind `?campaign=menu|1..5`. Five missions in `src/data/campaign.json`
+on their own `c1..c5` boards (`CAMPAIGN_MAP_NAMES` — the skirmish map picker
+deliberately refuses them), always human at seat 0 against the mission's named
+commander persona at seat 1; `?p0=`/`?p1=` are ignored so a briefing can never
+describe an opponent the board isn't running. `src/campaign/` holds the whole
+layer and the engine is untouched by it: `loader.ts` validates the data,
+`hints.ts` walks each mission's coaching script in strict order (one hint on
+screen at a time, advanced by input-node / action / day triggers), `tracker.ts`
+counts losses and calls the mission at its day limit, `progress.ts` persists
+stars, `screens.ts` builds the four screens (select / intro / complete /
+defeat), and `controller.ts` wires briefing → BEGIN → hints + scorekeeping →
+debrief → navigation. Navigation is URL-param reload, so every mission starts
+from main.ts's one boot path.
+
+Stars are win + win-by-day-N + (where the mission asks) lose-nothing, persisted
+in `localStorage` under **`bats.campaign.v1`**; the store never throws and never
+loses stars (a browser that refuses storage falls back to an in-memory record
+and the menu says so), and mission N+1 unlocks when N is completed. One runtime
+drives both shells through a `CampaignPresenter`: the tray's objective / hint /
+panel hooks on mobile, a z-97 overlay plus floating objective/hint pills on
+desktop.
+
+Coverage: `tests/` for every campaign module and the mobile grammar in node,
+plus browser e2e in `e2e/mobile.e2e.ts` (shell), `e2e/mobile-grammar.e2e.ts`
+(the tap grammar), `e2e/camera.e2e.ts` (clamps, overview, real touch gestures),
+`e2e/campaign.e2e.ts` (menu locks, briefing, coached step, win → stars →
+localStorage, desktop shell) and a `duel-390x844-mobile` visual golden.
+
 ---
 
 ## Testing Discipline

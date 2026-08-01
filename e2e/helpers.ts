@@ -46,7 +46,32 @@ export type OpenParams = {
    * under test never depends on how Chromium reports an emulated pointer.
    */
   mobile?: string;
+  /** Campaign entry point: `'menu'` for the mission list, or a mission number. */
+  campaign?: string;
+  /**
+   * Install the `window.__bats` hook. Defaults to true — every helper below
+   * reads through it. Pass `false` for `?campaign=menu`, which short-circuits
+   * in main.ts BEFORE `installDebugHook`: that page has no hook at all, so
+   * `openGame` must not wait for one and its spec observes DOM selectors only.
+   */
+  debug?: boolean;
 };
+
+/**
+ * The mobile-shell page: an iPhone-13-ish 390×844 viewport with touch
+ * emulation, plus `?mobile=1`. The parameter is explicit rather than inferred
+ * from `(pointer: coarse)` so the shell under test never depends on how
+ * Chromium reports an emulated pointer. Spread into `openMap`.
+ */
+export const MOBILE_W = 390;
+export const MOBILE_H = 844;
+export const MOBILE = {
+  width: MOBILE_W,
+  height: MOBILE_H,
+  hasTouch: true,
+  isMobile: true,
+  mobile: '1',
+} as const;
 
 /**
  * Navigate a fresh page to the game. Always `debug=1` (the `__bats` hook is how
@@ -72,6 +97,8 @@ export async function openMap(page: Page, params: OpenParams = {}): Promise<Capt
     ...(params.fog !== undefined ? { fog: params.fog } : {}),
     ...(params.ambient !== undefined ? { ambient: params.ambient } : {}),
     ...(params.mobile !== undefined ? { mobile: params.mobile } : {}),
+    ...(params.campaign !== undefined ? { campaign: params.campaign } : {}),
+    ...(params.debug !== undefined ? { debug: params.debug } : {}),
     seed: params.seed ?? 42,
   });
   await openGame(page, url);
@@ -149,10 +176,7 @@ export async function clickTile(page: Page, tile: { x: number; y: number }): Pro
     const b = (window as unknown as BatsWindow).__bats;
     return { kind: b.input.getInputState().kind, hist: b.history.length };
   });
-  const p = await page.evaluate(
-    (t) => (window as unknown as BatsWindow).__bats.tileToScreen(t),
-    tile,
-  );
+  const p = await stableTileToScreen(page, tile);
   await page.mouse.click(p.x, p.y);
   await page.waitForFunction(
     (b0: { kind: string; hist: number }) => {
@@ -198,6 +222,129 @@ export async function clickMenuEntry(page: Page, label: string): Promise<void> {
 export async function endTurn(page: Page): Promise<void> {
   await page.click('[data-action="end-turn"]');
   await awaitIdle(page);
+}
+
+// ── Mobile command tray ──────────────────────────────────────────────────────
+// The tray (renderer/mobile/tray.ts) is a pure projection of the input node, so
+// `data-tray-state` is the mobile shell's answer to "what is the machine parked
+// on" and the three buttons below are the only way an order reaches the engine
+// that isn't a board tap. Same reasoning as `clickMenuEntry`: one place knows
+// how the surface is implemented.
+
+/** The tray's current `data-tray-state`, or null when no tray is mounted. */
+export function trayState(page: Page): Promise<string | null> {
+  return page.evaluate(
+    () =>
+      document.querySelector<HTMLElement>('[data-tray-state]')?.dataset.trayState ?? null,
+  );
+}
+
+/** Wait until the tray reports a given state. */
+export function waitForTrayState(page: Page, want: string): Promise<unknown> {
+  return page.waitForFunction(
+    (w: string) =>
+      document.querySelector<HTMLElement>('[data-tray-state]')?.dataset.trayState === w,
+    { timeout: 10_000, polling: 50 },
+    want,
+  );
+}
+
+/** Click a tray control and wait for the input machine or history to move. */
+export async function clickTrayControl(page: Page, selector: string): Promise<void> {
+  const before = await page.evaluate(() => {
+    const b = (window as unknown as BatsWindow).__bats;
+    return { kind: b.input.getInputState().kind, hist: b.history.length };
+  });
+  await page.click(selector);
+  await page.waitForFunction(
+    (b0: { kind: string; hist: number }) => {
+      const b = (window as unknown as BatsWindow).__bats;
+      return b.input.getInputState().kind !== b0.kind || b.history.length !== b0.hist;
+    },
+    { timeout: 10_000, polling: 50 },
+    before,
+  );
+}
+
+/**
+ * Wait out the mobile grammar's stage→commit debounce (`STAGE_DEBOUNCE_MS` in
+ * input.ts: a re-tap inside 150ms is a double-tap, not a decision, and is
+ * dropped). NOT a sleep — it polls the staged node's own `stagedAt` stamp
+ * against the same clock input.ts reads (`Date.now`), so it resolves the
+ * instant the tap would be honoured and never resolves at all if nothing is
+ * staged, which is exactly the failure a spec would want to see.
+ */
+export function awaitStageDebounce(page: Page, marginMs = 25): Promise<unknown> {
+  return page.waitForFunction(
+    (margin: number) => {
+      const s = (window as unknown as BatsWindow).__bats.input.getInputState() as {
+        stagedAt?: number;
+      };
+      return typeof s.stagedAt === 'number' && Date.now() - s.stagedAt >= 150 + margin;
+    },
+    { timeout: 10_000, polling: 20 },
+    marginMs,
+  );
+}
+
+/**
+ * Poll until the live input node satisfies `expr` — a JS expression over `s`,
+ * the node (e.g. `"s.kind === 'move-previewed' && s.destination.x === 4"`).
+ * `clickTile` can only wait for the node's KIND to change, which is blind to
+ * the mobile grammar's re-stage (move-previewed → move-previewed with a new
+ * destination); this sees it.
+ */
+export function waitForInput(page: Page, expr: string): Promise<unknown> {
+  return page.waitForFunction(
+    (body: string) => {
+      const s = (window as unknown as BatsWindow).__bats.input.getInputState();
+      return new Function('s', `return ${body};`)(s) === true;
+    },
+    { timeout: 10_000, polling: 50 },
+    expr,
+  );
+}
+
+/**
+ * Tap a tile WITHOUT waiting for the machine to move. `clickTile` is the right
+ * tool almost everywhere; this one exists for the mobile grammar's re-stage and
+ * mis-tap cases, where the observable that changes is inside the node rather
+ * than its kind. Callers follow it with `waitForInput`.
+ */
+export async function tapTile(page: Page, tile: { x: number; y: number }): Promise<void> {
+  const p = await stableTileToScreen(page, tile);
+  await page.mouse.click(p.x, p.y);
+}
+
+/**
+ * A tile's screen point, read only once it has stopped moving. On the mobile
+ * shell the camera EASES (boot centring, overview toggles, AI auto-follow run
+ * ~250ms tweens), so a coordinate read mid-flight is stale by the time the
+ * click lands and can hit the neighbouring tile. Poll until two consecutive
+ * animation frames agree (sub-half-pixel) — during a tween consecutive frames
+ * always differ, so agreement means the camera has settled. Desktop pages have
+ * no camera and exit on the first pair of frames. Not a fixed sleep: this waits
+ * on the observable that actually gates a correct click.
+ */
+async function stableTileToScreen(
+  page: Page,
+  tile: { x: number; y: number },
+): Promise<{ x: number; y: number }> {
+  return page.evaluate(async (t) => {
+    const b = (window as unknown as BatsWindow).__bats;
+    const frame = (): Promise<void> =>
+      new Promise((r) => requestAnimationFrame(() => r()));
+    let prev = b.tileToScreen(t);
+    // 120 frames ≈ 2s at 60Hz — far beyond any camera tween; bail with the
+    // latest read rather than hang if something animates forever.
+    for (let i = 0; i < 120; i += 1) {
+      await frame();
+      const cur = b.tileToScreen(t);
+      if (Math.abs(cur.x - prev.x) < 0.5 && Math.abs(cur.y - prev.y) < 0.5) return cur;
+      prev = cur;
+    }
+    return prev;
+  }, tile);
 }
 
 // Vite's HMR client + a couple of well-known dev-only lines are benign; every
