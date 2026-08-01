@@ -47,6 +47,12 @@ export type StarSpec = {
   noUnitLost: boolean;
 };
 
+/** Most stars a single mission can be worth: the win, the speed bonus, and the
+ *  no-losses bonus. The tracker clamps what it awards to this, and the progress
+ *  store clamps what it stores — both read it from here so the ceiling is
+ *  defined once. */
+export const MAX_STARS = 3;
+
 /** Campaign-layer loss condition. The engine has no turn limit; the mission
  *  tracker enforces this one on top of it. */
 export type DefeatSpec = {

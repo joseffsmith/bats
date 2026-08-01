@@ -519,11 +519,6 @@ async function main(): Promise<void> {
     log('render', 'debug hook installed');
   }
 
-  // Wrap input.click so a clicked-on AI player has the input ignored. The
-  // input controller doesn't know about the driver — we filter at the boundary.
-  const originalClickHandlers = new Map<string, EventListener>();
-  void originalClickHandlers; // reserved for future detach work
-
   function frame(): void {
     animQueue.tick();
     aiDriver.tick();
