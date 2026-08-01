@@ -31,6 +31,14 @@ const EXPECTED_BENCHMARKS = [
 const FROZEN_DESCRIPTION =
   'Frozen at aff447e (iteration 8) — regression benchmark, do not tune.';
 
+/**
+ * Personas deliberately retuned since the i8 freeze, so the snapshot-fidelity
+ * assertion below no longer applies to them. Adding a name here is the
+ * sanctioned response to that test failing (see its comment); re-freezing the
+ * benchmark is not.
+ */
+const RETUNED_SINCE_I8 = new Set(['turtle', 'balanced']);
+
 describe('persona roster contract', () => {
   // If this fails, someone added a persona (or leaked a probe/benchmark into
   // the registry). Campaign mode validates mission opponents against this
@@ -79,7 +87,14 @@ describe('i8 benchmarks', () => {
     // this assertion is EXPECTED to fail — that failure is the whole point of
     // the benchmark, and the fix is to delete this test's expectation for the
     // changed persona, not to re-freeze i8.
-    for (const persona of PERSONA_NAMES) {
+    //
+    // Retuned since the freeze (do NOT re-add without re-freezing):
+    //   turtle, balanced — iteration 10 (WP6). turtle's
+    //   `roleOverrides.defender.futureThreat` 3.0 → 0.5 and balanced's
+    //   `buildPolicy` (recon dropped, infantryFloor 4). aggressor and
+    //   economist are still byte-identical to i8, and the cross-gen table
+    //   uses that: `economist vs economist-i8` is a true mirror at 50.0%.
+    for (const persona of PERSONA_NAMES.filter((p) => !RETUNED_SINCE_I8.has(p))) {
       const live = PERSONAS[persona]!;
       const frozen = BENCHMARKS[`${persona}-i8`]!;
       expect(frozen.weights).toEqual(live.weights);

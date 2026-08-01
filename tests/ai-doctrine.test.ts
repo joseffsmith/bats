@@ -438,3 +438,82 @@ describe('doctrine: finish a won endgame', () => {
     });
   }
 });
+
+// ─────────────────── 6. A pinned defender still fights ───────────────────────
+
+describe('doctrine: a pinned defender still fights', () => {
+  // A 40hp enemy infantry has walked into p1's home zone; two enemy tanks stand
+  // off behind it, close enough to reach p1's HQ, so every p1 unit near home is
+  // flipped into the `defender` role and the whole approach is blanketed in
+  // *projected* damage. p1's tank can kill the infantry outright — the target
+  // dies, so there is no counter-attack at all, and nothing stands on p1
+  // property, so the property-denial bonus never fires.
+  //
+  // That leaves exactly one reason to decline: speculative threat. A free kill
+  // in your own back yard is not a risk decision, and "the enemy might shoot me
+  // next turn" is not a reason to let an intruder walk. This is the
+  // iteration-8 cowardly-defender bug in miniature — the shape that bug was
+  // *fixed* in `roles.ts` (defender futureThreat ×3 → ×0.5), which is why the
+  // scenario matters: a persona can re-open a closed bug from its own
+  // `roleOverrides` and no tournament will say so out loud.
+  function pinnedHomeZone(): GameState {
+    return arena({
+      width: 12,
+      height: 5,
+      hq0: { x: 0, y: 2 },
+      hq1: { x: 11, y: 2 },
+      units: [
+        { type: 'infantry', owner: 0, pos: { x: 8, y: 2 }, hp: 40 },
+        { type: 'tank', owner: 0, pos: { x: 3, y: 2 }, hp: 100 },
+        { type: 'tank', owner: 0, pos: { x: 3, y: 1 }, hp: 100 },
+        { type: 'tank', owner: 1, pos: { x: 10, y: 2 }, hp: 100 },
+      ],
+      currentPlayer: 1,
+    });
+  }
+
+  // Was red for TURTLE ALONE (iteration 10, WP6). Every other persona swings:
+  // `damageDealt 60, counterRisk 0, futureThreat −42.9 → +19.2`. Turtle scored
+  // the identical kill at `futureThreat −360.2 → −297` and retreated to the
+  // board corner instead, because its persona `roleOverrides.defender` still
+  // carried `futureThreat: 3.0` — the pre-iteration-8 multiplier, which the
+  // shared table had already been fixed away from. 0.7 × 3.0 = 2.1 against the
+  // field's 0.5 × 0.5 = 0.25: an 8.4× deterrent on a unit type (cost-7 tank)
+  // whose threat term is itself scaled by cost.
+  const PINNED_RED: RedMap = {};
+  for (const persona of PERSONA_LIST) {
+    doctrine('takes a free kill in its own home zone', persona, PINNED_RED, () => {
+      const state = pinnedHomeZone();
+      const actions = personaAI(persona).takeTurn({ state, player: 1, rng: createRng(1) });
+      expect(
+        actions.some((a) => a.type === 'ATTACK'),
+        `${persona}: declined an uncounterable kill on an intruder in its own ` +
+          `home zone and did nothing instead`,
+      ).toBe(true);
+    });
+  }
+
+  // The same position, read as movement rather than as a swing: whatever the
+  // defender decides, it must not run AWAY from the intruder. Retreating to the
+  // far corner while an enemy walks your home zone is the exact live-play
+  // report that started the doctrine suite.
+  const PINNED_RETREAT_RED: RedMap = {};
+  for (const persona of PERSONA_LIST) {
+    doctrine('does not retreat from an intruder it can kill', persona, PINNED_RETREAT_RED, () => {
+      const state = pinnedHomeZone();
+      const defender = Object.values(state.units).find(
+        (u) => u.owner === 1 && u.type === 'tank',
+      )!;
+      const intruder = Object.values(state.units).find(
+        (u) => u.owner === 0 && u.type === 'infantry',
+      )!;
+      const actions = personaAI(persona).takeTurn({ state, player: 1, rng: createRng(1) });
+      const dest = finalDestination(actions, defender.id) ?? defender.pos;
+      expect(
+        manhattan(dest, intruder.pos) <= manhattan(defender.pos, intruder.pos),
+        `${persona}: backed away from the intruder — ${defender.pos.x},${defender.pos.y} ` +
+          `→ ${dest.x},${dest.y} against an enemy at ${intruder.pos.x},${intruder.pos.y}`,
+      ).toBe(true);
+    });
+  }
+});

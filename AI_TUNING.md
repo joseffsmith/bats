@@ -1245,3 +1245,314 @@ win-condition pricing, and turtle's terrain-anchored defence no longer earns
 free half-points from unfinished games. Restoring the ramp is WP7's job and it
 now has to move aggressor ~65 pp against economist; WP6 should also note that
 turtle-vs-balanced flipped direction (turtle 100% → 33%).
+
+---
+
+## Iteration 10 — the two floors were broken opponents, not a broken economist (pilot, 10/pair/map, land maps)
+
+**Trigger:** escalated from iteration 9. Pricing objectives in damage currency
+put economist at 94.4% and opened two hard floors — `turtle vs economist`
+17% → 0% and `balanced vs economist` 17% → 0% — while turtle collapsed to
+27.8%, joint-last with aggressor. Iteration 9 was forbidden from touching
+`ai-personas.json` and handed the persona-weight half of its own result here.
+
+### Diagnosis (traces, not theory)
+
+The leading hypothesis was that economist's `capture: 1.8` multiplies
+iteration 9's new absolute capture pricing. **That is false, and worth writing
+down**: `winPush` (`HQ_CAPTURE_VALUE`, `CAPTURE_PRESSURE`) is added *raw* in
+`scoreAction` — no `w.capture`, no role multiplier — exactly like `defense`.
+The only weighted capture term is `captureProgressScore`, which returns 2 or 5,
+so economist's capture weight buys it at most ~13 points of the 120–200 a city
+tick pays everyone. There was no double-dip. **Economist's config was not
+touched in this iteration**; both floors were failures of the *losing* side.
+
+**(a) turtle — a persona that re-opened the iteration-8 bug from its own
+`roleOverrides`.** `--trace=5` on `turtle-vs-economist/canyon` (a rout at turn
+50, `logs/rr-iter10-pre`): from half-turn 25 onward *every* turtle unit is in
+the `defender` role — 70 of 119 unit-decisions in the match, against 6 of 173
+for economist. Economist keeps a unit inside turtle's home zone, `hqUnderThreat`
+never clears, and `DEFENDER_PROXIMITY` covers turtle's whole half of the board.
+
+That would be survivable, except turtle's persona carried
+`roleOverrides.defender.futureThreat: 3.0` — the **pre-iteration-8 multiplier**.
+Iteration 8 fixed the cowardly defender in the shared table (`roles.ts`
+defender `futureThreat` ×3 → ×0.5); turtle's override quietly reinstated it for
+turtle alone. Effective weight `0.7 × 3.0 = 2.1` against the field's
+`0.5 × 0.5 = 0.25` — **8.4×** — on a persona whose army is cost-7 tanks and
+cost-8 aatanks, and `futureThreatFromMap` scales with the acting unit's cost.
+
+Half-turn 35, turtle tank `u15`, with the whole army frozen behind it:
+
+```
+ATTACK  dest 5,1  score -273.69  {damageDealt 85.5, counterRisk 0, futureThreat -360.15}
+WAIT    dest 0,2  score    0.88  {positional 0.88}                        ← chosen
+```
+
+`counterRisk 0` — the trade costs nothing measurable. It declined anyway, and
+so did every other turtle unit, on nothing but speculative threat. Turtle's
+property count sat at **3 for all 50 turns** (the defender role also carries
+`capture: 0`) while economist went 2 → 5 properties and 1 → 12 units.
+
+**(b) balanced — 31% of its build budget on a unit that does 10 damage.**
+Build census over the pre-pilot's 60 balanced-vs-economist matches:
+
+| persona   | tank | recon | infantry |
+|-----------|------|-------|----------|
+| economist | 505  | 0     | 325      |
+| balanced  | 380  | 255   | 245      |
+
+`enumerateBuilds` walks `preferred` and takes the first *affordable* entry, so
+balanced's `[cruiser, fighter, tank, recon, aatank, artillery, infantry]`
+resolved on land to **tank ≥7000 / recon 4000–6999 / infantry below**. Against
+an armour opponent that is a money fire: `DAMAGE.recon.tank = 10`,
+`DAMAGE.tank.recon = 85`. Economist's list ranks infantry above recon and so
+never buys one. Balanced also never reached `artillery` (6000 — the only unit
+in the field that answers massed tanks: 70 damage at range 2–3, no counter)
+because recon sat in front of it.
+
+### Changes — `src/data/ai-personas.json` only
+
+`utility.ts` and `roles.ts` untouched: both mechanisms are persona
+configuration, and iteration 9's shared-scoring gates are load-bearing.
+
+*Sub-iteration 1 — turtle `roleOverrides.defender.futureThreat` `3.0 → 0.5`.*
+Adopts the shared post-iteration-8 default. `positional: 1.6` and `capture: 0`
+left alone; this is the one key that contradicted a closed bug.
+
+*Sub-iteration 2 — balanced `buildPolicy.preferred`, `recon` removed:*
+`[cruiser, fighter, tank, recon, aatank, artillery, infantry]` →
+`[cruiser, fighter, tank, artillery, aatank, infantry]`. Land bands become
+tank ≥7000 / **artillery 6000–6999** / infantry below.
+
+*Sub-iteration 3 — balanced `buildPolicy.infantryFloor` `(default 2) → 4`.*
+Calibration of the same lever, not a new mechanism: sub-iteration 2 overshot
+(balanced 77.8%, above economist) and with recon gone balanced's opening ran
+straight to armour. The floor restores an infantry opening — infantry is now
+its most-built unit (1180 infantry / 1125 tank / 220 artillery, zero recon).
+
+### Doctrine test (red before the fix)
+
+`tests/ai-doctrine.test.ts` §6, "a pinned defender still fights": a 40 hp enemy
+infantry inside p1's home zone with two enemy tanks standing off behind it. The
+kill is *free* — the target dies, so there is no counter — and nothing stands
+on p1 property, so the property-denial bonus never fires. The only reason to
+decline is speculative threat. Two assertions: it swings, and it does not back
+away from an intruder it can kill.
+
+| persona   | damageDealt | counterRisk | futureThreat | total    | decision                 |
+|-----------|-------------|-------------|--------------|----------|--------------------------|
+| balanced  | 60          | 0           | −42.9        | +19.2    | ATTACK                   |
+| turtle    | 60          | 0           | **−360.2**   | **−297** | WAIT in the board corner |
+
+Committed red for turtle alone (`FLIP: WP6`), green for the other three — the
+scenario is a persona discriminator, not a scoring bug. Green for all four
+after sub-iteration 1. **A persona can re-open a closed bug from its own
+`roleOverrides` and no tournament will say so out loud**: turtle's 50% in
+iterations 8–9 hid this completely, and it only surfaced once iteration 9 made
+games finish.
+
+### Results — standard pilot, 180 matches, duel+crossroads+canyon
+
+PRE reproduces iteration 9's post table exactly (economist 94.4 / balanced 50.0
+/ aggressor 27.8 / turtle 27.8), confirming an unchanged field.
+
+| persona   | pre WR | post WR | Δ        |
+|-----------|--------|---------|----------|
+| economist | 94.4%  | 72.2%   | −22.2 pp |
+| balanced  | 50.0%  | 72.2%   | +22.2 pp |
+| turtle    | 27.8%  | 38.9%   | +11.1 pp |
+| aggressor | 27.8%  | 16.7%   | −11.1 pp |
+
+Per sub-iteration:
+
+| persona   | pre  | s1 (turtle defender) | s2 (recon out) | s3 = post (floor 4) |
+|-----------|------|----------------------|----------------|---------------------|
+| economist | 94.4 | 88.9                 | 66.7           | 72.2                |
+| balanced  | 50.0 | 44.4                 | 77.8           | 72.2                |
+| turtle    | 27.8 | **50.0**             | 38.9           | 38.9                |
+| aggressor | 27.8 | 16.7                 | 16.7           | 16.7                |
+
+Pairwise (row beats col), pre → post:
+
+| row \ col | aggressor   | turtle       | economist    | balanced    |
+|-----------|-------------|--------------|--------------|-------------|
+| aggressor | —           | 50% → 17%    | 17% → 17%    | 17% → 17%   |
+| turtle    | 50% → 83%   | —            | **0% → 17%** | 33% → 17%   |
+| economist | 83% → 83%   | 100% → 83%   | —            | 100% → 50%  |
+| balanced  | 83% → 83%   | 67% → 83%    | **0% → 50%** | —           |
+
+**Both 0% floors are gone, and for the first time in this project every one of
+the twelve pairwise cells is ≥10% in both directions.** The minimum is 17%,
+which on this harness is exactly one of the six deterministic map×side games
+that make up a pairing — the utility AI consumes no RNG, so 30 matches per
+pairing are 6 distinct games played 5× each, and win rates are quantised to
+1/6 per pairing and 1/18 overall. Every table here should be read at that
+resolution.
+
+Turn-cap behaviour is unchanged and the gate holds: **zero all-cap cells** pre
+and post, 10/180 cap hits (5.6%) in both runs, raw-winner-null 5.6% (bar 10%).
+The capping cells moved (`economist-vs-balanced` and `turtle-vs-economist` on
+crossroads → `turtle-vs-balanced` crossroads and `turtle-vs-economist` canyon)
+but none is all-cap. Side balance drifted p0 58.3% → 66.7%, tripping the
+round-robin's own >20 pp warning; with 36 deterministic games that is a
+2-game move, not a new asymmetry, but it is worth a look if a later iteration
+wants finer resolution.
+
+### Probe gate (10 matches/cell/map, 3 land maps, bar 70%)
+
+| persona   | probe-camper | probe-kiter | probe-rush | vs iteration 9 |
+|-----------|--------------|-------------|------------|----------------|
+| aggressor | 100%         | 100%        | 100%       | unchanged      |
+| balanced  | 90.0%        | 100%        | 100%       | unchanged      |
+| economist | 86.7%        | 100%        | 100%       | unchanged      |
+| turtle    | 70.0%        | 100%        | 100%       | unchanged      |
+
+PASS — 12/12 clear the bar and **no cell moved by a single match** from
+iteration 9's table. Turtle sits exactly on the 70% bar (21-0-9 vs
+probe-camper, the residue being draws, not losses); its defender fix did not
+help there, because probe-camper never threatens the HQ and so never triggers
+the defender role at all. That cell is the field's thinnest margin and any
+future turtle change should re-run this gate first.
+
+### Cross-generation (vs the frozen i8 field, 6/pair/map, 270 matches)
+
+| persona      | overall | vs its own -i8 self |
+|--------------|---------|---------------------|
+| economist    | 76.7%   | 50.0% (9-9)         |
+| balanced     | 73.3%   | **100%** (18-0)     |
+| turtle       | 30.0%   | 50.0% (9-9)         |
+| economist-i8 | 76.7%   | —                   |
+| turtle-i8    | 26.7%   | —                   |
+| balanced-i8  | 16.7%   | —                   |
+
+Full matrix (row beats col, over 18 matches per cell):
+
+| row \ col    | economist | turtle | balanced | economist-i8 | turtle-i8 | balanced-i8 |
+|--------------|-----------|--------|----------|--------------|-----------|-------------|
+| economist    | —         | 83%    | 50%      | 50%          | 100%      | 100%        |
+| turtle       | 17%       | —      | 17%      | 17%          | 50%       | 50%         |
+| balanced     | 50%       | 83%    | —        | 50%          | 83%       | 100%        |
+| economist-i8 | 50%       | 83%    | 50%      | —            | 100%      | 100%        |
+| turtle-i8    | 0%        | 50%    | 17%      | 0%           | —         | 33%         |
+| balanced-i8  | 0%        | 50%    | 0%       | 0%           | 67%       | —           |
+
+PASS — nobody loses to its own frozen self worse than 40/60. Two readings
+worth keeping:
+
+- `economist vs economist-i8` is **exactly 50.0%**, and so is
+  `economist-i8`'s whole row against economist's. The configs are byte-
+  identical, so this is a true mirror — an independent confirmation that
+  iteration 10 did not touch economist, and a live calibration check on the
+  benchmark plumbing (cf. the tooling baseline's balanced-vs-balanced-i8 15-15).
+- `balanced vs balanced-i8` is **18-0**. The recon removal is not a
+  redistribution of the field's win rates, it is an absolute strength gain
+  against a fixed opponent — the strongest single-persona cross-gen result
+  recorded so far.
+- `turtle vs turtle-i8` is 9-9. The defender fix is worth +11 pp against the
+  *field* but is head-to-head neutral against turtle's own frozen self, which
+  is what you would expect from a change that stops a shared failure mode
+  rather than adding an edge: in the mirror both sides freeze or neither does.
+
+### Mirror termination (`--map duel --seed 1 --max-turns 1000`, RAW winner)
+
+| AI        | turns | winner | iteration 9 |
+|-----------|-------|--------|-------------|
+| economist | 54    | p1     | (not run)   |
+| turtle    | 77    | p0     | 29, p0      |
+| balanced  | 44    | p1     | 70, p1      |
+
+All three end on a board result far inside the 300-turn bar. Turtle's mirror
+lengthened 29 → 77 turns, which is the fix showing up: both sides now contest
+instead of one army standing still while the other walks through it.
+
+### Degeneracy (`mine-replays --dir logs/rr-iter10-{pre,post}`, 180 files each)
+
+| flag               | pre           | post          |
+|--------------------|---------------|---------------|
+| turnCapHit         | 10 (5.6%)     | 10 (5.6%)     |
+| heldLeadNoWin      | 20 (11.1%)    | 20 (11.1%)    |
+| uncontestedCapture | 90 (50.0%)    | 70 (38.9%)    |
+| stalledUnit        | 80 (44.4%)    | **120 (66.7%)** |
+
+`uncontestedCapture` finally moves (50.0% → 38.9% of files) — the flag
+iteration 9 could not shift. `stalledUnit` regresses on file coverage while
+total hits fall slightly (665 → 645): the same amount of standing around,
+spread thinner across more matches. Balanced's infantry floor is the obvious
+suspect (more cheap bodies, more of them with nothing to do on a given turn)
+and it is worth a trace in WP7, but it is not a gate and the turn-cap and
+held-lead flags — the ones that measure whether games *end* — are unmoved.
+
+### Suite
+
+`npx vitest run`: 654/654 green across 65 files. Includes the two new doctrine
+positions (§6, "a pinned defender still fights"), both committed red for
+turtle and flipped by sub-iteration 1.
+
+`tests/ai-benchmarks.test.ts` needed one edit and it is the sanctioned one:
+the snapshot-fidelity assertion (`frozen.buildPolicy === live.buildPolicy`)
+fails by design when a persona is retuned, and its own comment says the fix is
+to drop the expectation for the changed persona, never to re-freeze i8. Turtle
+and balanced are now listed in `RETUNED_SINCE_I8`; aggressor and economist
+still assert byte-identity. **This is the first persona retune since the i8
+freeze, so it is the first time that assertion has ever fired.**
+
+`tests/ai-tier3-vs-tier1.test.ts` reproduced the documented wall-clock flake
+(209.5 ms against the 200 ms budget) on the first solo re-run and passed on the
+second (and the win-rate acceptance never failed). It is provably unrelated to
+this iteration: `makeAI('tier3')` builds `utilityAI` with default weights and
+the canonical `ROLE_MULTIPLIERS` and never reads `ai-personas.json`, so no
+persona change can alter what that test simulates. `fog-acceptance.test.ts`
+flaked once in the same way and passed on re-run. `npm run lint` clean.
+
+### Known regressions and what is left
+
+- **Aggressor 27.8% → 16.7%**, and `aggressor vs turtle` 50% → 17%. Turtle no
+  longer stands still while aggressor's capturers walk past it, so aggressor
+  loses the matchup it was winning by default. Not tuned here (aggressor is
+  WP7's, by scope) and the direction is the fix working, but WP7 now starts
+  from a lower floor than iteration 9 left it.
+- **`turtle vs balanced` 33% → 17%.** Turtle's own gains landed elsewhere;
+  balanced's artillery is a genuinely bad matchup for turtle's armour. Still
+  above the 10% floor, in both directions, but it is the thinnest of the four
+  cells that moved against turtle.
+- **The balanced lever family is quantised.** `recon` cannot be re-introduced
+  at *any* priority without balanced collapsing back to 0% vs economist
+  (measured: recon after `artillery`/`aatank` → 0/30), and removing `artillery`
+  instead drops `turtle vs balanced` to 0% (measured: 0/30). `infantryFloor` is
+  equally sharp: 4 → 50% vs economist, 5 → 17%, 6 → 17% with turtle-vs-balanced
+  flipping to 83%. There is no setting between "balanced beats economist 50%"
+  and "balanced beats economist 17%", which is why the ramp lands where it does
+  (see Campaign impact).
+- Sea maps were not re-run; nothing here targets them and both changed levers
+  are land-band build order and a defender multiplier.
+- Budget: 3 sub-iterations, as scoped, plus four 2–3-persona probe runs used to
+  choose the sub-iteration-3 calibration before spending the pilot on it.
+
+**Campaign impact.** Land-map ordering after this change: **economist 72.2% =
+balanced 72.2% > turtle 38.9% > aggressor 16.7%** (pre: economist 94.4 >
+balanced 50.0 > aggressor 27.8 = turtle 27.8). Against the intended ramp
+**turtle < balanced < economist < aggressor**:
+
+- `turtle < balanced` — **HOLDS** (38.9% < 72.2%). It did not hold in any
+  meaningful sense before: turtle and balanced were 27.8 and 50.0 with turtle
+  beating balanced in a third of games and losing 0/30 to economist.
+- `balanced < economist` — **does NOT hold: an exact tie at 72.2%.** This is
+  an improvement on iteration 9 (where economist led balanced by 44 pp the
+  wrong way round for mission difficulty) and on sub-iteration 2 (where
+  balanced led economist outright), but it is not the ordering. The arithmetic
+  says it is not reachable by moving the balanced-economist pairing alone:
+  the two personas trade cells 1:1, so `economist ≤ 75%` forces balanced to
+  win ≥3 of their 6 games, and with balanced also taking 5/6 from both
+  aggressor and turtle that puts it level. Separating them needs balanced to
+  drop a cell to *turtle or aggressor*, i.e. a turtle or aggressor lever —
+  WP7 territory.
+- `economist < aggressor` — **does NOT hold** (72.2% vs 16.7%). WP7's job, and
+  it is now a ~56 pp climb rather than iteration 9's ~66 pp.
+
+Mission difficulty has shifted: **mission 1 (turtle) is harder** than it was
+(27.8 → 38.9), **mission 2 (balanced) is much harder** (50.0 → 72.2),
+**mission 3 (economist) is easier** (94.4 → 72.2), and **mission 4
+(aggressor) is easier again** (27.8 → 16.7) and remains the easiest opponent
+in the game while being pinned as the final mission. Missions 2 and 3 are now
+indistinguishable in difficulty.

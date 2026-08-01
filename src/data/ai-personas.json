@@ -32,7 +32,7 @@
         "objective": 1.0
       },
       "roleOverrides": {
-        "defender": { "futureThreat": 3.0, "positional": 1.6, "capture": 0 },
+        "defender": { "futureThreat": 0.5, "positional": 1.6, "capture": 0 },
         "frontline": { "damageDealt": 1.1, "positional": 1.5 }
       },
       "buildPolicy": {
@@ -74,7 +74,8 @@
         "objective": 0.6
       },
       "buildPolicy": {
-        "preferred": ["cruiser", "fighter", "tank", "recon", "aatank", "artillery", "infantry"]
+        "preferred": ["cruiser", "fighter", "tank", "artillery", "aatank", "infantry"],
+        "infantryFloor": 4
       }
     }
   ]
