@@ -1,7 +1,10 @@
-// Minimal initial-state factory for Phase 1 tests.
+// Minimal initial-state factory for tests.
 //
-// Phase 2 will replace this with a JSON map loader; for now it accepts a
-// terse description sufficient to spin up a deterministic starting state.
+// This is NOT a stopgap for the JSON map loader — that shipped separately in
+// `src/engine/data/loader.ts` and is what the game loads at runtime. This
+// factory is the permanent test-fixture path: it takes a terse description and
+// spins up a deterministic starting state without a map file, and is reached
+// from tests via `makeState` in `tests/test-helpers.ts`.
 
 import type {
   Coord,

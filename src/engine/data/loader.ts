@@ -495,9 +495,10 @@ export function loadMap(json: unknown): GameState {
     };
   }
 
-  // Map name unused by the engine itself; kept on the resulting state for
-  // debugging via reflection (attached as a non-enumerable for now? — simpler
-  // to just discard it. CLI logs the name separately).
+  // The map's `name` is deliberately discarded here: `GameState` has no field
+  // for map metadata, and the CLI logs the name separately, so nothing
+  // downstream needs it. `void name` marks it as intentionally unused for
+  // noUnusedLocals.
   void name;
 
   return {

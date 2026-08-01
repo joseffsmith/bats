@@ -27,7 +27,23 @@ signal this budget has produced; worth keeping an eye on.
 
 ## Bugs (ranked)
 
+**Status as of 2026-08-01: all six bugs below are addressed** — each carries an
+**Addressed** marker pointing at the fix and its test. The write-ups are kept as
+originally reported (present tense, pre-fix) for the diagnosis and repros. The
+"Small stuff" list below is likewise closed out. The only thing still open
+anywhere in this file is two of the #7 nits in the UI review — the capture
+badge and the built-this-turn state.
+
 ### 1. Pressing Enter during the AI's turn silently skips the human's next turn
+
+**Addressed:** both halves of the suggested fix shipped. The Enter keybind is
+gated on an `endTurnAllowed()` predicate, which `main.ts` wires to
+`!aiDriver.inputLocked(state) && !animQueue.busy() && !handoffActive()`; and
+`ai-driver.ts` drops `pendingPlan` (and clears `planOwner`) as soon as
+`currentPlayer !== planOwner`, so the trailing `END_TURN` can't leak into the
+human's turn. See `endTurnAllowed` + the `keydown` handler in
+`src/renderer/input.ts`, and `tests/end-turn-guard.test.ts` (both the stale-plan
+case and "does NOT dispatch END_TURN on Enter when endTurnAllowed() is false").
 
 Repro (scripted, deterministic): `?p1=balanced`, end your turn, then press
 Enter ~0.7s into the AI's turn. Observed: turn indicator goes
@@ -55,6 +71,11 @@ in depth — external END_TURNs can come from anywhere).
 
 ### 2. Map editor (`?editor=1`) is unusable
 
+**Addressed:** the full-viewport canvas rules in `index.html` are now scoped to
+`canvas.board` (the game board sets `className = 'board'` in `src/main.ts`), so
+the editor's canvas keeps its intrinsic size and its click→tile math. See the
+comment above the `canvas.board` block in `index.html` and `tests/editor.test.ts`.
+
 `docs/smoke-2026-07-16/editor.png` — the page is a bare stretched grid; the
 editor's own toolbar, brush palette, and status line are invisible, and
 painting clicks land on the wrong tiles.
@@ -71,6 +92,13 @@ the overrides there).
 
 ### 3. Coastal build menu overflows the viewport and the bottom chrome
 
+**Addressed:** the menus moved to DOM popovers (UI review #5) and the build list
+takes the robust max-height fix — `max-height: min(60vh, 460px); overflow-y: auto`
+on `.menu-build .menu-build-list`, plus a bottom-sheet variant under
+`pointer: coarse`. See `src/renderer/menus.ts:~267` and `tests/menus.test.ts`
+("renders all 14 build entries in one list", "coarse pointer flips the build
+menu to a bottom sheet, still 14 entries").
+
 `docs/smoke-2026-07-16/armada-build-menu.png` — on armada, the coastal
 factory menu has 14 entries (≈512px). It gets clamped to the bottom edge,
 where the last rows (Submarine, Carrier) are half-clipped and sit *under*
@@ -84,6 +112,14 @@ breaks on small windows — a real max-height is the robust fix).
 
 ### 4. Mobile layout is unplayable (chrome, not board)
 
+**Addressed:** the DOM chrome gained the responsive breakpoint it lacked —
+`@media (max-width: 720px)` in `src/renderer/chrome.ts:1484` keeps Coffer
+visible (grid children get `min-width: 0`), wraps and collapses the toolshelf
+behind a disclosure, and guarantees a full-size End Turn button. Beyond that, a
+dedicated mobile-first shell shipped (`?mobile=1|0`: HUD strip over a
+camera-driven full-bleed board over a command tray) — see plans/README.md's
+**Shipped** section and `e2e/{mobile,mobile-grammar,camera}.e2e.ts`.
+
 `docs/smoke-2026-07-16/mobile.png` (390×844) — the board itself renders and
 taps select units fine, but: the player panels overflow so **funds are
 invisible**, and the bottom bar overflows so the controllers strip and the
@@ -93,6 +129,13 @@ breakpoint (the canvas renderer already has one via `TILE_SIZE_MOBILE`, the
 DOM chrome has none).
 
 ### 5. Remote font dependency + favicon 404
+
+**Addressed:** both families are self-hosted — `public/fonts/` carries the
+Fraunces and IBM Plex Mono `.woff2` files and `public/fonts/fonts.css`, which
+`index.html` links instead of fonts.googleapis.com. The favicon 404 is gone too:
+`public/favicon.svg`, linked from `index.html`. (The caveat at the top of this
+file — that these screenshots show fallback fonts — still describes the
+screenshots, not the current build.)
 
 The page hard-depends on fonts.googleapis.com (Fraunces, IBM Plex Mono);
 offline/blocked networks silently get system fallbacks (all screenshots
@@ -114,19 +157,25 @@ display `Day ⌈turn/2⌉` (AW convention) or track rounds in the engine.
 
 ### Small stuff
 
-- `checkWinner`'s both-players-at-zero case is still tracked as a known
-  `test.fails` (BUGS.md Bug 1 says "Fixed" but the failing-test marker is
-  still in the suite — worth reconciling).
+- ~~`checkWinner`'s both-players-at-zero case is still tracked as a known
+  `test.fails`.~~ **Corrected:** this reconciliation was based on a stale
+  reading — there is no `test.fails` marker for it anywhere in the suite.
+  BUGS.md Bug 1 is genuinely fixed (`src/engine/systems/win.ts:33`) and pinned
+  by passing tests in `tests/win-acceptance.test.ts`. Nothing to reconcile.
 - Switching map / toggling fog mid-game reloads the page and silently
   discards the current match. Cheap guard: `confirm()` when `turn > 1`.
   **Addressed (QoL chunk):** both the map picker and the fog toggle now
   `confirm('Abandon the current match?')` when `turn > 1 && winner === null`;
   cancelling the map picker restores the select to the loaded map. See
   `createMapPicker` / `createFogToggle` in `src/renderer/chrome.ts`.
-- `createInputController` builds its own `createHud(renderer)` while
-  `main.ts` builds another for drawing. Layout is pure so it works, but
-  it's a trap if the hud ever grows state — worth collapsing to one
-  instance.
+- ~~`createInputController` builds its own `createHud(renderer)` while
+  `main.ts` builds another for drawing — a trap if the hud ever grows state.~~
+  **Addressed:** the duplicate-instance trap is gone. `src/renderer/hud.ts` no
+  longer exports `createHud` at all (it is now pure helpers — `UNIT_LETTER`,
+  `buildMenuEntries`, `unitLabel`), and canvas menu hit-testing was replaced by
+  the DOM menus in `src/renderer/menus.ts`. The only `createHud*` left in the
+  tree is the unrelated mobile `createHudStrip`
+  (`src/renderer/mobile/hud-strip.ts`), built once in `main.ts`.
 
 ---
 
@@ -155,8 +204,18 @@ display `Day ⌈turn/2⌉` (AW convention) or track rounds in the engine.
   `src/renderer/input.ts`, `drawOverlays`/`strokeGroupBorder` in
   `src/renderer/canvas.ts`, `tests/overlay.test.ts`.
 
-Not yet addressed: the remaining #7 nits (capture badge, cancel hint,
-built-this-turn state).
+**Still open — the ONLY open items in this document:** two of the #7 nits.
+Everything else in this file (bugs 1-6, UI review 1-6, the #7 plural label, and
+the #7 cancel hint) has shipped. Specifically still to do:
+
+- capture-progress badge is a ~10px chip that's easy to miss — an AW-style
+  shrinking building meter or a progress pie on the flag would read better;
+- built-this-turn units get no "can't act" visual distinct from spent units.
+
+(The third nit, "Esc/right-click cancel is undiscoverable", is **Addressed** —
+`createCancelChip` in `src/renderer/chrome.ts` floats a bottom-centre
+`Cancel esc` chip for every non-idle input state, ≥44px tap target, with the
+`esc` key hint hidden under `pointer: coarse`. Asserted in `e2e/mobile.e2e.ts`.)
 
 The chrome (player panels, turn indicator, toolshelf, win modal) has a
 coherent, confident identity — warm dark panels, mono labels, the
@@ -210,9 +269,10 @@ game lives. Specific critiques, roughly by impact:
    (singular/plural *(→ UNIT/UNITS Addressed, QoL chunk)*; maybe "Funds"); capture-progress badge is a ~10px
    chip that's easy to miss (an AW-style shrinking building meter or a
    progress pie on the flag would read better); Esc/right-click cancel is
-   undiscoverable (a one-line hint in the empty bottom-center would do);
-   built-this-turn units get no "can't act" visual distinct from spent
-   units.
+   undiscoverable (a one-line hint in the empty bottom-center would do)
+   *(→ Addressed — bottom-centre cancel chip, `createCancelChip` in
+   `src/renderer/chrome.ts`)*; built-this-turn units get no "can't act" visual
+   distinct from spent units.
 
 ## What's solid (keep)
 
