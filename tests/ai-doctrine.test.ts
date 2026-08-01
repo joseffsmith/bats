@@ -154,16 +154,16 @@ describe('doctrine: contest capturers', () => {
   // scoring must not let a fat kill outbid the factory that falls next turn.
   // Trading a property for a frag is how you win the battle and lose the game.
   //
-  // Red for ALL FOUR personas → not a weight problem, a shared-scoring one:
-  // `nearestHomeIntruder`'s home-defence bonus is outweighed by raw
-  // damageDealt on a squishier target. Fix belongs in `utility.ts`, whose
-  // Layer-B owner is WP5.
-  const DISTRACTION_RED: RedMap = {
-    aggressor: 'WP5', // FLIP: WP5
-    turtle: 'WP5', // FLIP: WP5
-    economist: 'WP5', // FLIP: WP5
-    balanced: 'WP5', // FLIP: WP5
-  };
+  // Was red for ALL FOUR personas → not a weight problem, a shared-scoring
+  // one: `nearestHomeIntruder`'s home-defence bonus was outweighed by raw
+  // damageDealt on a squishier target.
+  //
+  // GREEN since iteration 9 (WP5): the defence term is now priced in
+  // damageDealt currency — `PROPERTY_VALUE[terrain] × urgency` in
+  // `utility.ts` — so saving the factory (900 × 0.7 = 630) outbids the
+  // artillery frag (~648 total, of which 680 is raw damage) instead of
+  // losing to it by two orders of magnitude.
+  const DISTRACTION_RED: RedMap = {};
   for (const persona of PERSONA_LIST) {
     doctrine('contests the capturer rather than hunting a soft target', persona, DISTRACTION_RED, () => {
       const state = capturerUnderway({
@@ -277,16 +277,15 @@ describe('doctrine: no oscillation or idling', () => {
     });
   }
 
-  // Red for three of four: units shuttle between two tiles for the whole run
-  // (turtle/economist bounce a tank home-city ↔ midfield; balanced walks an
-  // infantry to its own HQ and back, repeatedly). Aggressor escapes only by
-  // routing the enemy before the loop can establish itself. A tie-break drift
-  // term for units whose candidates all score ≈0 is WP5's stated remedy.
-  const OSC_RED: RedMap = {
-    turtle: 'WP5', // FLIP: WP5
-    economist: 'WP5', // FLIP: WP5
-    balanced: 'WP5', // FLIP: WP5
-  };
+  // Was red for three of four: units shuttled between two tiles for the whole
+  // run (turtle/economist bounced a tank home-city ↔ midfield; balanced
+  // walked an infantry to its own HQ and back, repeatedly). Aggressor escaped
+  // only by routing the enemy before the loop could establish itself.
+  //
+  // GREEN since iteration 9 (WP5): the drift tiebreak on WAIT candidates,
+  // asymmetric by design (+0.25/step toward the drift target, −1.0/step
+  // away), makes the walk home a net loss so the loop cannot close.
+  const OSC_RED: RedMap = {};
   for (const persona of PERSONA_LIST) {
     doctrine('no unit ping-pongs between two tiles', persona, OSC_RED, () => {
       const state = freeRein();
@@ -414,15 +413,17 @@ describe('doctrine: finish a won endgame', () => {
     });
   }
 
-  // Turtle alone fails, and it fails by walling: it drives its own TANK onto
+  // Turtle alone failed, and it failed by walling: it drove its own TANK onto
   // the enemy HQ tile, which is worth zero (tanks cannot capture) and which
-  // physically blocks the infantry standing beside it from ever getting there.
-  // Tagged WP5 with the rest of the finish-endgame family, though the
-  // mechanism is turtle's positional/defender overrides — if WP5's late-game
-  // pressure ramp doesn't clear it, ownership moves to WP6.
-  const FINISH_RED: RedMap = {
-    turtle: 'WP5', // FLIP: WP5
-  };
+  // physically blocked the infantry standing beside it from ever getting
+  // there.
+  //
+  // GREEN since iteration 9 (WP5), by the two levers that own that shape:
+  // `BLOCKED_CAPTURE_PENALTY` (a non-capturer that ends its move on a
+  // capturable our own capturer stands next to eats −8, more than the HQ's
+  // 4 defense stars are worth to it) and `HQ_CAPTURE_VALUE` (taking the
+  // enemy HQ is scored as winning the game, not as +5).
+  const FINISH_RED: RedMap = {};
   for (const persona of PERSONA_LIST) {
     doctrine('captures the exposed enemy HQ within two turns', persona, FINISH_RED, () => {
       const state = wonEndgame();

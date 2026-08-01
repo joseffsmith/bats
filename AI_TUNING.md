@@ -1021,3 +1021,227 @@ FLIP: WP5 — distraction bug, oscillation, unfinished endgames), miner on
 the iteration-8 pilot logs (stalled units in 100% of matches, cap hits in
 33%), and the 725-turn utility mirror. The 70% bar stands — aggressor and
 economist prove it reachable.
+
+---
+
+## Iteration 9 — anti-stall: games that end (pilot, 10/pair/map, land maps)
+
+**Trigger:** three instruments, one verdict. (a) Symmetric mirrors never
+terminated — `utility` vs `utility` on duel ran 725+ turns, and the engine has
+no turn cap by design. (b) The iteration-8 pilot hit the 120-turn cap in EVERY
+match of three crossroads pairings, and the replay miner flagged stalled units
+in 92% of matches, cap hits in 33%. (c) The pre-iteration-9 probe gate put
+6/12 cells under the 70% bar almost entirely by DRAW (turtle 3-0-27 vs
+probe-camper, balanced 9-0-21) — no persona could force a decision against an
+opponent that refuses to engage. The doctrine suite carried 8 `it.fails` tests
+tagged `FLIP: WP5` saying the same thing in miniature.
+
+### Diagnosis (traces, not theory)
+
+`--trace=5` on the capped games named the guilty components, and every one of
+them is a **currency** problem in the shared scorer — which is why all four
+personas AND bare `utility` had it:
+
+- `damageDealt` is measured in `hp × cost/1000`: a tank kill ≈ 700, an
+  artillery kill ≈ 570. Every *strategic* term was on a different scale — a
+  capture flip was `5 × w.capture ≈ 7.5`, taking the enemy HQ (i.e. winning
+  the game) was also 5, and iteration 8's `DEFEND_PROPERTY_BONUS` was 4. The
+  scorer was a pure combat maximiser that treated the win condition as a
+  rounding error. (Distraction doctrine test: attacking the artillery scored
+  647.8, contesting the capturer on our own factory 59.8.)
+- `futureThreat` is on the damage scale: −51 for an infantry that steps into
+  three enemies' reach, −88 for a recon on crossroads, while standing still
+  costs 0. Both armies therefore park exactly outside each other's reach
+  envelope. Crossroads mirror at turn 121: 35 units vs 10, no contact, no
+  capture, no end.
+- The act gate was `score > 0` — an absolute comparison against an
+  uncalibrated score. A unit under a blanket threat map has no positive
+  candidate, including the one that walks out of the fire, so it took **no
+  action at all**, permanently (turtle: −434 to stay, −497 to move, planner
+  skipped it). That is the miner's stalled-unit signature.
+- The `support` objective points AWAY from the enemy and this engine has **no
+  repair mechanic**, so every unit that dropped under 50 hp deserted for good.
+  At turn 121 of economist-vs-balanced, twelve damaged economist units were
+  scoring +5.4 each to retreat from four enemies they outnumbered 3:1.
+- Non-capturers squat on capturable tiles. Turtle drove a TANK onto the
+  exposed enemy HQ; economist parked a 3 hp tank on balanced's HQ while its
+  own infantry stood two tiles away. Tanks cannot capture, and the squatter
+  blocks the only unit that can.
+- Units squat on their OWN factory, which silently switches production off
+  (`enumerateBuilds` skips occupied factories). In tier3-vs-tier1 on duel BOTH
+  sides had done it by turn 40 and banked 100k+ funds against a frozen board.
+- Composition: balanced bought TWELVE fighters against an all-ground
+  aggressor. `DAMAGE.fighter.tank === 0` and `DAMAGE.tank.fighter === 0` — the
+  armies could not touch each other, and neither could capture. No scoring
+  change closes out a game the roster is incapable of closing.
+
+### Changes — `src/engine/ai/utility.ts` only
+
+`ai-personas.json` deliberately untouched: the mirror bug is present in bare
+`utility`, so the fix had to live in shared scoring.
+
+*Sub-iteration 1 — objectives in damage currency, and stop freezing:*
+
+- `PROPERTY_VALUE = { hq: 2000, factory: 900, city: 450 }` replaces
+  `DEFEND_PROPERTY_BONUS = 4`. The defence term (ATTACK an enemy *capturer*
+  standing on our capturable) is `value × urgency`, urgency `0.4 → 1.0` with
+  the capture bar. Raw, no persona weight, as in iteration 8.
+- `HQ_CAPTURE_VALUE = 2000` and `CAPTURE_PRESSURE = { factory: 200, city: 120 }`
+  — raw value of CAPTURE progress, pro-rata on the bar, full on the flip.
+  Taking the enemy HQ is now scored as winning the game rather than as +5.
+- `DRIFT_BONUS = 0.25` / `DRIFT_RETREAT_PENALTY = 1.0` per Manhattan step
+  toward / away from the drift target (nearest enemy, else the enemy HQ),
+  applied **only to WAIT candidates** — i.e. when the unit has nothing
+  productive to do. The asymmetry is what kills oscillation: two attractors
+  that both pay in one direction cannot both keep paying once the walk home
+  costs 4× the walk out.
+- `BLOCKED_CAPTURE_PENALTY = 8` for a non-capturer ending on a capturable that
+  one of our own capturers stands beside.
+- Act gate: `score > 0` → `score > 0 || score > stayScore`, where `stayScore`
+  is the do-nothing candidate (stay put + WAIT). "Do nothing" is a candidate;
+  the question is whether the best option beats *it*, not zero.
+- Late-game pressure ramp — pure functions of `state.turn`, flat until turn 40,
+  fully wound at turn 90 (half-turns, so ≈ rounds 20–45): `pressureRamp`
+  1 → 1.5 on damageDealt and objective, `counterRiskRamp` 1 → 0.5,
+  `futureThreatRamp` 1 → 0. Speculative caution expires; *measured* counter
+  damage only halves. Bounding it at 1.5× (as originally scoped) was useless —
+  a −88 wall against a +3 capture is not a 1.5× problem.
+
+*Sub-iteration 2 — the two stalls that survived:*
+
+- The `support` objective — the only one pointing backwards — is scaled by
+  `futureThreatRamp` instead of `pressureRamp`, so the retreat mandate expires
+  with the rest of the caution. Without this the ramp made the endgame *worse*
+  by amplifying the deserters.
+- `BLOCKED_HQ_PENALTY = 100`, unconditional for a non-capturer ending on the
+  enemy HQ (no adjacent-capturer requirement — the capturer may be three tiles
+  away and still coming). Loses to any real attack from that tile (300+),
+  beats every positional reason to squat. Alone it took
+  economist-vs-balanced/crossroads from 10/10 cap-outs to 0/10, 121 → 45 turns.
+
+*Sub-iteration 3 — production and composition (build phase):*
+
+- **Capturer crisis:** if we own zero capture-capable units and capturables
+  remain, build infantry — overriding `preferred`, `avoid`, the infantry-floor
+  logic, and (by exactly one unit) `TIER3_UNIT_CAP`. Aggressor held seven
+  tanks and zero infantry for the last sixty turns of a capped game.
+- **Useful-build filter:** skip a type that can neither capture nor damage any
+  enemy unit type currently on the board, unless nothing else is affordable
+  (two fallback passes preserve the old spend-anyway behaviour).
+- `OWN_FACTORY_SQUAT_PENALTY = 5` for ending a move on our own factory while
+  we can afford to build.
+
+New `tests/ai-antistall.test.ts`: one full `utility`-mirror game on duel
+(maxTurns 600, asserts a RAW winner, ~2s) plus purity/monotonicity/bounds
+pins on the three ramp functions.
+
+### Results — standard pilot, 180 matches, duel+crossroads+canyon
+
+PRE was re-run from the iteration-8 tree and reproduces its post table
+exactly (economist 77.8 / turtle 50.0 / aggressor 38.9 / balanced 33.3),
+confirming the field was unchanged since iteration 8.
+
+| persona   | pre WR | post WR | Δ        |
+|-----------|--------|---------|----------|
+| economist | 77.8%  | 94.4%   | +16.6 pp |
+| balanced  | 33.3%  | 50.0%   | +16.7 pp |
+| aggressor | 38.9%  | 27.8%   | −11.1 pp |
+| turtle    | 50.0%  | 27.8%   | −22.2 pp |
+
+Pairwise (row beats col), pre → post:
+
+| row \ col | aggressor  | turtle      | economist | balanced   |
+|-----------|------------|-------------|-----------|------------|
+| aggressor | —          | 67% → 50%   | 33% → 17% | 17% → 17%  |
+| turtle    | 33% → 50%  | —           | 17% → 0%  | 100% → 33% |
+| economist | 67% → 83%  | 83% → 100%  | —         | 83% → 100% |
+| balanced  | 83% → 83%  | 0% → 67%    | 17% → 0%  | —          |
+
+Degeneracy (`mine-replays --dir logs/rr-iter9-{pre,post}`, 180 files each):
+
+| flag                | pre           | post          |
+|---------------------|---------------|---------------|
+| turnCapHit          | 60 (33.3%)    | 10 (5.6%)     |
+| stalledUnit         | 2600 (91.7%)  | 665 (44.4%)   |
+| heldLeadNoWin       | 45 (25.0%)    | 20 (11.1%)    |
+| uncontestedCapture  | 115 (41.7%)   | 125 (50.0%)   |
+
+**All-cap cells: 3 → 0.** Pre, `aggressor vs turtle`, `aggressor vs balanced`
+and `turtle vs balanced` on crossroads all averaged 121.0 turns (10/10
+cap-outs). Post, the slowest cell is `economist vs balanced` crossroads at
+117.5 and the ten remaining cap-outs are split 5/5 across two cells. Raw
+winner-null rate 5.6%, under the 10% bar.
+
+### Mirror termination (`--max-turns 1000`, RAW winner)
+
+| AI       | map        | seeds | turns | winner |
+|----------|------------|-------|-------|--------|
+| utility  | duel       | 1–5   | 68    | p0     |
+| utility  | crossroads | 1–5   | 55    | p0     |
+| balanced | duel       | 1–3   | 70    | p1     |
+| turtle   | duel       | 1–3   | 29    | p0     |
+
+16/16 terminate with a board result (HQ capture or rout) in well under 300
+turns; pre-iteration-9 every one of them ran to 1000 and stopped only because
+the harness said so. Seeds are identical within a row because the utility AI
+consumes no RNG — the mirror is one deterministic game per (AI, map).
+
+### Probe gate (10 matches/cell/map, 3 land maps, bar 70%)
+
+| persona   | probe-camper       | probe-kiter       | probe-rush        |
+|-----------|--------------------|-------------------|-------------------|
+| aggressor | 66.7% → **100%**   | 73.3% → **100%**  | 100% → 100%       |
+| balanced  | 30.0% → **90.0%**  | 23.3% → **100%**  | 96.7% → **100%**  |
+| economist | 13.3% → **86.7%**  | 80.0% → **100%**  | 100% → 100%       |
+| turtle    | 10.0% → **70.0%**  | 20.0% → **100%**  | 100% → 100%       |
+
+PASS — 12/12 cells clear the bar (6/12 failed pre), no cell regresses, and the
+draws are gone: every kiter/rush cell is now 30-0-0. The bar formally binds in
+WP7; it is already green.
+
+### Sea sanity (armada+island_hop, 4/pair/map, pre and post both re-run)
+
+No pairing that was above 0% dropped to 0%; `turtle vs economist` came off the
+floor (0% → 50%). Every sea cell still runs to the 121-turn cap in both runs —
+unchanged, and the strategic-design issue iteration 7 already recorded.
+
+### Suite
+
+`npx vitest run`: 646/646 green across 65 files (was 641/642 + 8 known-red
+doctrine cases). All 8 `FLIP: WP5` doctrine tests flipped to `it` and pass —
+the distraction family (×4), oscillation (×3, including turtle, which did NOT
+need a persona lever) and turtle's tank-on-the-HQ endgame. Determinism suite
+green (all three ramps are pure functions of `state.turn`).
+`tests/ai-tier3-vs-tier1.test.ts` solo: both acceptances green **including**
+the 200 ms/turn budget — the factory-squat fix removed the frozen-board
+endgames that had pushed the max turn to 386 ms mid-iteration. `npm run lint`
+clean. Whole-suite wall clock dropped 151s → 58s, because games now end.
+
+### Known regressions and what is left
+
+- **Two new pairwise-floor violations:** `turtle vs economist` 17% → 0% and
+  `balanced vs economist` 17% → 0%. Economist gains most from pricing capture
+  in damage currency (`capture 1.8`, capturer role ×4.5) and is now at 94.4%
+  overall. This is a **persona-weight** problem, not a shared-scoring one, and
+  WP5 is forbidden from touching `ai-personas.json` — it lands in WP6/WP7's
+  lap, and the escalation is deliberate: the old floors were held up by games
+  that never finished. The previously-worst floor, `balanced vs turtle` 0/30,
+  is fixed (0% → 67%).
+- `uncontestedCapture` is the one miner flag that did not improve (41.7% →
+  50.0%). With games decided ~60 turns earlier there is simply more capturing
+  per match; the flag counts events, not rates. Worth a proper look in WP7.
+- Sea maps remain 100% cap-outs. Nothing here targeted them, and the pre/post
+  comparison shows no harm.
+- Budget: 3 sub-iterations, as scoped.
+
+**Campaign impact.** `ai-personas.json` was not touched, so no persona was
+retuned — but every persona shares this scorer, so mission difficulty moved
+anyway. New land-map ordering: economist 94.4% > balanced 50.0% > aggressor
+27.8% = turtle 27.8%. The intended ramp (turtle < balanced < economist <
+aggressor) still does NOT hold: mission 4 (aggressor) is now the joint-easiest
+opponent and mission 3 (economist) is close to unbeatable. Aggressor's
+capture-light, damage-heavy weights are the persona that gains least from
+win-condition pricing, and turtle's terrain-anchored defence no longer earns
+free half-points from unfinished games. Restoring the ramp is WP7's job and it
+now has to move aggressor ~65 pp against economist; WP6 should also note that
+turtle-vs-balanced flipped direction (turtle 100% → 33%).
