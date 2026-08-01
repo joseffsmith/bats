@@ -1,0 +1,139 @@
+{
+  "personas": [
+    {
+      "name": "aggressor-i8",
+      "description": "Frozen at aff447e (iteration 8) — regression benchmark, do not tune.",
+      "weights": {
+        "damageDealt": 1.2,
+        "capture": 0.9,
+        "counterRisk": 0.7,
+        "futureThreat": 0.3,
+        "positional": 0.4,
+        "objective": 0.9
+      },
+      "roleOverrides": {
+        "frontline": {
+          "damageDealt": 1.5,
+          "counterRisk": 0.8
+        }
+      },
+      "buildPolicy": {
+        "preferred": [
+          "bomber",
+          "cruiser",
+          "tank",
+          "fighter",
+          "recon",
+          "infantry"
+        ],
+        "avoid": [
+          "artillery",
+          "carrier"
+        ],
+        "infantryFloor": 3
+      }
+    },
+    {
+      "name": "turtle-i8",
+      "description": "Frozen at aff447e (iteration 8) — regression benchmark, do not tune.",
+      "weights": {
+        "damageDealt": 1.0,
+        "capture": 1.6,
+        "counterRisk": 0.9,
+        "futureThreat": 0.7,
+        "positional": 1.0,
+        "objective": 1.0
+      },
+      "roleOverrides": {
+        "defender": {
+          "futureThreat": 3.0,
+          "positional": 1.6,
+          "capture": 0
+        },
+        "frontline": {
+          "damageDealt": 1.1,
+          "positional": 1.5
+        }
+      },
+      "buildPolicy": {
+        "preferred": [
+          "battleship",
+          "cruiser",
+          "aatank",
+          "tank",
+          "infantry",
+          "artillery"
+        ],
+        "avoid": [
+          "recon"
+        ],
+        "infantryFloor": 3
+      }
+    },
+    {
+      "name": "economist-i8",
+      "description": "Frozen at aff447e (iteration 8) — regression benchmark, do not tune.",
+      "weights": {
+        "damageDealt": 1.0,
+        "capture": 1.8,
+        "counterRisk": 0.9,
+        "futureThreat": 0.6,
+        "positional": 0.5,
+        "objective": 1.2
+      },
+      "roleOverrides": {
+        "capturer": {
+          "capture": 4.5,
+          "counterRisk": 1.4,
+          "objective": 1.8
+        },
+        "frontline": {
+          "damageDealt": 1.3,
+          "objective": 1.2
+        }
+      },
+      "buildPolicy": {
+        "preferred": [
+          "cruiser",
+          "tank",
+          "infantry",
+          "recon",
+          "aatank",
+          "infantry"
+        ],
+        "avoid": [
+          "copter",
+          "bomber",
+          "battleship",
+          "submarine",
+          "carrier",
+          "fighter"
+        ],
+        "infantryFloor": 2
+      }
+    },
+    {
+      "name": "balanced-i8",
+      "description": "Frozen at aff447e (iteration 8) — regression benchmark, do not tune.",
+      "weights": {
+        "damageDealt": 1.0,
+        "capture": 1.5,
+        "counterRisk": 0.8,
+        "futureThreat": 0.5,
+        "positional": 0.3,
+        "objective": 0.6
+      },
+      "buildPolicy": {
+        "preferred": [
+          "cruiser",
+          "fighter",
+          "tank",
+          "recon",
+          "aatank",
+          "artillery",
+          "infantry"
+        ]
+      }
+    }
+  ]
+}

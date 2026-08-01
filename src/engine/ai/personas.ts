@@ -244,6 +244,19 @@ export function personaAI(name: string, opts: { fog?: boolean } = {}): AI {
       `unknown persona "${name}" — available: ${PERSONA_NAMES.join(', ')}`,
     );
   }
+  return aiFromPersonaConfig(cfg, opts);
+}
+
+/**
+ * Build an AI directly from an already-loaded `PersonaConfig`, bypassing the
+ * `PERSONAS` registry lookup. This is what `personaAI` delegates to, and what
+ * out-of-registry config sets (e.g. the frozen benchmark generations in
+ * `benchmarks.ts`) use so they never have to be registered as personas.
+ */
+export function aiFromPersonaConfig(
+  cfg: PersonaConfig,
+  opts: { fog?: boolean } = {},
+): AI {
   return utilityAI({
     name: cfg.name,
     weights: cfg.weights,
