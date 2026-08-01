@@ -3,6 +3,5 @@ dist
 coverage
 logs
 .git
-scripts
 plans
 *.md
