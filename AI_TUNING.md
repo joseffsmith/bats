@@ -13,6 +13,186 @@ comes first.
 
 ---
 
+## Runbook — how to change the AI
+
+Three instruments, three different questions. All three run on every change:
+
+- **Tournaments measure BALANCE** — who beats whom. Blind to flaws every
+  persona shares: the iteration-8 cowardly-defender bug survived 1400+
+  self-play matches because all four personas fled the same way, so the win
+  rates never moved.
+- **Doctrine tests measure INTENT** — does a unit do the obviously-right thing
+  in a hand-built position, regardless of who wins the game.
+- **Replay mining measures REALITY** — the degenerate patterns a scoreboard
+  averages away.
+
+That iteration-8 bug arrived as one sentence from live play ("balanced parked a
+unit in the corner while its factory was captured") and was diagnosed in about
+twenty minutes: fetch the replay → reproduce as a `makeState` scenario → run
+with `ai-trace` → read the guilty term off the per-component breakdown
+(defender `futureThreat` ×3). That loop is the standard, below.
+
+### 1. The debug loop (trace-first)
+
+For any "the AI felt off" report:
+
+**a. Fetch the game.** Live games auto-upload their JSONL to
+`https://bats.joseffsmith.uk/api/replays` on game end.
+
+```
+npm run replay -- --latest                   # newest production capture
+npm run replay -- logs/<file>.jsonl          # a local log
+npm run replay -- <name>.jsonl --remote      # a specific production capture
+npm run replay -- --latest --dump 240        # print the state after action 240
+```
+
+`--dump N` gives the exact board the player saw. A winner/turn mismatch on
+replay means the engine drifted since the game was played — check out the
+header's `sha` first.
+
+**b. Identify the suspect turn and unit**, then **reproduce it as a
+micro-position**: build the smallest board that still shows the behaviour with
+`makeState` (`tests/test-helpers.ts`) and drive it with
+`personaAI(name).takeTurn({ state, player, rng: createRng(1) })`. Copy the
+pattern in `tests/ai-defense.test.ts` — that file IS the iteration-8 repro.
+
+**c. Trace it.** Per-candidate, per-component score dumps:
+
+```
+npx tsx src/cli/run-match.ts --map <map> --seed <seed> \
+  --p0 <persona> --p1 <persona> --quiet --trace=5 > /tmp/trace.txt
+```
+
+`--trace=K` emits the top-K scored candidates per unit per turn, each with its
+`parts` breakdown: `damageDealt`, `capture`, `counterRisk`, `futureThreat`,
+`positional`, `objective` (plus `naval` / `defense` / `unload.*` where they
+apply). The dominating term on the wrong candidate names the lever. The stream
+is very noisy — redirect and grep; `--quiet` silences the per-action match log
+so only the trace remains.
+
+**d. Fix ONE lever**, then §2. Two levers at once and the pre/post table tells
+you nothing about either.
+
+### 2. Baseline discipline
+
+**No scoring or weight change lands without a same-harness pre/post pair.** Run
+the standard pilot before the change and again after:
+
+```
+npx tsx src/cli/round-robin.ts \
+  --personas aggressor,turtle,economist,balanced \
+  --maps duel,crossroads,canyon \
+  --matches 10 --max-turns 120 \
+  --out logs/rr-iter<N>-<pre|post>
+```
+
+Seeds are deterministic (fnv1a of pair/map/index/salt), so an unchanged field's
+pre-table equals the previous iteration's post-table — if it doesn't, something
+moved that you didn't intend to move. `--seed-salt` re-rolls deliberately;
+never use it to make a bad result go away.
+
+Every change gets a numbered `## Iteration N` entry here in the iteration-8
+shape: **Trigger** (what prompted it, through which channel) → **Changes**
+(file-by-file, one lever per bullet) → **Results** table with pre/post/Δ
+columns → **Interpretation** (including which regressions are the fix working)
+→ **Known non-regressions** verified present in the pre-run →
+**Next-iteration candidates**.
+
+Comparing against a months-old iteration run under different harness settings
+is **forbidden** — a different `--matches`, `--max-turns` or map set means the
+numbers aren't comparable. That is how false conclusions ship.
+
+### 3. The three measurement layers
+
+**(a) Doctrine tests — intent.**
+
+```
+npx vitest run tests/ai-doctrine.test.ts
+```
+
+Behavioural micro-positions asserting on action properties (types, targets,
+distance deltas), never exact moves. **A new bug gets its scenario committed
+BEFORE the fix** — red first, then green, so the test is proven to catch it.
+
+**(b) Probe gate — floor against degenerate opponents.**
+
+```
+npx tsx scripts/probe-gate.ts
+```
+
+Every persona must win ≥70% against each scripted probe: `probe-rush`,
+`probe-camper`, `probe-kiter`. Probes are deliberately stupid; losing to one is
+never a playstyle, it's a bug.
+
+**(c) Cross-generation check — frozen benchmarks.**
+
+The iteration-8 field is frozen as `aggressor-i8` / `turtle-i8` /
+`economist-i8` / `balanced-i8` (`src/data/ai-benchmarks/i8.json`, frozen at
+`aff447e`). Round-robin the current personas against it:
+
+```
+npx tsx src/cli/round-robin.ts \
+  --personas aggressor,turtle,economist,balanced,aggressor-i8,turtle-i8,economist-i8,balanced-i8 \
+  --maps duel,crossroads,canyon --matches 10 --max-turns 120 \
+  --out logs/rr-iter<N>-crossgen
+```
+
+No persona may regress more than 10 pp against its own `-i8` self without an
+explicit justification in the iteration entry. Absolute win rates drift as the
+whole field moves; the `-i8` field does not. (28 pairs — drop to `--matches 6`
+if the wall-clock hurts.)
+
+**(d) Replay mining — reality.**
+
+```
+npx tsx scripts/mine-replays.ts --dir logs/rr-iter<N>-post
+npx tsx scripts/mine-replays.ts --remote
+```
+
+Degeneracy flags: uncontested capture, stalled/oscillating units, turn-cap
+hits, held-lead-no-win. Run it on the pilot output every iteration and on
+production replays periodically. Every hit names a JSONL you can re-open with
+`npm run replay -- <name>.jsonl --remote` — back to §1.
+
+> The probe gate, benchmarks and miner ship in parallel packages (WP1–WP3);
+> exact flags are synced at Merge Gate 1.
+
+### 4. Known flake
+
+`tests/ai-tier3-vs-tier1.test.ts` asserts a 200 ms per-turn wall-clock budget.
+It is load-sensitive: **never run vitest concurrently with a round-robin
+pilot** — the pilot saturates the cores and the budget assertion fails
+spuriously. A solitary timing failure under load is the known flake (re-run the
+file alone to confirm); a **win-rate** failure in the same file is real and
+blocks.
+
+### 5. Campaign coordination
+
+The campaign branch pins personas **by name** — turtle (m1), balanced (m2),
+economist (m3), aggressor (m4), balanced (m5) — assuming the difficulty ramp
+**turtle < balanced < economist < aggressor**.
+
+Frozen contract; breaking any of these hard-fails the campaign loader:
+
+- Persona keys in `src/data/ai-personas.json` are never renamed or removed.
+- `personaAI(name, { fog })` and `PERSONA_NAMES` signatures are frozen.
+- Probes and benchmarks must never enter `PERSONAS` / `PERSONA_NAMES`.
+
+**Every persona-weight change silently shifts campaign mission difficulty.**
+No campaign code notices; the missions just get easier or harder. So any
+iteration entry touching `ai-personas.json` MUST end with a **Campaign impact**
+line giving the new 4×4 land-map matrix ordering and whether the ramp holds:
+
+> **Campaign impact.** Land-map ordering after this change: economist 77.8% >
+> turtle 50.0% > aggressor 38.9% > balanced 33.3%. Intended ramp (turtle <
+> balanced < economist < aggressor) does NOT hold — missions 1 and 4 are
+> inverted in difficulty. Flagged for iteration N+1.
+
+If the ramp breaks and your package doesn't own fixing it, say so explicitly
+rather than leaving the matrix for someone else to interpret.
+
+---
+
 ## Iteration 1 — baseline (pilot, 10 matches × 3 maps)
 
 **Configuration (initial guess from spec):**
