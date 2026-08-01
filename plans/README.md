@@ -30,6 +30,20 @@ None right now.
 Completed plan briefs are deleted once shipped — they go stale against the
 code that overtakes them — and remain retrievable via git history.
 
+## Reference documents
+
+Not everything in this directory is a plan brief. **Reference documents are
+permanent** — the delete-once-shipped rule above does not apply to them, because
+they describe standing intent rather than a unit of work:
+
+- **`art-redo.md`** — the pixel-art style guide for
+  `src/renderer/assets/pixel-art/`: the 16×16 char-grid format, the fixed
+  palette + A/B/C/D team-ramp contract, style rules, damage variants, and the
+  validator thresholds in `tests/pixel-art.test.ts`. Read it before authoring or
+  editing any sprite or terrain tile. It carries shipped work (Phase 3A/3B) in
+  its history, but it stays in-tree as the standing contract — update it when
+  the style changes; don't delete it when art work ships.
+
 ## Shipped
 
 - **Mobile-first shell + teaching campaign** — no brief in-tree (it was planned

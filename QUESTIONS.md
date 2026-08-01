@@ -20,9 +20,9 @@ Questions and assumptions logged during autonomous execution. Resolved questions
 
 ## Open
 
-- **Stalemate / no-progress draw** (Phase 1 builder): PLAN.md defines win only via HQ capture or rout. If both sides camp and refuse to capture, the game runs forever. Should we add a turn cap or "no kills/captures in N rounds" draw rule? Punted to Phase 6.
-- **Built-unit funds order** (Phase 1 builder): BUILD action's `owner` field is technically redundant with `state.currentPlayer` (only the current player can build). Kept for now to match the type in PLAN.md exactly; could simplify in Phase 2.
-- **HP display rounding** (Phase 1 builder): HP is stored 0–100 but PLAN.md says "displayed as 1–10". Round-down? Round-up? `ceil(hp/10)` with a special-case for 0 is the natural answer — leaving for renderer (Phase 3) to decide.
+- **Stalemate / no-progress draw** (Phase 1 builder): PLAN.md defines win only via HQ capture or rout. If both sides camp and refuse to capture, the game runs forever. Should we add a turn cap or "no kills/captures in N rounds" draw rule? Punted to Phase 6. **Still open — in progress:** a stalemate rule is being implemented in a parallel package as of 2026-08-01; this entry stays open until that lands and can record which rule was chosen.
+- ~~**Built-unit funds order**~~ **Resolved** (Phase 2): BUILD action's `owner` field is technically redundant with `state.currentPlayer` (only the current player can build). The Phase-2 question — simplify it away? — was settled by keeping it: the field stays in the `Action` union (`src/engine/core/types.ts:125`), matching PLAN.md's shape exactly, and it earns its place as the explicit first guard in `checkBuild` (`src/engine/core/validators.ts:145`, `action.owner !== state.currentPlayer → illegal('not current player')`) and as the funds/ownership key in `applyBuild`. Not a pending simplification.
+- ~~**HP display rounding**~~ **Answered** — see **HP display** under *Phase 3 (builder)* below: settled on a `ceil(hp/10)`-style segmented bar (segments 1–10) for damaged units, no bar at full HP; Phase 3B later added the AW-style baked HP numeral on the sprite. The original question (round-up vs round-down) is closed; nothing to decide.
 - **Capture-progress on END_TURN for non-current player** (Phase 1 builder): currently progress only resets when (a) the unit moves off, or (b) the player whose turn just began has a unit on a non-enemy capturable tile. This matches the spec but means an enemy infantry parked on a city you re-take keeps its progress through your turn — fine, since their next CAPTURE legality check fails (tile.owner === u.owner). Flagged because the interaction is subtle.
 
 ## Phase 2 (builder)
@@ -43,7 +43,7 @@ Questions and assumptions logged during autonomous execution. Resolved questions
 - **Damage preview parity.** `previewAttack` lives in `combat.ts` and is consumed by both the renderer (hover tooltip) and the test harness (`damage-preview.test.ts`). The reducer still goes through `resolveAttack`; both share `computeDamage` so they stay in sync. The test brute-forces every melee pair + terrain × HP variations.
 - **Forest mountain pattern.** Used Canvas primitives (dots / triangle) for forest/mountain visual hints rather than texture images. Sprites land in Phase 6.
 - **Esc / Enter keybinds.** Esc cancels selection (matches PLAN.md). I added Enter as a convenience to end the turn — not in the spec, easy to remove if undesired.
-- **Crossroads map.** Phase 3 only asks for the duel map; main.ts loads `duel.json` directly. To switch maps in dev today, hand-edit main.ts. Phase 6's map-picker UI is the proper home for runtime selection.
+- **Crossroads map.** Phase 3 only asks for the duel map; main.ts loaded `duel.json` directly, so switching maps in dev meant hand-editing main.ts. **Stale as of Phase 6 — the map picker shipped:** `main.ts` resolves the map from `?map=` (`resolveMapName(params.get('map'))`, defaulting to duel) and the toolshelf's Map dropdown (`createMapPicker` in `src/renderer/chrome.ts`) switches at runtime, confirming first if a match is in progress. No hand-editing.
 
 ## Phase 5 (builder)
 

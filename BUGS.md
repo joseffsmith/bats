@@ -1,6 +1,13 @@
-# Phase 1 Bugs
+# Phase 1 Bugs — archive
 
 Tracked by the tester. Builder/fixer triages.
+
+**Archived 2026-08-01 — every item below is resolved.** Both bugs shipped
+fixes and both are pinned by passing regression tests; there is nothing open
+in this file. The write-ups (expected / actual / repro / suggested fix) are
+kept as-is for the reasoning and for anyone re-deriving the behaviour — read
+each bug's **Status** line first, since the sections below it are still written
+in the present tense of the original report.
 
 ---
 
@@ -10,10 +17,10 @@ Tracked by the tester. Builder/fixer triages.
 **Status:** Fixed. `checkWinner` returns `null` when both players have zero
 units, via the one-line guard
 `if ((counts[0] ?? 0) === 0 && (counts[1] ?? 0) === 0) return null;` (Suggested
-fix, Option 1). Covered by passing regression tests in
-`tests/win-acceptance.test.ts` ("returns null when BOTH players have 0 units
-(draw, no spurious winner)" plus the direct `checkWinner` cases). No
-`test.fails(...)` marker remains.
+fix, Option 1) at `src/engine/systems/win.ts:33`. Covered by passing
+regression tests in `tests/win-acceptance.test.ts` — "returns null when BOTH
+players have 0 units (draw, no spurious winner)" (`:111`) plus the direct
+`checkWinner` cases (`:177`). No `test.fails(...)` marker remains.
 
 ### Expected (per PLAN.md)
 
@@ -80,9 +87,14 @@ Caller code (the reducer) is unaffected.
 
 **File:** `src/engine/core/validators.ts` → `isLegalAction` *and*
 `src/engine/core/reducer.ts` → `reduce`.
-**Status:** Fixed (Phase 1 commit). Tracked by `test.fails(...)` in
-`tests/reducer-purity.test.ts` ("BUG: unknown action type should be a no-op
-but throws TypeError").
+**Status:** Fixed (Phase 1 commit). `isLegalAction` now ends with
+`default: return illegal('unknown action type');`
+(`src/engine/core/validators.ts:43-44`), so a junk action is a logged no-op
+and the reducer returns the same state reference. Covered by the passing
+regression test in `tests/reducer-purity.test.ts` — "unknown action type is a
+graceful no-op (does not throw)", which asserts both `not.toThrow()` and
+`reduce(s, bogus) === s`. No `test.fails(...)` marker remains (an earlier
+version of this line claimed one; the suite has none).
 
 ### Expected (per PLAN.md & reducer.ts docstring)
 
