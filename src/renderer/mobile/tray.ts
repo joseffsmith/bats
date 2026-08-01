@@ -53,7 +53,7 @@ import type {
   Unit,
   UnitType,
 } from '../../engine/core/types';
-import { isCapturable, tileAt } from '../../engine/core/types';
+import { isCapturable, tileAt, unitAt } from '../../engine/core/types';
 import { INCOME_PER_PROPERTY, TERRAIN, UNITS } from '../../engine/data';
 import { previewAttack } from '../../engine/systems/combat';
 import { deserialize, downloadSave } from '../../engine/save';
@@ -440,7 +440,12 @@ export function createTray(deps: TrayDeps): Tray {
         );
         body.appendChild(card);
         actions.append(cancelButton(), confirmButton('CONFIRM MOVE', 'gold'));
-        return 'Tap the tile again to confirm the move';
+        // The board paints the staged unit's next-turn attack radar whenever it
+        // has a weapon and isn't boarding a transport (input.getOverlay's
+        // move-previewed rules) — name the red for players who haven't met it.
+        return UNITS[s.unit.type].maxRange > 0 && !unitAt(state, s.destination)
+          ? 'Tap the tile again to confirm the move · red marks where it could strike next turn'
+          : 'Tap the tile again to confirm the move';
       }
 
       case 'capture-staged': {

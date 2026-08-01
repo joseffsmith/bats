@@ -20,8 +20,9 @@
 import { describe, expect, it, beforeAll, beforeEach } from 'vitest';
 import { createEmitter } from '../src/renderer/emitter';
 import { createCanvasRenderer } from '../src/renderer/canvas';
-import { createInputController } from '../src/renderer/input';
+import { createInputController, __test } from '../src/renderer/input';
 import { createAnimationQueue } from '../src/renderer/animations';
+import { reachableTiles } from '../src/engine/queries/selectors';
 import { previewAttack } from '../src/engine/systems/combat';
 import { setLogEnabled } from '../src/engine/core/logger';
 import { makeState } from './test-helpers';
@@ -609,6 +610,124 @@ describe('mobile grammar — boarding a transport', () => {
     expect(h.actions).toEqual(['LOAD']);
     expect(h.emitter.getState().units[inf]!.loadedIn).toBe(boat);
     expect(h.input.getState().kind).toBe('idle');
+  });
+});
+
+// ─── Staged-move attack radar ──────────────────────────────────────────────
+//
+// Confirming a staged move is the unit's whole turn (MOVE + WAIT), so the
+// staging tap paints the attack RADAR: everywhere the unit could strike NEXT
+// turn from the staged destination. The border carries the full radar; the
+// fill keeps the disjoint-from-blue rule the range overlays established.
+
+describe('mobile grammar — a staged move paints the next-turn attack radar', () => {
+  const key = (c: Coord): string => `${c.x},${c.y}`;
+  const keySet = (cs: Coord[] | undefined): Set<string> =>
+    new Set((cs ?? []).map(key));
+
+  it('anchors the radar at the staged destination, past this-turn reach', () => {
+    const state = makeState({
+      width: 12,
+      height: 5,
+      defaultTerrain: 'plain',
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 11, y: 4 } },
+      ],
+      units: [
+        { type: 'infantry', owner: 0, pos: { x: 1, y: 2 } },
+        { type: 'infantry', owner: 1, pos: { x: 11, y: 4 } },
+      ],
+    });
+    const h = mount(state);
+    const inf = h.unit(0);
+    h.tap({ x: 1, y: 2 });
+    h.tap({ x: 4, y: 2 });
+    expect(h.input.getState().kind).toBe('move-previewed');
+
+    const ov = h.input.getOverlay();
+    // Recompute independently: ghost the unit onto the destination with a
+    // fresh turn and take its attack area over its reach from there.
+    const live = h.emitter.getState();
+    const ghost: Unit = { ...inf, pos: { x: 4, y: 2 } };
+    const ghostState: GameState = {
+      ...live,
+      units: { ...live.units, [inf.id]: ghost },
+    };
+    const expected = keySet(
+      __test.computeAttackArea(
+        ghostState,
+        ghost,
+        reachableTiles(ghostState, ghost),
+      ),
+    );
+    expect(expected.size).toBeGreaterThan(0);
+    expect(keySet(ov.attackRangeBorder)).toEqual(expected);
+    // (8,2) is move 3 + range 1 out from the DESTINATION. The farthest strike
+    // this turn (from (1,2)) is x=5, so only a destination-anchored next-turn
+    // radar can contain it.
+    expect(keySet(ov.attackRangeBorder).has(key({ x: 8, y: 2 }))).toBe(true);
+    // Disjoint-fill rule: the red fill never lands on a blue move tile.
+    const move = keySet(ov.moveRange);
+    for (const c of ov.attackRange ?? []) expect(move.has(key(c))).toBe(false);
+    // Staging still commits nothing.
+    expect(h.actions).toEqual([]);
+  });
+
+  it('gives an indirect unit its donut around the destination — the "park the artillery" read', () => {
+    const state = makeState({
+      width: 10,
+      height: 3,
+      defaultTerrain: 'plain',
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 9, y: 2 } },
+      ],
+      units: [
+        { type: 'artillery', owner: 0, pos: { x: 1, y: 1 } },
+        { type: 'infantry', owner: 1, pos: { x: 9, y: 2 } },
+      ],
+    });
+    const h = mount(state);
+    h.tap({ x: 1, y: 1 });
+    h.tap({ x: 3, y: 1 });
+    expect(h.input.getState().kind).toBe('move-previewed');
+    const border = keySet(h.input.getOverlay().attackRangeBorder);
+    // The [2,3] donut around the DESTINATION (3,1), not around where the
+    // artillery currently stands: (6,1) is d=3 from the destination but d=5
+    // from (1,1), so the old this-turn donut never contained it.
+    expect(border.has(key({ x: 6, y: 1 }))).toBe(true);
+    expect(border.has(key({ x: 4, y: 1 }))).toBe(false); // d=1 < minRange
+    expect(border.has(key({ x: 3, y: 1 }))).toBe(false); // the tile itself
+    expect(border.has(key({ x: 1, y: 1 }))).toBe(true); // old tile, d=2
+    expect(h.actions).toEqual([]);
+  });
+
+  it('paints no radar when the staged tile boards a transport', () => {
+    // Same board as the LOAD test above: confirming makes the unit cargo, so
+    // there is no next-turn firing position to show.
+    const state = makeState({
+      width: 6,
+      height: 1,
+      defaultTerrain: 'plain',
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 5, y: 0 } },
+      ],
+      tiles: [{ pos: { x: 3, y: 0 }, terrain: 'sea' }],
+      units: [
+        { type: 'infantry', owner: 0, pos: { x: 1, y: 0 } },
+        { type: 'transport', owner: 0, pos: { x: 3, y: 0 } },
+        { type: 'infantry', owner: 1, pos: { x: 5, y: 0 } },
+      ],
+    });
+    const h = mount(state);
+    h.tap({ x: 1, y: 0 });
+    h.tap({ x: 3, y: 0 });
+    expect(h.input.getState().kind).toBe('move-previewed');
+    const ov = h.input.getOverlay();
+    expect(ov.attackRange).toBeUndefined();
+    expect(ov.attackRangeBorder).toBeUndefined();
   });
 });
 
