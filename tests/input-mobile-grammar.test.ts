@@ -434,18 +434,96 @@ describe('mobile grammar — a tap on another legal target re-stages', () => {
 // ─── Tap 3: commit ─────────────────────────────────────────────────────────
 
 describe('mobile grammar — tap 3 commits a sequence of existing actions', () => {
-  it('move: MOVE then WAIT (the move IS the unit’s turn)', () => {
+  it('move: MOVE then WAIT when nothing is left to do at the destination', () => {
     const h = mount(skirmish());
     const id = h.unit(0).id;
     h.tap({ x: 1, y: 1 });
-    h.tap({ x: 2, y: 1 });
+    // (1,2) is out of the enemy's reach entirely: no attack, no capture, no
+    // cargo — the move IS the unit's turn, so the implicit WAIT closes it out.
+    h.tap({ x: 1, y: 2 });
     h.wait(200);
-    h.tap({ x: 2, y: 1 });
+    h.tap({ x: 1, y: 2 });
     expect(h.actions).toEqual(['MOVE', 'WAIT']);
     const moved = h.emitter.getState().units[id]!;
-    expect(moved.pos).toEqual({ x: 2, y: 1 });
+    expect(moved.pos).toEqual({ x: 1, y: 2 });
     expect(moved.hasActed).toBe(true);
     expect(h.input.getState().kind).toBe('idle');
+  });
+
+  it('move: landing beside an enemy opens the orders menu — attack after moving is honoured', () => {
+    const h = mount(skirmish());
+    const enemy = h.unit(1).id;
+    h.tap({ x: 1, y: 1 });
+    h.tap({ x: 2, y: 1 }); // adjacent to the enemy at (3,1)
+    h.wait(200);
+    h.tap({ x: 2, y: 1 }); // confirm the move
+    // No implicit WAIT: the unit can still attack from here, so the MOVE lands
+    // alone and the orders menu asks.
+    expect(h.actions).toEqual(['MOVE']);
+    const s = h.input.getState();
+    expect(s.kind).toBe('action-menu');
+    if (s.kind !== 'action-menu') return;
+    const enabled = s.entries.filter((e) => e.enabled).map((e) => e.label);
+    expect(enabled).toContain('Attack');
+    // Follow through: Attack → two-tap target confirm → ATTACK commits.
+    h.input.chooseAction('Attack');
+    expect(h.input.getState().kind).toBe('attack-targeting');
+    h.wait(1000); // let the MOVE animation retire so taps aren't swallowed
+    h.tap({ x: 3, y: 1 }); // first tap previews the damage (coarse pointer)
+    h.tap({ x: 3, y: 1 }); // second tap commits
+    expect(h.actions).toEqual(['MOVE', 'ATTACK']);
+    expect(h.emitter.getState().units[enemy]!.hp).toBeLessThan(100);
+  });
+
+  it('move: a transport with cargo can still unload after moving', () => {
+    const state = makeState({
+      width: 6,
+      height: 1,
+      defaultTerrain: 'plain',
+      hqs: [
+        { owner: 0, pos: { x: 0, y: 0 } },
+        { owner: 1, pos: { x: 5, y: 0 } },
+      ],
+      tiles: [
+        { pos: { x: 2, y: 0 }, terrain: 'sea' },
+        { pos: { x: 3, y: 0 }, terrain: 'sea' },
+      ],
+      units: [
+        { type: 'infantry', owner: 0, pos: { x: 1, y: 0 } },
+        { type: 'transport', owner: 0, pos: { x: 2, y: 0 } },
+        { type: 'infantry', owner: 1, pos: { x: 5, y: 0 } },
+      ],
+    });
+    const h = mount(state);
+    const inf = h.unit(0, 'infantry').id;
+    // Board the transport…
+    h.tap({ x: 1, y: 0 });
+    h.tap({ x: 2, y: 0 });
+    h.wait(200);
+    h.tap({ x: 2, y: 0 });
+    expect(h.actions).toEqual(['LOAD']);
+    // …then move the transport and unload at the new position. Pre-fix this
+    // path was impossible: the bare move auto-WAITed and stranded the cargo.
+    h.wait(1000);
+    h.tap({ x: 2, y: 0 });
+    h.tap({ x: 3, y: 0 });
+    h.wait(200);
+    h.tap({ x: 3, y: 0 });
+    expect(h.actions).toEqual(['LOAD', 'MOVE']);
+    const s = h.input.getState();
+    expect(s.kind).toBe('action-menu');
+    if (s.kind !== 'action-menu') return;
+    expect(s.entries.filter((e) => e.enabled).map((e) => e.label)).toContain(
+      'Unload',
+    );
+    h.input.chooseAction('Unload');
+    expect(h.input.getState().kind).toBe('unload-targeting');
+    h.wait(1000);
+    h.tap({ x: 4, y: 0 }); // the only foot-passable adjacent tile
+    expect(h.actions).toEqual(['LOAD', 'MOVE', 'UNLOAD']);
+    const dropped = h.emitter.getState().units[inf]!;
+    expect(dropped.loadedIn).toBeUndefined();
+    expect(dropped.pos).toEqual({ x: 4, y: 0 });
   });
 
   it('attack: MOVE then ATTACK, in that order', () => {
@@ -774,7 +852,9 @@ describe('mobile grammar — 150ms debounce on the confirming tap', () => {
   it('confirmStaged() commits a staged move the same way a third tap would', () => {
     const h = mount(skirmish());
     h.tap({ x: 1, y: 1 });
-    h.tap({ x: 2, y: 1 });
+    // (1,2): out of the enemy's reach, so the commit is the plain MOVE + WAIT
+    // (a destination with options left would open the orders menu instead).
+    h.tap({ x: 1, y: 2 });
     h.input.confirmStaged();
     expect(h.actions).toEqual(['MOVE', 'WAIT']);
   });

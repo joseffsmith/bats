@@ -59,7 +59,10 @@
 // MOVE then CAPTURE — dispatched synchronously in one handler. No new reducer
 // action types, no engine changes. If the follow-up after the MOVE is genuinely
 // ambiguous (`needsOrders`), the MOVE lands alone and the existing action menu
-// opens to ask.
+// opens to ask. A bare staged MOVE likewise keeps every remaining option: when
+// the unit still has any real order at the destination (attack, unload,
+// dive/surface — anything beyond Wait) the orders menu opens instead of the
+// implicit WAIT, so moving first never forfeits the follow-up.
 
 import type {
   Action,
@@ -1038,13 +1041,21 @@ export function createInputController(
     }
     const moved = moveLeg(unit, path);
     if (!moved) return;
-    if (needsOrders(emitter.getState(), moved)) {
+    // A bare move used to close the unit out with an unconditional implicit
+    // WAIT ("the tap IS the turn"), only asking when capture AND attack were
+    // both live (needsOrders). That silently discarded every lone post-move
+    // option: a direct unit landing beside an enemy couldn't attack, a
+    // transport could never unload after moving, a submarine couldn't dive.
+    // So: if ANY real order remains at the destination — anything beyond Wait —
+    // open the orders menu and let the player choose; waiting is one more tap.
+    // Only a unit with nothing left gets the implicit WAIT.
+    const entries = computeActionMenuEntries(emitter.getState(), moved, moved.pos);
+    if (entries.some((e) => e.enabled && e.label !== 'Wait')) {
       openActionMenuFor(moved, moved.pos);
       return;
     }
     // MOVE marks hasMoved but NOT hasActed (see reducer.applyMove), so a bare
-    // move would leave the unit hanging around as still-actionable. The mobile
-    // grammar treats "I tapped this tile" as the unit's whole turn, so close it
+    // move would leave the unit hanging around as still-actionable. Close it
     // out with the same WAIT the action menu's Wait entry dispatches.
     commit({ type: 'WAIT', unitId: moved.id });
     setState({ kind: 'idle' }, inputState.kind);
