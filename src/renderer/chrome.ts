@@ -398,6 +398,16 @@ function createToolshelf(deps: ToolshelfDeps): { root: HTMLElement } {
     refreshSound();
   });
 
+  // Campaign — reloads into the mission list (`?campaign=menu`), the same
+  // URL-param reload path as the map picker, behind the same discard confirm.
+  const campaignBtn = makeTool('Campaign', '⚑');
+  campaignBtn.addEventListener('click', () => {
+    if (!confirmDiscard(deps.emitter)) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('campaign', 'menu');
+    window.location.assign(url.toString());
+  });
+
   // Map picker — reloads the page with `?map=<name>` so we get a fresh state
   // through `main.ts` rather than trying to live-swap.
   const mapPicker = createMapPicker(deps.emitter);
@@ -414,6 +424,8 @@ function createToolshelf(deps: ToolshelfDeps): { root: HTMLElement } {
   root.appendChild(loadBtn);
   root.appendChild(makeDivider());
   root.appendChild(soundBtn);
+  root.appendChild(makeDivider());
+  root.appendChild(campaignBtn);
   root.appendChild(makeDivider());
   root.appendChild(mapPicker);
   root.appendChild(fogToggle);

@@ -604,14 +604,14 @@ describe('tray — tools sheet + lifecycle', () => {
     document.body.innerHTML = '';
   });
 
-  it('☰ opens Save / Load / Sound / Restart, and CLOSE returns to the state', () => {
+  it('☰ opens Save / Load / Sound / Restart / Campaign, and CLOSE returns to the state', () => {
     mount();
     q('[data-tray-tools]').click();
     expect(q('.tray').dataset.traySheet).toBe('tools');
     const tools = Array.from(document.querySelectorAll('[data-tray-tool]')).map(
       (t) => (t as HTMLElement).dataset.trayTool,
     );
-    expect(tools).toEqual(['save', 'load', 'sound', 'restart', 'close']);
+    expect(tools).toEqual(['save', 'load', 'sound', 'restart', 'campaign', 'close']);
     // Replay / fog toggle stay desktop-only.
     expect(document.querySelector('[data-tray-tool="replay"]')).toBeNull();
 

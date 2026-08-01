@@ -40,7 +40,7 @@
 //     finger on each tap. See `reportInset`.
 //
 // ── Campaign extension points ───────────────────────────────────────────────
-// Declared here, wired by a later phase (src/campaign/* is untouched):
+// Declared here, wired by src/campaign/controller.ts (mobile presenter):
 //   setObjective(text | null)  a persistent objective line above the state body
 //   setHint(text | null)       overrides the state's own hint while set
 //   presentPanel(el | null)    replaces the whole tray body while set
@@ -681,7 +681,7 @@ export function createTray(deps: TrayDeps): Tray {
     return true;
   }
 
-  /** In-tray tools sheet: Save / Load / Sound / Restart, plus the match setup
+  /** In-tray tools sheet: Save / Load / Sound / Restart / Campaign, plus the match setup
    *  the shell would otherwise have no door to — the map picker and the
    *  per-seat controller (who plays Vermilion / Cobalt, i.e. who you're
    *  playing against). Replay and the fog toggle stay desktop-only. */
@@ -728,7 +728,18 @@ export function createTray(deps: TrayDeps): Tray {
       window.location.reload();
     });
 
-    grid.append(save, load, sound, restart);
+    // Campaign — the mission list's only in-UI door on mobile. Same URL-param
+    // reload path as the map picker, behind the same discard confirm.
+    const campaign = makeBtn('CAMPAIGN', 'dark');
+    campaign.dataset.trayTool = 'campaign';
+    campaign.addEventListener('click', () => {
+      if (!confirmDiscard()) return;
+      const url = new URL(window.location.href);
+      url.searchParams.set('campaign', 'menu');
+      window.location.assign(url.toString());
+    });
+
+    grid.append(save, load, sound, restart, campaign);
 
     // ── Match setup: map + controllers ────────────────────────────────────
     const setup = document.createElement('div');
