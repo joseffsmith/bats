@@ -1476,6 +1476,24 @@ function ensureStyle(): void {
      Coffer (funds) never gets clipped. */
   .stat-units { display: none; }
 
+  /* The 390px Coffer clip. The panel is a fixed-width grid cell with
+     overflow:hidden, and its 1fr name column carries grid's automatic
+     min-content floor — so when marker + name + coffer exceed the cell, nothing
+     shrinks and the LAST column is simply sliced off. At 390px that means the
+     panel needs 154px of content in a 130px box and "COFFER" loses its tail.
+     Fix: let the name column absorb the shortfall (minmax(0,1fr) removes the
+     floor, ellipsis keeps it legible) while the stats column holds its
+     intrinsic width. Funds now clip last instead of first. */
+  .player-panel { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .player-panel .meta { min-width: 0; }
+  .player-panel .meta .name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .player-panel .stats { flex: 0 0 auto; }
+  .stat .v, .stat .k { white-space: nowrap; }
+
   /* Bottom chrome: toolshelf (left, shrinkable) + end-turn cluster (right,
      never shrinks), honouring the bottom safe area. */
   .chrome-bottom {
@@ -1506,6 +1524,16 @@ function ensureStyle(): void {
    its full tap target on the smallest phones. */
 @media (max-width: 400px) {
   .end-turn-cluster .turn-meta { display: none; }
+
+  /* At this width even an ellipsized faction name ("Verm…") can't buy the
+     Coffer enough room — the panel is ~24px short — so drop the name outright.
+     The coloured I/II marker already identifies the side and the turn
+     indicator's dot says whose turn it is, while the funds figure has no
+     substitute. Same "shed the expendable string" ladder as .stat-units above.
+     Only the name is hidden, not the .meta wrapper — the wrapper is the grid's
+     1fr track, and removing it would slide the stats out of the trailing column
+     and un-mirror the two panels. */
+  .player-panel .meta .name { display: none; }
 }
 `;
   const style = document.createElement('style');

@@ -27,6 +27,8 @@ import type { Coord, PlayerId } from './engine/core/types';
 import { resolveMobileMode } from './renderer/mobile/mode';
 import { createCamera } from './renderer/camera';
 import { mountGestures } from './renderer/mobile/gestures';
+import { createHudStrip } from './renderer/mobile/hud-strip';
+import { createTray } from './renderer/mobile/tray';
 import { createSpriteCache } from './renderer/sprites';
 import { createTerrainCache } from './renderer/terrain';
 import { createAudio } from './renderer/audio';
@@ -118,10 +120,11 @@ async function main(): Promise<void> {
   const terrain = createTerrainCache();
 
   // Mobile mode is resolved ONCE here (`?mobile=1|0`, else `(pointer: coarse)`)
-  // and is the single switch for the camera + gesture board. Everything it turns
-  // on is additive: with it off, the renderer takes the identical desktop path
-  // it always has. The desktop chrome/menus/handoff still mount in BOTH modes —
-  // replacing them with the mobile HUD strip + verb tray is a later phase.
+  // and is the single switch for the whole mobile-first UI: the camera + gesture
+  // board (Phase A), the select→stage→commit tap grammar (Phase B), and the HUD
+  // strip + command tray that replace the desktop chrome/menus/handoff entirely
+  // (Phase C). With it off the app takes the identical desktop path it always
+  // has — the two UIs are mounted exclusively, never side by side.
   const mobileMode = resolveMobileMode(params);
   const camera = mobileMode
     ? createCamera({
@@ -204,6 +207,10 @@ async function main(): Promise<void> {
       !aiDriver.inputLocked(emitter.getState()) &&
       !animQueue.busy() &&
       !handoffActive(),
+    // Mobile taps go through select → stage → commit (input.ts); desktop keeps
+    // the click machine unchanged. Spread rather than passing `undefined` —
+    // exactOptionalPropertyTypes treats those as different things.
+    ...(mobileMode ? ({ grammar: 'mobile' } as const) : {}),
   });
 
   if (camera) {
@@ -247,42 +254,85 @@ async function main(): Promise<void> {
   });
   canvas.addEventListener('click', () => audio.unlock(), { once: true });
 
-  // Mount DOM chrome (player HUDs, turn indicator, toolshelf, end-turn cluster,
-  // AI controllers). The canvas underneath shows the board + animations.
+  // ── DOM shell ───────────────────────────────────────────────────────────────
+  // Exactly one of the two shells mounts. They are not layered or feature-
+  // detected against each other: desktop gets chrome + menus + fog handoff,
+  // mobile gets the HUD strip + command tray, and neither knows the other
+  // exists. Both report their measured heights into the SAME sink
+  // (`renderer.setBoardInsets`, which forwards the band to the camera), so the
+  // board reserves exactly the space its shell occupies either way.
   const appRoot = document.getElementById('app') ?? document.body;
-  createChrome({
-    parent: appRoot,
-    emitter,
-    aiDriver,
-    animQueue,
-    audio,
-    // Single source of truth for the board insets: the chrome measures its own
-    // header/footer heights and the renderer reserves exactly that much space.
-    onInsetsChange: (t, b) => {
-      renderer.setBoardInsets(t, b);
-    },
-    // Floating Cancel chip → drop the current input selection/menu/target.
-    onCancel: () => input.cancel(),
-  });
-  log('render', 'chrome mounted', { muted: audio.isMuted() });
+  if (mobileMode) {
+    // Two independent measurements, one inset call. Seeded from the CSS
+    // contract (44px strip) so the very first frame — before either observer
+    // has ticked — already reserves a plausible band.
+    let insetTop = 44;
+    let insetBottom = 0;
+    const applyInsets = (): void => {
+      renderer.setBoardInsets(insetTop, insetBottom);
+    };
+    createHudStrip({
+      parent: appRoot,
+      emitter,
+      aiDriver,
+      ...(camera !== undefined ? { camera } : {}),
+      onInsetsChange: (t) => {
+        insetTop = t;
+        applyInsets();
+      },
+    });
+    createTray({
+      parent: appRoot,
+      emitter,
+      input,
+      aiDriver,
+      animQueue,
+      audio,
+      sprites,
+      onInsetsChange: (b) => {
+        insetBottom = b;
+        applyInsets();
+      },
+    });
+    applyInsets();
+    log('render', 'mobile shell mounted', { muted: audio.isMuted() });
+  } else {
+    // Mount DOM chrome (player HUDs, turn indicator, toolshelf, end-turn cluster,
+    // AI controllers). The canvas underneath shows the board + animations.
+    createChrome({
+      parent: appRoot,
+      emitter,
+      aiDriver,
+      animQueue,
+      audio,
+      // Single source of truth for the board insets: the chrome measures its own
+      // header/footer heights and the renderer reserves exactly that much space.
+      onInsetsChange: (t, b) => {
+        renderer.setBoardInsets(t, b);
+      },
+      // Floating Cancel chip → drop the current input selection/menu/target.
+      onCancel: () => input.cancel(),
+    });
+    log('render', 'chrome mounted', { muted: audio.isMuted() });
 
-  // Hot-seat fog handoff interstitial. Only meaningful with fog on, no fixed
-  // viewer override, and both controllers human (read live — the dropdowns can
-  // switch a controller mid-game). Drops an opaque pass-the-device scrim on each
-  // END_TURN; wired here so the Enter predicate above can suppress while it's up.
-  const handoff = createHandoff({
-    parent: appRoot,
-    emitter,
-    fogOn: fogConfig.on && fogConfig.viewerOverride === null,
-    bothHuman: () =>
-      aiDriver.getPlayerAI(0) === 'human' && aiDriver.getPlayerAI(1) === 'human',
-  });
-  handoffActive = (): boolean => handoff.isActive();
+    // Hot-seat fog handoff interstitial. Only meaningful with fog on, no fixed
+    // viewer override, and both controllers human (read live — the dropdowns can
+    // switch a controller mid-game). Drops an opaque pass-the-device scrim on each
+    // END_TURN; wired here so the Enter predicate above can suppress while it's up.
+    const handoff = createHandoff({
+      parent: appRoot,
+      emitter,
+      fogOn: fogConfig.on && fogConfig.viewerOverride === null,
+      bothHuman: () =>
+        aiDriver.getPlayerAI(0) === 'human' && aiDriver.getPlayerAI(1) === 'human',
+    });
+    handoffActive = (): boolean => handoff.isActive();
 
-  // DOM action/build menus (Phase 2.3). Mounted after chrome so they layer above
-  // it; they read `input.getOverlay()` and re-render on emitter transitions.
-  // `sprites` lets build entries show the current player's baked unit icon.
-  createMenus({ parent: appRoot, emitter, input, renderer, sprites });
+    // DOM action/build menus (Phase 2.3). Mounted after chrome so they layer above
+    // it; they read `input.getOverlay()` and re-render on emitter transitions.
+    // `sprites` lets build entries show the current player's baked unit icon.
+    createMenus({ parent: appRoot, emitter, input, renderer, sprites });
+  }
 
   // `?debug=1` installs the window.__bats automation hook (state read, synthetic
   // input, idle-await). Gated so ordinary hot-seat play carries no global. Must

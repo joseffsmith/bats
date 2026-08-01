@@ -40,6 +40,12 @@ export type OpenParams = {
    *  so the input controller reads the right pointer type at construction. */
   hasTouch?: boolean;
   isMobile?: boolean;
+  /**
+   * Force the mobile shell on (`'1'`) or off (`'0'`). Absent → the page decides
+   * from `(pointer: coarse)`. The mobile spec sets it explicitly so the shell
+   * under test never depends on how Chromium reports an emulated pointer.
+   */
+  mobile?: string;
 };
 
 /**
@@ -65,6 +71,7 @@ export async function openMap(page: Page, params: OpenParams = {}): Promise<Capt
     ...(params.p1 !== undefined ? { p1: params.p1 } : {}),
     ...(params.fog !== undefined ? { fog: params.fog } : {}),
     ...(params.ambient !== undefined ? { ambient: params.ambient } : {}),
+    ...(params.mobile !== undefined ? { mobile: params.mobile } : {}),
     seed: params.seed ?? 42,
   });
   await openGame(page, url);
