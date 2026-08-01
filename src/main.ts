@@ -11,8 +11,19 @@
 //      and the DOM action/build menus (menus.ts).
 //
 // The canvas fills the viewport; DOM chrome floats over it at top and bottom.
+//
+// ── Campaign entry points ───────────────────────────────────────────────────
+//   ?campaign=menu   short-circuits (like ?editor=1) into the mission list — no
+//                    engine, no board, just the screen.
+//   ?campaign=1..5   boots the normal match with the mission's settings applied:
+//                    its board, its fog decision, human at seat 0 vs the
+//                    commander's persona at seat 1. After the shell mounts, the
+//                    mission runtime takes over briefing → hints → debrief.
+// Anything else in `?campaign=` (or a campaign.json that fails validation) logs
+// a warning and falls through to a normal skirmish boot.
 
-import { MAPS, resolveMapName } from './renderer/maps';
+import { CAMPAIGN_MAP_NAMES, MAPS, resolveAnyMapName, resolveMapName } from './renderer/maps';
+import type { AnyMapName, MapName } from './renderer/maps';
 import { loadMap } from './engine/data/loader';
 import { enableFogMemory } from './engine/systems/memory';
 import { createEmitter } from './renderer/emitter';
@@ -20,7 +31,7 @@ import { createCanvasRenderer } from './renderer/canvas';
 import { createInputController } from './renderer/input';
 import { createMenus } from './renderer/menus';
 import { createAnimationQueue } from './renderer/animations';
-import { createAIDriver, AI_CHOICES } from './renderer/ai-driver';
+import { createAIDriver, AI_CHOICES, AI_PERSONA_CHOICES } from './renderer/ai-driver';
 import type { AIChoice } from './renderer/ai-driver';
 import { log, setLogEnabled } from './engine/core/logger';
 import type { Coord, PlayerId } from './engine/core/types';
@@ -36,6 +47,22 @@ import { createChrome } from './renderer/chrome';
 import { createHandoff } from './renderer/handoff';
 import { runEditor } from './renderer/editor';
 import { installDebugHook } from './renderer/debug-hook';
+import campaignJson from './data/campaign.json';
+import { loadCampaign } from './campaign/loader';
+import type { Mission } from './campaign/types';
+import { progressStore } from './campaign/progress';
+import {
+  buildSelectView,
+  createCampaignNav,
+  createCampaignRuntime,
+  parseCampaignParam,
+} from './campaign/controller';
+import {
+  createDesktopPresenter,
+  createMobilePresenter,
+  mountMissionSelect,
+} from './campaign/screens';
+import type { Tray } from './renderer/mobile/tray';
 
 // `?render-log=1` flips the render category on for click-by-click traces.
 // `?ai-trace=1` enables the very chatty per-candidate AI score log.
@@ -66,6 +93,73 @@ function parseFogConfig(): { on: boolean; viewerOverride: PlayerId | null } {
   if (view === 'p0' || view === '0') viewerOverride = 0;
   else if (view === 'p1' || view === '1') viewerOverride = 1;
   return { on, viewerOverride };
+}
+
+type CampaignBoot = {
+  missions: Mission[];
+  /** `menu` for the mission list, or a validated 1-based mission number. */
+  entry: number | 'menu';
+};
+
+/**
+ * Resolve `?campaign=`. Returns null — and boots a normal match — for an absent
+ * or malformed parameter, a mission number the campaign doesn't have, or a
+ * campaign.json that fails validation.
+ *
+ * The two registries are passed explicitly rather than taking the loader's
+ * defaults: a mission must sit on a CAMPAIGN board (never a skirmish one), and
+ * its persona must be a name the AI driver can actually instantiate — which is
+ * the narrower `AI_PERSONA_CHOICES`, not every persona in the data file.
+ */
+function resolveCampaignBoot(): CampaignBoot | null {
+  const entry = parseCampaignParam(params.get('campaign'));
+  if (entry === null) {
+    if (params.get('campaign') !== null) {
+      console.warn(
+        `[campaign] ignoring ?campaign=${params.get('campaign')} — expected "menu" or a mission number`,
+      );
+    }
+    return null;
+  }
+  let missions: Mission[];
+  try {
+    missions = loadCampaign(campaignJson, {
+      mapNames: CAMPAIGN_MAP_NAMES,
+      personaNames: AI_PERSONA_CHOICES,
+    });
+  } catch (err) {
+    console.warn('[campaign] campaign.json failed validation — booting a normal match', err);
+    return null;
+  }
+  if (entry !== 'menu' && !missions.some((m) => m.n === entry)) {
+    console.warn(
+      `[campaign] no mission ${entry} — the campaign has ${missions.length}; booting a normal match`,
+    );
+    return null;
+  }
+  return { missions, entry };
+}
+
+/** `?campaign=menu` — the mission list, mounted on its own with no game behind
+ *  it (same shape as the `?editor=1` short-circuit). */
+function runCampaignMenu(parent: HTMLElement, missions: Mission[]): void {
+  parent.innerHTML = '';
+  const nav = createCampaignNav();
+  mountMissionSelect({
+    parent,
+    view: buildSelectView(missions, progressStore()),
+    handlers: {
+      onSelect: (n) => nav.goTo(n),
+      // Way out of the menu: drop the param and reload into a skirmish.
+      onExit: () => {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('campaign');
+        window.location.assign(url.toString());
+      },
+    },
+    mode: resolveMobileMode(params) ? 'mobile' : 'desktop',
+  });
+  log('render', 'campaign menu mounted', { missions: missions.length });
 }
 
 function setupCanvas(): HTMLCanvasElement {
@@ -99,9 +193,35 @@ async function main(): Promise<void> {
     runSheet(document.getElementById('app') ?? document.body);
     return;
   }
+  // Campaign entry points. `menu` never boots a game at all; a mission number
+  // boots the ordinary match below with the mission's board / fog / opponent.
+  const campaign = resolveCampaignBoot();
+  if (campaign !== null && campaign.entry === 'menu') {
+    runCampaignMenu(document.getElementById('app') ?? document.body, campaign.missions);
+    return;
+  }
+  const mission: Mission | null =
+    campaign !== null && campaign.entry !== 'menu'
+      ? (campaign.missions.find((m) => m.n === campaign.entry) ?? null)
+      : null;
+
   const canvas = setupCanvas();
-  const mapName = resolveMapName(params.get('map'));
-  const fogConfig = parseFogConfig();
+  // Campaign boards resolve through the `Any` registry — `resolveMapName` is
+  // the skirmish gate and deliberately rejects them (maps.ts).
+  const mapName: AnyMapName =
+    mission !== null
+      ? (resolveAnyMapName(mission.map) ?? resolveMapName(params.get('map')))
+      : resolveMapName(params.get('map'));
+  // Per-map colour grade is keyed by skirmish map name only; campaign boards
+  // simply go ungraded rather than teaching maps.ts about tints.
+  const gradeName: MapName | undefined =
+    mission === null ? (mapName as MapName) : undefined;
+  // Fog is a mission-level decision. Pin the viewer to seat 0: the campaign is
+  // always human-vs-AI, so without the override the board would flip to the
+  // opponent's vision on their turn and hand the player free intel.
+  const fogConfig = mission !== null
+    ? { on: mission.fog, viewerOverride: 0 as PlayerId }
+    : parseFogConfig();
   // `?ambient=off` (or `=0`) freezes all continuous idle animation for byte-
   // stable visual-regression screenshots. The renderer honours the flag for its
   // own idle terms (unit bob, selection dash) and skips factory smoke; the
@@ -149,7 +269,7 @@ async function main(): Promise<void> {
     sprites,
     terrain,
     fog: fogConfig,
-    mapName,
+    ...(gradeName !== undefined ? { mapName: gradeName } : {}),
     ambient,
     ...(camera !== undefined ? { camera } : {}),
   });
@@ -180,7 +300,13 @@ async function main(): Promise<void> {
     },
   });
 
-  const initialAI = parseInitialAI();
+  // Campaign missions are always human at seat 0 against the mission's
+  // commander at seat 1 — `?p0=`/`?p1=` are ignored so a briefing can never
+  // describe an opponent the board isn't running.
+  const initialAI: Record<PlayerId, AIChoice> =
+    mission !== null
+      ? { 0: 'human', 1: mission.opponent.persona as AIChoice }
+      : parseInitialAI();
   // `?seed=N` pins the AI driver's RNG so headless tests get reproducible AI
   // turns. Absent → the driver keeps its `Date.now()` default. Spread the key
   // in only when present (exactOptionalPropertyTypes forbids `seed: undefined`).
@@ -262,6 +388,9 @@ async function main(): Promise<void> {
   // (`renderer.setBoardInsets`, which forwards the band to the camera), so the
   // board reserves exactly the space its shell occupies either way.
   const appRoot = document.getElementById('app') ?? document.body;
+  // Held so the campaign runtime below can drive the tray's objective / hint /
+  // panel extension points on mobile. Null on desktop.
+  let tray: Tray | null = null;
   if (mobileMode) {
     // Two independent measurements, one inset call. Seeded from the CSS
     // contract (44px strip) so the very first frame — before either observer
@@ -281,7 +410,7 @@ async function main(): Promise<void> {
         applyInsets();
       },
     });
-    createTray({
+    tray = createTray({
       parent: appRoot,
       emitter,
       input,
@@ -332,6 +461,31 @@ async function main(): Promise<void> {
     // it; they read `input.getOverlay()` and re-render on emitter transitions.
     // `sprites` lets build entries show the current player's baked unit icon.
     createMenus({ parent: appRoot, emitter, input, renderer, sprites });
+  }
+
+  // ── Campaign runtime ────────────────────────────────────────────────────────
+  // Mounted AFTER the shell so its presenter can sit on top of it: on mobile it
+  // drives the tray's objective / hint / panel hooks (a presented panel beats
+  // the tray's own match-over takeover by tray.ts's own ordering); on desktop it
+  // owns a z-97 overlay that paints over chrome's winner dialog (z 90) rather
+  // than stacking beside it, plus objective / hint pills.
+  if (mission !== null) {
+    const ui =
+      tray !== null
+        ? createMobilePresenter({ tray, parent: appRoot })
+        : createDesktopPresenter({ parent: appRoot });
+    createCampaignRuntime({
+      mission,
+      emitter,
+      ui,
+      total: campaign !== null ? campaign.missions.length : 5,
+    });
+    log('render', 'campaign mission mounted', {
+      mission: mission.id,
+      map: mission.map,
+      opponent: mission.opponent.persona,
+      fog: mission.fog,
+    });
   }
 
   // `?debug=1` installs the window.__bats automation hook (state read, synthetic
@@ -408,6 +562,7 @@ async function main(): Promise<void> {
     p0: initialAI[0],
     p1: initialAI[1],
     mobile: mobileMode,
+    campaign: mission?.id ?? null,
   });
 }
 
