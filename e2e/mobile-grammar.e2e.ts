@@ -341,26 +341,32 @@ describe('mobile grammar (select → stage → commit)', () => {
       await setGameState(page, tankVs({ x: 5, y: 2 }));
 
       // Tap 1 on an enemy is inspection, never selection: there is nothing the
-      // player can order it to do.
+      // player can order it to do. The threat overlay is ON by default — the
+      // tap is asking "what can this thing hit".
       await clickTile(page, { x: 5, y: 2 });
       expect((await inputState(page)).kind).toBe('enemy-inspect');
       await waitForTrayState(page, 'enemy-inspect');
       expect(
         await bats<boolean>(page, 'input.getInputState().showThreat'),
-      ).toBe(false);
-
-      // The threat toggle changes the input node in place — same kind, new
-      // flag — so waiting on the flag is the only honest observable.
-      await page.click('[data-tray-threat]');
-      await waitForInput(page, "s.kind === 'enemy-inspect' && s.showThreat === true");
+      ).toBe(true);
       const label = await page.$eval(
         '[data-tray-threat]',
         (el) => el.textContent ?? '',
       );
       expect(label).toContain('HIDE');
 
+      // The threat toggle changes the input node in place — same kind, new
+      // flag — so waiting on the flag is the only honest observable.
       await page.click('[data-tray-threat]');
       await waitForInput(page, "s.kind === 'enemy-inspect' && s.showThreat === false");
+      const shown = await page.$eval(
+        '[data-tray-threat]',
+        (el) => el.textContent ?? '',
+      );
+      expect(shown).toContain('SHOW');
+
+      await page.click('[data-tray-threat]');
+      await waitForInput(page, "s.kind === 'enemy-inspect' && s.showThreat === true");
 
       // Inspecting is never an action.
       expect(await historyTypes(page)).toEqual([]);

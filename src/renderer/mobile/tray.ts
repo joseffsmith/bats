@@ -33,7 +33,11 @@
 //   - action entries keep menus.ts's `data-menu-entry="<label>"` and build rows
 //     its `data-build-entry="<unitType>"`, so e2e/helpers.ts is unchanged;
 //   - the measured height is reported through `onInsetsChange`, which main.ts
-//     forwards to `renderer.setBoardInsets` → `camera.setBand`.
+//     forwards to `renderer.setBoardInsets` → `camera.setBand` — but ONLY the
+//     idle (baseline) height. Taller transient states (staged cards, forecasts,
+//     build sheets, the tools sheet) OVERLAY the board rather than re-banding
+//     the camera: reporting every reflow made the map jump under the player's
+//     finger on each tap. See `reportInset`.
 //
 // ── Campaign extension points ───────────────────────────────────────────────
 // Declared here, wired by a later phase (src/campaign/* is untouched):
@@ -56,7 +60,9 @@ import { deserialize, downloadSave } from '../../engine/save';
 import { log } from '../../engine/core/logger';
 import type { Emitter } from '../emitter';
 import type { InputController, InputState } from '../input';
-import type { AIDriver } from '../ai-driver';
+import type { AIDriver, AIChoice } from '../ai-driver';
+import { AI_CHOICES } from '../ai-driver';
+import { MAP_NAMES, mapLabel, resolveMapName } from '../maps';
 import type { AnimationQueue } from '../animations';
 import type { AudioModule } from '../audio';
 import type { SpriteCache } from '../sprites';
@@ -665,9 +671,20 @@ export function createTray(deps: TrayDeps): Tray {
     return `Player ${winner + 1} took the field on day ${dayOf(state.turn)}`;
   }
 
-  /** In-tray tools sheet: Save / Load / Sound / Restart. Deliberately a strict
-   *  subset of the desktop toolshelf — replay, map picker and fog toggle are
-   *  desk-work, not phone-work. */
+  /** Confirm before a page reload that would silently discard a live match
+   *  (chrome.ts's guard, same definition of "in progress"). */
+  function confirmDiscard(): boolean {
+    const state = deps.emitter.getState();
+    if (state.turn > 1 && state.winner === null) {
+      return window.confirm('Abandon the current match?');
+    }
+    return true;
+  }
+
+  /** In-tray tools sheet: Save / Load / Sound / Restart, plus the match setup
+   *  the shell would otherwise have no door to — the map picker and the
+   *  per-seat controller (who plays Vermilion / Cobalt, i.e. who you're
+   *  playing against). Replay and the fog toggle stay desktop-only. */
   function renderTools(hint: HTMLElement): string {
     const grid = document.createElement('div');
     grid.className = 'tray-tools';
@@ -712,7 +729,71 @@ export function createTray(deps: TrayDeps): Tray {
     });
 
     grid.append(save, load, sound, restart);
-    body.append(grid, hint);
+
+    // ── Match setup: map + controllers ────────────────────────────────────
+    const setup = document.createElement('div');
+    setup.className = 'tray-setup';
+
+    // Map — chrome.ts's picker pattern: reload through main.ts with `?map=`
+    // rather than live-swapping, behind the same discard confirm. Native
+    // <select> on purpose: it opens the OS picker sheet on a phone.
+    const params = new URLSearchParams(window.location.search);
+    const currentMap = resolveMapName(params.get('map'));
+    const mapRow = document.createElement('label');
+    mapRow.className = 'tray-setup-row';
+    const mapTag = document.createElement('span');
+    mapTag.className = 'tray-setup-label';
+    mapTag.textContent = 'MAP';
+    const mapSel = document.createElement('select');
+    mapSel.className = 'tray-select';
+    mapSel.dataset.trayMap = '';
+    for (const name of MAP_NAMES) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = mapLabel(name);
+      if (name === currentMap) opt.selected = true;
+      mapSel.appendChild(opt);
+    }
+    mapSel.addEventListener('change', () => {
+      if (!confirmDiscard()) {
+        mapSel.value = currentMap;
+        return;
+      }
+      const url = new URL(window.location.href);
+      url.searchParams.set('map', mapSel.value);
+      window.location.assign(url.toString());
+    });
+    mapRow.append(mapTag, mapSel);
+    setup.appendChild(mapRow);
+
+    // Controllers — one row per seat, the same choices and live driver call as
+    // chrome's controllers strip. Setting the other seat to a persona is "who
+    // am I playing against"; leaving both human is hot-seat.
+    for (const pid of [0, 1] as PlayerId[]) {
+      const row = document.createElement('label');
+      row.className = 'tray-setup-row';
+      const tag = document.createElement('span');
+      tag.className = 'tray-setup-label';
+      tag.dataset.player = String(pid);
+      tag.textContent = PLAYER_NAMES[pid].toUpperCase();
+      const sel = document.createElement('select');
+      sel.className = 'tray-select';
+      sel.dataset.trayAi = String(pid);
+      for (const c of AI_CHOICES) {
+        const opt = document.createElement('option');
+        opt.value = c;
+        opt.textContent = c[0]!.toUpperCase() + c.slice(1);
+        sel.appendChild(opt);
+      }
+      sel.value = deps.aiDriver.getPlayerAI(pid);
+      sel.addEventListener('change', () => {
+        deps.aiDriver.setPlayerAI(pid, sel.value as AIChoice);
+      });
+      row.append(tag, sel);
+      setup.appendChild(row);
+    }
+
+    body.append(grid, setup, hint);
 
     const close = makeBtn('CLOSE', 'ghost');
     close.dataset.trayTool = 'close';
@@ -721,15 +802,40 @@ export function createTray(deps: TrayDeps): Tray {
       render();
     });
     actions.appendChild(close);
-    return 'Save, load, mute or restart the match';
+    return 'Save or load, pick the map, choose who plays each side';
   }
 
   // ─────────────────────── Measured board inset ────────────────────────────
   // Declared ahead of `render` (which calls it on every pass) so the binding is
   // initialised before the first synchronous render below.
+  //
+  // The tray's height varies per input node — an idle placeholder, a unit card,
+  // a full attack forecast, a 14-row build sheet — and forwarding every one of
+  // those into the camera band made the board re-clamp (visibly JUMP) on every
+  // tap. So the inset contract is: only the BASELINE tray — the idle node, no
+  // tools sheet, no presented panel, no winner takeover — reserves board space.
+  // Everything taller is an overlay that temporarily covers the bottom of the
+  // board instead of moving it. The board is fully pannable, so nothing is ever
+  // out of reach while a tall state is up.
+  //
+  // Baseline-ness is checked LIVE (not captured at render time) because the
+  // ResizeObserver fires after layout, by which point the machine may already
+  // have moved on; measuring a non-idle DOM against the idle contract would
+  // smuggle a transient height into the band. Rotation/resize while a tall
+  // state is up therefore keeps the previous baseline until the tray next
+  // settles on idle — a stale-but-stable band beats a jumping one.
   let lastBottom = -1;
+  function atBaseline(): boolean {
+    return (
+      presented === null &&
+      !toolsOpen &&
+      deps.emitter.getState().winner === null &&
+      deps.input.getState().kind === 'idle'
+    );
+  }
   function reportInset(): void {
     if (!deps.onInsetsChange) return;
+    if (!atBaseline()) return;
     const b = Math.round(panel.offsetHeight);
     if (b === lastBottom) return;
     lastBottom = b;
@@ -1177,6 +1283,41 @@ function ensureStyle(): void {
 }
 .tray-tools .tray-btn { min-height: 48px; }
 .tray-tools .tray-btn.off { color: var(--ink-faint); }
+
+/* ── Match setup (map + controllers) ── */
+.tray-setup { display: flex; flex-direction: column; gap: 8px; }
+.tray-setup-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  min-height: 48px;
+  padding: 4px 12px;
+}
+.tray-setup-label {
+  flex: none;
+  width: 86px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  color: var(--ink-dim);
+}
+.tray-setup-label[data-player="0"] { color: var(--p1); }
+.tray-setup-label[data-player="1"] { color: var(--p2); }
+.tray-select {
+  flex: 1;
+  min-width: 0;
+  min-height: 38px;
+  background: var(--panel-2);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  color: var(--ink);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px;
+  padding: 0 10px;
+}
 
 /* ── Match concluded takeover ── */
 .tray-complete {

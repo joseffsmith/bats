@@ -406,7 +406,10 @@ async function main(): Promise<void> {
   if (mobileMode) {
     // Two independent measurements, one inset call. Seeded from the CSS
     // contract (44px strip) so the very first frame — before either observer
-    // has ticked — already reserves a plausible band.
+    // has ticked — already reserves a plausible band. The tray only ever
+    // reports its BASELINE (idle) height — taller transient states overlay the
+    // board rather than re-banding the camera (see tray.ts `reportInset`), so
+    // the board never jumps when the bottom section reflows.
     let insetTop = 44;
     let insetBottom = 0;
     const applyInsets = (): void => {

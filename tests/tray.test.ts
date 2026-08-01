@@ -72,10 +72,12 @@ function makeInputStub(emitter: Emitter): InputStub {
   };
 }
 
-function stubAIDriver(locked = false): AIDriver {
+type AISet = { pid: number; choice: string };
+
+function stubAIDriver(locked = false, sets: AISet[] = []): AIDriver {
   return {
     getPlayerAI: () => 'human',
-    setPlayerAI: () => {},
+    setPlayerAI: (pid: number, choice: string) => sets.push({ pid, choice }),
     inputLocked: () => locked,
     tick: () => {},
     busy: () => false,
@@ -136,6 +138,7 @@ type Mounted = {
   tray: Tray;
   insets: number[];
   dispatched: Action[];
+  aiSets: AISet[];
 };
 
 function mount(opts: { locked?: boolean; state?: GameState } = {}): Mounted {
@@ -147,17 +150,18 @@ function mount(opts: { locked?: boolean; state?: GameState } = {}): Mounted {
   });
   const stub = makeInputStub(emitter);
   const insets: number[] = [];
+  const aiSets: AISet[] = [];
   const tray = createTray({
     parent: document.getElementById('app')!,
     emitter,
     input: stub.input,
-    aiDriver: stubAIDriver(opts.locked ?? false),
+    aiDriver: stubAIDriver(opts.locked ?? false, aiSets),
     animQueue: stubAnimQueue(),
     audio: stubAudio(),
     sprites: stubSprites(),
     onInsetsChange: (b) => insets.push(b),
   });
-  return { emitter, stub, tray, insets, dispatched };
+  return { emitter, stub, tray, insets, dispatched, aiSets };
 }
 
 function q<T extends HTMLElement = HTMLElement>(sel: string): T {
@@ -608,7 +612,7 @@ describe('tray — tools sheet + lifecycle', () => {
       (t) => (t as HTMLElement).dataset.trayTool,
     );
     expect(tools).toEqual(['save', 'load', 'sound', 'restart', 'close']);
-    // Replay / map picker / fog toggle stay desktop-only.
+    // Replay / fog toggle stay desktop-only.
     expect(document.querySelector('[data-tray-tool="replay"]')).toBeNull();
 
     q('[data-tray-tool="sound"]').click();
@@ -617,6 +621,42 @@ describe('tray — tools sheet + lifecycle', () => {
     q('[data-tray-tool="close"]').click();
     expect(q('.tray').dataset.traySheet).toBeUndefined();
     expect(document.querySelector('.tray-placeholder')).not.toBeNull();
+  });
+
+  it('tools sheet: map picker + per-seat controllers (who you play against)', () => {
+    const { aiSets } = mount();
+    q('[data-tray-tools]').click();
+
+    // Map picker: every skirmish board, the loaded one selected (no ?map= in
+    // the jsdom URL → duel, the default).
+    const mapSel = q<HTMLSelectElement>('[data-tray-map]');
+    expect(Array.from(mapSel.options).map((o) => o.value)).toEqual([
+      'duel',
+      'crossroads',
+      'island_hop',
+      'canyon',
+      'highlands',
+      'armada',
+    ]);
+    expect(mapSel.value).toBe('duel');
+
+    // Controller pickers: one per seat, seeded from the driver, and a change
+    // goes straight back through it — no reload, same as desktop's strip.
+    const p0 = q<HTMLSelectElement>('[data-tray-ai="0"]');
+    const p1 = q<HTMLSelectElement>('[data-tray-ai="1"]');
+    expect(p0.value).toBe('human');
+    expect(Array.from(p1.options).map((o) => o.value)).toEqual([
+      'human',
+      'random',
+      'utility',
+      'aggressor',
+      'turtle',
+      'economist',
+      'balanced',
+    ]);
+    p1.value = 'balanced';
+    p1.dispatchEvent(new Event('change'));
+    expect(aiSets).toEqual([{ pid: 1, choice: 'balanced' }]);
   });
 
   it('an input transition closes the tools sheet', () => {
@@ -633,6 +673,45 @@ describe('tray — tools sheet + lifecycle', () => {
     // real pixel value comes from the ResizeObserver in a browser.
     expect(insets.length).toBeGreaterThanOrEqual(1);
     expect(insets[0]).toBe(0);
+  });
+
+  it('only the idle baseline height reaches the board inset (overlay contract)', () => {
+    const { insets, stub, emitter } = mount();
+    // jsdom does no layout — drive the measurement by hand so the baseline
+    // gate, not the same-value no-op guard, is what these assertions exercise.
+    let height = 120;
+    Object.defineProperty(q('.tray'), 'offsetHeight', { get: () => height });
+
+    stub.set({ kind: 'idle' });
+    expect(insets.at(-1)).toBe(120);
+    const reported = insets.length;
+
+    // A taller transient state must NOT re-band the board — it overlays it.
+    height = 260;
+    stub.set({
+      kind: 'unit-selected',
+      unit: unitOf(emitter.getState(), 0),
+      reachable: [],
+    });
+    expect(insets.length).toBe(reported);
+    expect(insets.at(-1)).toBe(120);
+
+    // The tools sheet is a transient too, even though the node stays idle.
+    // (Heights flip alongside the transitions the same way a browser re-layout
+    // would — render() rebuilds the DOM synchronously before measuring.)
+    height = 120;
+    stub.set({ kind: 'idle' });
+    q('[data-tray-tools]').click();
+    height = 300;
+    stub.set({ kind: 'idle' });
+    expect(insets.at(-1)).toBe(120);
+
+    // Back to a settled idle tray: the baseline re-reports. (The height flips
+    // before the click because render() rebuilds the idle DOM synchronously —
+    // the browser measurement always sees the settled layout.)
+    height = 132;
+    q('[data-tray-tool="close"]').click();
+    expect(insets.at(-1)).toBe(132);
   });
 
   it('destroy() removes the tray and stops re-rendering', () => {
