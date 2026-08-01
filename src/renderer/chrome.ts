@@ -28,6 +28,13 @@ import { loadMap } from '../engine/data/loader';
 import { MAPS, MAP_NAMES, mapLabel, resolveMapName } from './maps';
 import type { MapName } from './maps';
 import { log } from '../engine/core/logger';
+import {
+  ADJUDICATED_EYEBROW,
+  adjudicate,
+  adjudicationDetail,
+  adjudicationTitle,
+  stalemateReached,
+} from './adjudication';
 
 /** Breathing gap (CSS px) added to each measured chrome height so the board
  *  never butts flush against the DOM bars. */
@@ -63,10 +70,20 @@ export type ChromeDeps = {
   /** Live-match capture (main.ts). Optional so chrome tests keep working;
    *  when present the toolshelf grows a "Copy log" tool. */
   replayCapture?: ReplayCapture;
+  /** Enforce the skirmish day cap (src/renderer/adjudication.ts): past day 60
+   *  a stand-off is adjudicated and the winner overlay reports the verdict.
+   *  Defaults to true — main.ts passes `false` for campaign missions, which
+   *  carry their own `defeat.dayLimit`. */
+  adjudicateStalemate?: boolean;
 };
 
 export function createChrome(deps: ChromeDeps): Chrome {
   ensureStyle();
+
+  // Skirmish stalemate rule. Read once at mount: whether this shell is hosting
+  // a campaign mission is fixed for the life of the page.
+  const capOn = deps.adjudicateStalemate ?? true;
+  const capped = (state: GameState): boolean => capOn && stalemateReached(state);
 
   const root = document.createElement('div');
   root.className = 'chrome-root';
@@ -98,6 +115,7 @@ export function createChrome(deps: ChromeDeps): Chrome {
     emitter: deps.emitter,
     aiDriver: deps.aiDriver,
     animQueue: deps.animQueue,
+    capped,
   });
 
   bottom.appendChild(toolshelf.root);
@@ -107,7 +125,9 @@ export function createChrome(deps: ChromeDeps): Chrome {
   // Winner banner — a modal-style overlay that mounts when the game ends.
   // Lives in DOM (not canvas) so it can capture clicks even when the input
   // state machine has locked canvas events because `state.winner !== null`.
-  const winner = createWinnerOverlay();
+  // It doubles as the day-cap adjudication surface (see `capped` above), where
+  // there is no `state.winner` and the scrim itself does the blocking.
+  const winner = createWinnerOverlay(capped);
   root.appendChild(winner.root);
 
   // Floating Cancel chip — a discoverable "escape hatch" out of any non-idle
@@ -537,6 +557,9 @@ type ActionsDeps = {
   emitter: Emitter;
   aiDriver: AIDriver;
   animQueue: AnimationQueue;
+  /** True once the skirmish day cap has adjudicated the match. Treated exactly
+   *  like `state.winner !== null` here — the match is over, the button is dead. */
+  capped: (state: GameState) => boolean;
 };
 
 type Actions = {
@@ -598,7 +621,7 @@ function createActions(deps: ActionsDeps): Actions {
   endTurn.innerHTML = 'End Turn <span class="kbd-ret">↵</span>';
   endTurn.addEventListener('click', () => {
     const state = deps.emitter.getState();
-    if (state.winner !== null) return;
+    if (state.winner !== null || deps.capped(state)) return;
     // Same turn-steal guard as the Enter keybind: while the AI holds input lock
     // it is mid-plan, and while animations are settling the board is between
     // states. A click in either window would flip currentPlayer and let the
@@ -619,10 +642,12 @@ function createActions(deps: ActionsDeps): Actions {
     const remaining = owned.filter((u) => !u.hasActed).length;
     movesV.innerHTML = `<em>${remaining}</em> / ${owned.length}`;
     cluster.dataset.player = String(current);
-    // Disable when the match is over, and also during an AI turn: the click
-    // handler is inert then (see its guard), so the button must read as
-    // disabled rather than falsely inviting a click.
-    const disabled = state.winner !== null || deps.aiDriver.inputLocked(state);
+    // Disable when the match is over (won outright OR adjudicated at the day
+    // cap), and also during an AI turn: the click handler is inert then (see
+    // its guard), so the button must read as disabled rather than falsely
+    // inviting a click.
+    const disabled =
+      state.winner !== null || deps.capped(state) || deps.aiDriver.inputLocked(state);
     endTurn.disabled = disabled;
     endTurn.classList.toggle('disabled', disabled);
   }
@@ -637,7 +662,19 @@ type WinnerOverlay = {
   update(state: GameState): void;
 };
 
-function createWinnerOverlay(): WinnerOverlay {
+/**
+ * The match-over scrim. Two outcomes share it:
+ *
+ *   - a real win — `state.winner` is set by the engine, the eyebrow reads
+ *     "Match Concluded", and Dismiss is offered so the player can study the
+ *     final board (canvas input is already dead via `state.winner`);
+ *   - a day-cap adjudication — `state.winner` is still null (no rule was
+ *     broken), so the eyebrow reads "Adjudicated" and Dismiss is WITHHELD:
+ *     the fixed, pointer-events-auto scrim is doing half the input blocking
+ *     here, and dismissing it would hand the board back after the match had
+ *     been called. See src/renderer/adjudication.ts.
+ */
+function createWinnerOverlay(capped: (state: GameState) => boolean): WinnerOverlay {
   const root = document.createElement('div');
   root.className = 'winner-overlay';
   root.hidden = true;
@@ -681,14 +718,28 @@ function createWinnerOverlay(): WinnerOverlay {
   root.appendChild(dialog);
 
   function update(state: GameState): void {
-    if (state.winner === null) {
+    if (state.winner === null && !capped(state)) {
       root.hidden = true;
       return;
     }
     root.hidden = false;
-    root.dataset.player = String(state.winner);
-    title.textContent = `${PLAYER_NAMES[state.winner]} victorious`;
-    subtitle.textContent = `Player ${state.winner + 1} captured the field on day ${dayOf(state.turn)}.`;
+    if (state.winner !== null) {
+      delete root.dataset.adjudicated;
+      dismiss.hidden = false;
+      root.dataset.player = String(state.winner);
+      eyebrow.textContent = 'Match Concluded';
+      title.textContent = `${PLAYER_NAMES[state.winner]} victorious`;
+      subtitle.textContent = `Player ${state.winner + 1} captured the field on day ${dayOf(state.turn)}.`;
+      return;
+    }
+    const verdict = adjudicate(state);
+    root.dataset.adjudicated = '';
+    dismiss.hidden = true;
+    if (verdict === 'draw') delete root.dataset.player;
+    else root.dataset.player = String(verdict);
+    eyebrow.textContent = ADJUDICATED_EYEBROW;
+    title.textContent = adjudicationTitle(verdict, PLAYER_NAMES);
+    subtitle.textContent = adjudicationDetail(verdict);
   }
 
   return { root, update };
@@ -1127,6 +1178,10 @@ function ensureStyle(): void {
   transition: all 0.15s ease;
   pointer-events: auto;
 }
+/* The display: inline-flex above outranks the UA sheet's [hidden] rule, so
+   hiding a .tool needs saying explicitly — the winner overlay withholds its
+   Dismiss button that way when the result is an adjudication. */
+.tool[hidden] { display: none; }
 .tool:hover {
   border-color: var(--gold-dim);
   color: var(--ink);
@@ -1417,6 +1472,12 @@ function ensureStyle(): void {
   line-height: 1.1;
   color: var(--ink);
   font-variation-settings: 'opsz' 144, 'SOFT' 30;
+}
+/* Adjudicated draw: no side to accent, so the dialog takes the neutral gold
+   rule rather than sitting borderless. An adjudicated WIN keeps its player
+   accent above — hence the :not([data-player]). */
+.winner-overlay[data-adjudicated]:not([data-player]) .winner-dialog {
+  border-top: 3px solid var(--gold-dim);
 }
 .winner-overlay[data-player="0"] .winner-title { color: var(--p1); }
 .winner-overlay[data-player="1"] .winner-title { color: var(--p2); }

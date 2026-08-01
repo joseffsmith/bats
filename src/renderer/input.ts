@@ -229,6 +229,13 @@ export function createInputController(
   animQueue: AnimationQueue,
   opts?: {
     endTurnAllowed?: () => boolean;
+    /** Extra "the match is over" predicate, ORed into the engine's own
+     *  `state.winner !== null` guard. The engine has no turn cap (win.ts is
+     *  HQ-capture-or-rout only), so the shells' day-cap adjudication
+     *  (src/renderer/adjudication.ts) has no winner to stamp — it reports its
+     *  verdict through this instead, and the board goes as dead as a real win
+     *  makes it. Defaults to false, so every existing call site is unchanged. */
+    matchConcluded?: () => boolean;
     coarsePointer?: boolean;
     /** Which tap grammar tile clicks route through. Defaults to 'desktop', so
      *  nothing about the existing behaviour changes until a caller opts in. */
@@ -244,6 +251,7 @@ export function createInputController(
   // main.ts passes a predicate that refuses while an AI turn is in progress or
   // animations are mid-flight, so a stray Enter can't steal the AI's turn.
   const endTurnAllowed = opts?.endTurnAllowed ?? ((): boolean => true);
+  const matchConcluded = opts?.matchConcluded ?? ((): boolean => false);
   // Coarse-pointer (touch) mode toggles the two-tap attack confirm: the first
   // tap on an enemy previews the damage, a second tap on the SAME enemy commits.
   // Detected once at construction so mid-session it never flips under us; tests
@@ -563,7 +571,7 @@ export function createInputController(
       return;
     }
     const state = emitter.getState();
-    if (state.winner !== null) return;
+    if (state.winner !== null || matchConcluded()) return;
 
     // Menus are DOM overlays sitting ABOVE the canvas (menus.ts), so a click on
     // a menu entry is swallowed there and never reaches this canvas handler —
@@ -1168,6 +1176,7 @@ export function createInputController(
     else if (
       e.key === 'Enter' &&
       emitter.getState().winner === null &&
+      !matchConcluded() &&
       endTurnAllowed()
     ) {
       emitter.dispatch({ type: 'END_TURN' });

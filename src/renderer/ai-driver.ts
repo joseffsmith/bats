@@ -12,7 +12,9 @@
 //   human can see what happened.
 // - Between dispatches we enqueue the matching renderer animations so the
 //   move shows on-screen.
-// - If `state.winner !== null`, the driver does nothing.
+// - If `state.winner !== null` — or the caller's `matchConcluded` predicate
+//   says the match has been adjudicated at the skirmish day cap — the driver
+//   does nothing.
 
 import type { Action, GameState, PlayerId } from '../engine/core/types';
 import { createRng } from '../engine/core/rng';
@@ -64,6 +66,11 @@ export type AIDriverDeps = {
   now?: () => number;
   /** When true, AI plans under fog-of-war (filtered enemy reads). */
   fog?: boolean;
+  /** Extra "the match is over" predicate, ORed into the `state.winner` guard.
+   *  main.ts wires the skirmish day cap (src/renderer/adjudication.ts) here:
+   *  once a stand-off has been adjudicated the AI must stop playing, or it
+   *  would keep taking turns behind the verdict overlay. Defaults to false. */
+  matchConcluded?: () => boolean;
 };
 
 export type AIDriver = {
@@ -84,6 +91,7 @@ export function createAIDriver(deps: AIDriverDeps): AIDriver {
   const seed = deps.seed ?? Date.now();
   const rng: Rng = createRng(seed);
   const fog = deps.fog ?? false;
+  const matchConcluded = deps.matchConcluded ?? ((): boolean => false);
 
   const choices: Record<PlayerId, AIChoice> = {
     0: deps.initial?.[0] ?? 'human',
@@ -107,7 +115,7 @@ export function createAIDriver(deps: AIDriverDeps): AIDriver {
 
   function planTurnIfNeeded(): void {
     const state = deps.emitter.getState();
-    if (state.winner !== null) return;
+    if (state.winner !== null || matchConcluded()) return;
     if (pendingPlan.length > 0) return;
     const player = state.currentPlayer;
     const choice = choices[player];
@@ -123,6 +131,13 @@ export function createAIDriver(deps: AIDriverDeps): AIDriver {
 
   function dispatchNext(): void {
     if (pendingPlan.length === 0) return;
+    // The day cap can trip mid-plan (the AI's own END_TURN is what rolls the
+    // day over). Drop the remainder rather than playing on under the verdict.
+    if (matchConcluded()) {
+      pendingPlan = [];
+      planOwner = null;
+      return;
+    }
     // Backstop against ANY external END_TURN source (human Enter key, the End
     // Turn button) that flipped currentPlayer out from under a plan we're still
     // draining. Without this guard the stale unit actions merely get rejected

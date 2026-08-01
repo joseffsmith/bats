@@ -21,9 +21,12 @@ import { runMatch, isAIName, AI_NAMES } from './run-match';
 import type { AIName, AISpec, RunMatchResult } from './run-match';
 import { loadAIWeights } from '../engine/data/loader';
 import type { AIWeights } from '../engine/data/loader';
-import { UNITS } from '../engine/data';
 import { setLogEnabled } from '../engine/core/logger';
-import type { GameState, PlayerId } from '../engine/core/types';
+import type { PlayerId } from '../engine/core/types';
+// The tie-break ladder below, lifted into engine/queries so the live shells
+// score a stand-off exactly the way this table does — see
+// src/engine/queries/adjudicate.ts.
+import { adjudicate as adjudicateState } from '../engine/queries/adjudicate';
 
 // ─────────────────────────── Public types ────────────────────────────────────
 
@@ -56,35 +59,11 @@ export type TournamentReport = {
 
 // ─────────────────────────── Adjudication ────────────────────────────────────
 
-function totalUnitCost(state: GameState, player: PlayerId): number {
-  let n = 0;
-  for (const u of Object.values(state.units)) {
-    if (u.owner === player) n += UNITS[u.type].cost * (u.hp / 100);
-  }
-  return n;
-}
-
-function hqOwnedBy(state: GameState, player: PlayerId): number {
-  let n = 0;
-  for (const row of state.map) {
-    for (const tile of row) {
-      if (tile.terrain === 'hq' && tile.owner === player) n += 1;
-    }
-  }
-  return n;
-}
-
+/** The shared ladder, relabelled into this harness's `p0` / `p1` vocabulary. */
 function adjudicate(result: RunMatchResult): 'p0' | 'p1' | 'draw' {
-  if (result.winner === 0) return 'p0';
-  if (result.winner === 1) return 'p1';
-  // No winner -> turn cap. Tiebreak on HQ count, then unit cost.
-  const hq0 = hqOwnedBy(result.finalState, 0);
-  const hq1 = hqOwnedBy(result.finalState, 1);
-  if (hq0 !== hq1) return hq0 > hq1 ? 'p0' : 'p1';
-  const c0 = totalUnitCost(result.finalState, 0);
-  const c1 = totalUnitCost(result.finalState, 1);
-  if (Math.abs(c0 - c1) > 1) return c0 > c1 ? 'p0' : 'p1';
-  return 'draw';
+  const verdict = adjudicateState(result.finalState);
+  if (verdict === 'draw') return 'draw';
+  return verdict === 0 ? 'p0' : 'p1';
 }
 
 // ─────────────────────────── Runner ──────────────────────────────────────────

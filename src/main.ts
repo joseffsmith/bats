@@ -44,6 +44,7 @@ import { createSpriteCache } from './renderer/sprites';
 import { createTerrainCache } from './renderer/terrain';
 import { createAudio } from './renderer/audio';
 import { createChrome } from './renderer/chrome';
+import { stalemateReached } from './renderer/adjudication';
 import { createHandoff } from './renderer/handoff';
 import { runEditor } from './renderer/editor';
 import { installDebugHook } from './renderer/debug-hook';
@@ -325,12 +326,26 @@ async function main(): Promise<void> {
     p1: initialAI[1],
   });
 
+  // Skirmish stalemate rule (src/renderer/adjudication.ts): past day 60 a live
+  // stand-off is adjudicated by the shell, since the engine deliberately has no
+  // turn cap. Campaign missions are excluded — they carry their own
+  // `defeat.dayLimit`, enforced by the mission tracker, and a second clock on
+  // top of it would only be a way for the two to disagree.
+  //
+  // Threaded into every surface that can still advance a concluded match: the
+  // input controller (tile clicks / Enter), the AI driver (it would otherwise
+  // keep playing turns behind the verdict), and both shells (which present it).
+  const adjudicateStalemate = mission === null;
+  const stalemateConcluded = (): boolean =>
+    adjudicateStalemate && stalemateReached(emitter.getState());
+
   const aiDriver = createAIDriver({
     emitter,
     animQueue,
     initial: initialAI,
     pauseMs: 250,
     fog: fogConfig.on,
+    matchConcluded: stalemateConcluded,
     ...(seed !== undefined ? { seed } : {}),
   });
 
@@ -345,6 +360,10 @@ async function main(): Promise<void> {
       !aiDriver.inputLocked(emitter.getState()) &&
       !animQueue.busy() &&
       !handoffActive(),
+    // The adjudicated board is dead: no tile clicks, no Enter-to-end-turn. The
+    // desktop scrim would swallow clicks anyway, but mobile has no scrim by
+    // design (tray.ts), so the lock belongs here where both shells share it.
+    matchConcluded: stalemateConcluded,
     // Mobile taps go through select → stage → commit (input.ts); desktop keeps
     // the click machine unchanged. Spread rather than passing `undefined` —
     // exactOptionalPropertyTypes treats those as different things.
@@ -437,6 +456,7 @@ async function main(): Promise<void> {
         insetBottom = b;
         applyInsets();
       },
+      adjudicateStalemate,
     });
     applyInsets();
     log('render', 'mobile shell mounted', { muted: audio.isMuted() });
@@ -457,6 +477,7 @@ async function main(): Promise<void> {
       // Floating Cancel chip → drop the current input selection/menu/target.
       onCancel: () => input.cancel(),
       replayCapture,
+      adjudicateStalemate,
     });
     log('render', 'chrome mounted', { muted: audio.isMuted() });
 
@@ -470,6 +491,7 @@ async function main(): Promise<void> {
       fogOn: fogConfig.on && fogConfig.viewerOverride === null,
       bothHuman: () =>
         aiDriver.getPlayerAI(0) === 'human' && aiDriver.getPlayerAI(1) === 'human',
+      matchConcluded: stalemateConcluded,
     });
     handoffActive = (): boolean => handoff.isActive();
 
