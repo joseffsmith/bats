@@ -159,7 +159,7 @@ describe('mobile grammar — tap 1 selects or inspects, never commits', () => {
     expect(h.actions).toEqual([]);
   });
 
-  it('tapping an enemy opens enemy-inspect with the threat overlay off', () => {
+  it('tapping an enemy opens enemy-inspect with the threat overlay ON', () => {
     const h = mount(skirmish());
     const enemy = h.unit(1);
     h.tap({ x: 3, y: 1 });
@@ -167,28 +167,31 @@ describe('mobile grammar — tap 1 selects or inspects, never commits', () => {
     expect(s.kind).toBe('enemy-inspect');
     if (s.kind !== 'enemy-inspect') return;
     expect(s.unit.id).toBe(enemy.id);
-    expect(s.showThreat).toBe(false);
-    expect(h.input.getOverlay().attackRange).toBeUndefined();
+    // Threat is the default read: the tap asks "what can this thing hit".
+    expect(s.showThreat).toBe(true);
+    const ov = h.input.getOverlay();
+    expect(ov.attackRange?.length).toBeGreaterThan(0);
+    expect(ov.attackRangeBorder?.length).toBe(ov.attackRange?.length);
+    // The enemy infantry can walk to (2,1) and swing at our tile from there.
+    expect(ov.attackRange?.some((c) => c.x === 1 && c.y === 1)).toBe(true);
     expect(h.input.getOverlay().selected).toEqual({ x: 3, y: 1 });
     expect(h.actions).toEqual([]);
   });
 
-  it('toggleThreat paints (and un-paints) everything that enemy could hit', () => {
+  it('toggleThreat un-paints (and re-paints) everything that enemy could hit', () => {
     const h = mount(skirmish());
     h.tap({ x: 3, y: 1 });
+    h.input.toggleThreat();
+    const off = h.input.getState();
+    expect(off.kind === 'enemy-inspect' && off.showThreat).toBe(false);
+    expect(h.input.getOverlay().attackRange).toBeUndefined();
+
     h.input.toggleThreat();
     const on = h.input.getState();
     expect(on.kind === 'enemy-inspect' && on.showThreat).toBe(true);
     const ov = h.input.getOverlay();
     expect(ov.attackRange?.length).toBeGreaterThan(0);
     expect(ov.attackRangeBorder?.length).toBe(ov.attackRange?.length);
-    // The enemy infantry can walk to (2,1) and swing at our tile from there.
-    expect(ov.attackRange?.some((c) => c.x === 1 && c.y === 1)).toBe(true);
-
-    h.input.toggleThreat();
-    const off = h.input.getState();
-    expect(off.kind === 'enemy-inspect' && off.showThreat).toBe(false);
-    expect(h.input.getOverlay().attackRange).toBeUndefined();
     expect(h.actions).toEqual([]);
   });
 
