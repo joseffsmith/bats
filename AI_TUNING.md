@@ -766,6 +766,113 @@ the AI is mildly biased toward scouting before committing.
   the AI paralyzed (refused to move into any fog tile); at 2 it scouts
   appropriately without freezing.
 
+### Cross-map fog sweep — do the duel thresholds hold?
+
+Measurement only; nothing was re-tuned. Harness:
+`scripts/fog-sweep.ts` (rerunnable, `--help` for flags), 6 maps × 3
+ladder matchups × 2 sides × {fog off, fog on} = 144 matches,
+`maxTurns 200`, adjudication byte-identical to
+`tests/fog-acceptance.test.ts`. Wall-clock 1136 s.
+
+```
+npx tsx scripts/fog-sweep.ts
+```
+
+**Answer: yes — fog itself is neutral on every map. But the ≥70 % bar the
+duel gate pins is only met on duel, and it fails on the other five with
+fog OFF as well.** The shortfalls are pre-existing map/side effects, not
+fog effects, so `PHANTOM_THREAT_PER_HIDDEN_TILE` is the wrong lever for
+them.
+
+#### Method note: the seed axis is inert
+
+`tier1`/`tier2`/`tier3` and every persona never read `ctx.rng` — only
+`random` and the scripted probes do. `runMatch` still derives per-player
+RNGs from `seed`, but for a utility-vs-utility pairing nothing consumes
+them, so **every seed replays a byte-identical action log** (verified,
+`npx tsx scripts/fog-sweep.ts --verify-seeds`: seeds 1–5 all hash
+`e748ca89`).
+
+Consequence for reading the existing gate: `fog-acceptance.test.ts`'s
+"≥7/10 over seeds 1..10" is ten replays of **one** match and can only
+ever score 10/10 or 0/10. The real variation axes are map, matchup and
+side — which is what this sweep enumerates, one match per cell. Note
+`tests/fog-of-war.test.ts` only checks *same*-seed reproducibility, so
+this is not a regression, just a property nobody had measured.
+
+#### Per-map results
+
+W/L/D from the stronger AI's point of view; `p0`/`p1` is the slot it
+took; `*` = hit the turn cap and was decided on the tie-break.
+
+| map | matchup | fog-off (p0/p1) | fog-on (p0/p1) | ordering |
+| --- | --- | --- | --- | --- |
+| duel | tier3 vs tier1 | W/W (2/2) | W/W (2/2) | stable |
+| duel | tier3 vs tier2 | W/W (2/2) | L/L (0/2) | **FLIP** |
+| duel | tier2 vs tier1 | W/L (1/2) | W/L (1/2) | stable |
+| crossroads | tier3 vs tier1 | W/L (1/2) | W/L (1/2) | stable |
+| crossroads | tier3 vs tier2 | W/L (1/2) | W/L (1/2) | stable |
+| crossroads | tier2 vs tier1 | W/L (1/2) | W/L (1/2) | stable |
+| canyon | tier3 vs tier1 | W/L (1/2) | W/L (1/2) | stable |
+| canyon | tier3 vs tier2 | L/W (1/2) | L/W (1/2) | stable |
+| canyon | tier2 vs tier1 | W/L (1/2) | W/L (1/2) | stable |
+| highlands | tier3 vs tier1 | L/L (0/2) | L/W (1/2) | stable |
+| highlands | tier3 vs tier2 | L/L (0/2) | L\*/W (1/2) | stable |
+| highlands | tier2 vs tier1 | W/L (1/2) | W/L (1/2) | stable |
+| armada | tier3 vs tier1 | L\*/L\* (0/2) | L\*/L\* (0/2) | stable |
+| armada | tier3 vs tier2 | L\*/L\* (0/2) | L\*/L\* (0/2) | stable |
+| armada | tier2 vs tier1 | L\*/W\* (1/2) | W\*/W\* (2/2) | stable |
+| island_hop | tier3 vs tier1 | L\*/L\* (0/2) | L\*/L\* (0/2) | stable |
+| island_hop | tier3 vs tier2 | L\*/L\* (0/2) | L\*/L\* (0/2) | stable |
+| island_hop | tier2 vs tier1 | W\*/L\* (1/2) | W\*/L\* (1/2) | stable |
+
+#### Verdict per map — the pinned pair (tier3 vs tier1)
+
+| map | fog-off | fog-on | tier3-as-p0, fog | ≥70 % bar | fog attribution |
+| --- | --- | --- | --- | --- | --- |
+| duel | 100 % | 100 % | WIN | **holds** | neutral |
+| crossroads | 50 % | 50 % | WIN | not met | neutral |
+| canyon | 50 % | 50 % | WIN | not met | neutral |
+| highlands | 0 % | 50 % | LOSS | not met | fog *helps* (+50 pp) |
+| armada | 0 % | 0 % | LOSS | not met | neutral |
+| island_hop | 0 % | 0 % | LOSS | not met | neutral |
+
+#### Interpretation
+
+- **Fog is not the variable.** On all six maps the fog-on result matches
+  or beats its own fog-off control. On highlands fog *improves* tier3 vs
+  tier1 (0/2 → 1/2), most likely the `MOUNTAIN_VISION_BONUS = 3` payoff
+  on a mountain-dense map. Nothing here argues for changing
+  `PHANTOM_THREAT_PER_HIDDEN_TILE`.
+- **The duel gate is p0-only, and that is doing a lot of work.** On
+  crossroads and canyon tier3 beats tier1 from p0 and loses from p1,
+  fog on and fog off alike. `tests/ai-tier3-vs-tier1.test.ts` passes on
+  crossroads for the same reason: it only ever seats tier3 on p0. The
+  50 % cells are a turn-order artifact that predates fog and is
+  invisible to both existing gates.
+- **The sea maps are the amphibious problem, not a fog problem.** Every
+  armada / island_hop tier3 cell hits the 200-turn cap and loses on
+  tie-break with fog off *and* on — the cap-stalemate already tracked
+  under "Phase 7 round 7 — amphibious AI" in `QUESTIONS.md`.
+- **One genuine fog-caused inversion: `duel`, tier3 vs tier2** (2/2
+  fog-off → 0/2 fog-on). Under fog, tier2 beats tier3 from both sides on
+  the one map the fog AI was tuned on. No test pins this rung, so it is
+  a finding rather than a failure — but it is the single cell in the
+  sweep where fog, not the map, changed the answer. Plausible reading:
+  tier3's role modulation commits units on ghost information that
+  tier2's plainer threat-map play does not act on. Worth a trace before
+  anyone treats the tier ladder as ordered under fog.
+- **The ladder is not strictly ordered even without fog.** `tier2 vs
+  tier1` is 1/2 on five of six maps with fog off. Read tier2 rungs as
+  diagnostic only.
+
+#### What this does NOT license
+
+The ≥70 % misses on 5 maps are **not** grounds to re-tune the fog
+constants — the fog-off controls fail identically. If anyone wants those
+numbers up, the levers are side-balance and the amphibious cap-stalemate,
+measured with a pre/post pair per §2 of the Runbook.
+
 ## Iteration 7 — amphibious AI (216 matches, 6 maps × 6 pairs × 6)
 
 Trigger: round 6 left `armada` and `island_hop` 100 % cap-stalemate
