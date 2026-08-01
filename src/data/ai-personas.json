@@ -6,7 +6,7 @@
       "weights": {
         "damageDealt": 1.2,
         "capture": 0.9,
-        "counterRisk": 0.7,
+        "counterRisk": 0.95,
         "futureThreat": 0.3,
         "positional": 0.4,
         "objective": 0.9
@@ -15,9 +15,9 @@
         "frontline": { "damageDealt": 1.5, "counterRisk": 0.8 }
       },
       "buildPolicy": {
-        "preferred": ["bomber", "cruiser", "tank", "fighter", "recon", "infantry"],
+        "preferred": ["bomber", "cruiser", "tank", "fighter", "infantry"],
         "avoid": ["artillery", "carrier"],
-        "infantryFloor": 3
+        "infantryFloor": 4
       }
     },
     {
