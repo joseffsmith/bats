@@ -14,7 +14,8 @@
 // Replays land in REPLAY_DIR (default /data/replays — a persistent volume in
 // prod, so they survive redeploys). Ingest is public, so it is bounded: body
 // capped at MAX_BODY bytes, per-IP hourly rate limit, and the first line must
-// parse as a JSON replay-log header.
+// parse as a JSON replay-log header. Disk is bounded too: only the newest
+// REPLAY_MAX replays are kept (see "Retention" below).
 
 import http from 'node:http';
 import { promises as fs, createReadStream } from 'node:fs';
@@ -26,6 +27,8 @@ const DIST = path.resolve(process.env.DIST_DIR ?? 'dist');
 const REPLAY_DIR = path.resolve(process.env.REPLAY_DIR ?? '/data/replays');
 const MAX_BODY = 2 * 1024 * 1024; // 2 MiB — a long match is ~100 KiB
 const RATE_LIMIT = 60; // POSTs per IP per hour
+const REPLAY_MAX = Number(process.env.REPLAY_MAX ?? 500); // newest N kept on disk
+const LIST_LIMIT = 200; // newest N returned by GET /api/replays
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -43,13 +46,24 @@ const MIME = {
 };
 
 // ── Rate limiting ────────────────────────────────────────────────────────────
-// Sliding one-hour window, pruned on each hit. Memory is bounded by the number
-// of distinct IPs POSTing within an hour, which nginx caps well before us.
-const hits = new Map(); // ip → number[] (timestamps, ms)
+// Sliding one-hour window. Timestamps are pruned on each hit, but that only
+// ever touches the IP in front of us — so entries for IPs that have gone quiet
+// are swept every RATE_SWEEP_MS. Without the sweep the Map would retain one
+// entry per IP ever seen, for the life of the process.
+const RATE_SWEEP_MS = 5 * 60_000;
+const hits = new Map(); // ip → number[] (timestamps, ms, ascending)
+let lastRateSweep = Date.now();
 
 function rateLimited(ip) {
   const now = Date.now();
   const windowStart = now - 3600_000;
+  if (now - lastRateSweep >= RATE_SWEEP_MS) {
+    lastRateSweep = now;
+    for (const [seen, times] of hits) {
+      // Ascending, so the last entry is the newest hit from that IP.
+      if (times.length === 0 || times[times.length - 1] <= windowStart) hits.delete(seen);
+    }
+  }
   const list = (hits.get(ip) ?? []).filter((t) => t > windowStart);
   if (list.length >= RATE_LIMIT) {
     hits.set(ip, list);
@@ -64,6 +78,52 @@ function clientIp(req) {
   // Single trusted hop: host nginx sets X-Real-IP.
   const real = req.headers['x-real-ip'];
   return typeof real === 'string' && real.length > 0 ? real : req.socket.remoteAddress ?? '?';
+}
+
+// ── Retention ────────────────────────────────────────────────────────────────
+// Every finished browser game POSTs a replay, so the directory only ever grows.
+// Keep the newest REPLAY_MAX by mtime, deleting the overage; the sweep runs at
+// boot and after each successful ingest, and readdirs only when the live count
+// says we are over the cap. That count is also what /api/health reports, so the
+// happy path never touches the filesystem.
+let replayCount = 0;
+let sweeping = false;
+
+async function replayNames() {
+  return (await fs.readdir(REPLAY_DIR)).filter((n) => n.endsWith('.jsonl'));
+}
+
+async function pruneReplays() {
+  if (sweeping || replayCount <= REPLAY_MAX) return;
+  sweeping = true;
+  try {
+    const names = await replayNames();
+    replayCount = names.length; // the directory is the truth; resync
+    if (names.length <= REPLAY_MAX) return;
+    const stated = await Promise.all(
+      names.map(async (n) => ({
+        name: n,
+        mtime: (await fs.stat(path.join(REPLAY_DIR, n))).mtimeMs,
+      })),
+    );
+    stated.sort((a, b) => b.mtime - a.mtime); // newest first
+    let pruned = 0;
+    for (const { name } of stated.slice(REPLAY_MAX)) {
+      try {
+        await fs.unlink(path.join(REPLAY_DIR, name));
+        replayCount--;
+        pruned++;
+        console.log(`[retention] deleted ${name}`);
+      } catch (err) {
+        console.error(`[retention] could not delete ${name}`, err);
+      }
+    }
+    if (pruned > 0) {
+      console.log(`[retention] pruned ${pruned}, kept ${replayCount} (cap ${REPLAY_MAX})`);
+    }
+  } finally {
+    sweeping = false;
+  }
 }
 
 // ── Replay ingest ────────────────────────────────────────────────────────────
@@ -107,7 +167,9 @@ async function handleIngest(req, res) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const name = `${stamp}-${crypto.randomBytes(4).toString('hex')}.jsonl`;
   await fs.writeFile(path.join(REPLAY_DIR, name), text, 'utf8');
+  replayCount++;
   console.log(`[ingest] stored ${name} (${body.length} bytes)`);
+  await pruneReplays().catch((err) => console.error('[retention] sweep failed', err));
   res.writeHead(204).end();
 }
 
@@ -116,17 +178,16 @@ const REPLAY_NAME = /^[0-9TZ-]+-[0-9a-f]{8}\.jsonl$/;
 
 async function handleReplayGet(res, name) {
   if (name === '') {
-    const entries = await fs.readdir(REPLAY_DIR);
+    // The listing is the one endpoint that genuinely needs the directory, but
+    // it hands back only the newest LIST_LIMIT.
     const listing = await Promise.all(
-      entries
-        .filter((n) => n.endsWith('.jsonl'))
-        .map(async (n) => {
-          const st = await fs.stat(path.join(REPLAY_DIR, n));
-          return { name: n, size: st.size, mtime: st.mtime.toISOString() };
-        }),
+      (await replayNames()).map(async (n) => {
+        const st = await fs.stat(path.join(REPLAY_DIR, n));
+        return { name: n, size: st.size, mtime: st.mtime.toISOString() };
+      }),
     );
     listing.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
-    return sendJson(res, 200, listing);
+    return sendJson(res, 200, listing.slice(0, LIST_LIMIT));
   }
   if (!REPLAY_NAME.test(name)) return sendJson(res, 404, { error: 'not found' });
   return streamFile(res, path.join(REPLAY_DIR, name), '.jsonl', 'no-store');
@@ -183,8 +244,12 @@ const server = http.createServer((req, res) => {
   const p = url.pathname;
   const route = (async () => {
     if (p === '/api/health' && req.method === 'GET') {
-      const n = (await fs.readdir(REPLAY_DIR)).filter((f) => f.endsWith('.jsonl')).length;
-      return sendJson(res, 200, { ok: true, replays: n, sha: process.env.BUILD_SHA ?? null });
+      // replayCount is maintained by ingest/retention — no per-request readdir.
+      return sendJson(res, 200, {
+        ok: true,
+        replays: replayCount,
+        sha: process.env.BUILD_SHA ?? null,
+      });
     }
     if (p === '/api/replays' && req.method === 'POST') return handleIngest(req, res);
     if ((p === '/api/replays' || p.startsWith('/api/replays/')) && req.method === 'GET') {
@@ -204,6 +269,9 @@ const server = http.createServer((req, res) => {
 });
 
 await fs.mkdir(REPLAY_DIR, { recursive: true });
+replayCount = (await replayNames()).length;
+await pruneReplays();
 server.listen(PORT, () => {
   console.log(`[server] listening on :${PORT}, dist=${DIST}, replays=${REPLAY_DIR}`);
+  console.log(`[server] ${replayCount} replays on disk (cap ${REPLAY_MAX})`);
 });
