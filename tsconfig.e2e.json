@@ -1,0 +1,11 @@
+// Browser end-to-end project.
+//
+// vitest.e2e.config.ts transpiles the specs without checking them, so without
+// this project the whole e2e/ tree would never see the type-checker. `scripts`
+// is a root here because e2e/helpers.ts and e2e/global-setup.ts drive the app
+// through scripts/lib/browser-harness; `src` because the specs import engine and
+// renderer types directly. Wired into `npm run typecheck`.
+{
+  "extends": "./tsconfig.json",
+  "include": ["e2e", "src", "scripts"]
+}

@@ -3,11 +3,9 @@ WORKDIR /app
 ENV PUPPETEER_SKIP_DOWNLOAD=1
 COPY package.json package-lock.json ./
 RUN npm ci
-COPY tsconfig.json vite.config.ts index.html ./
+COPY tsconfig.json tsconfig.build.json vite.config.ts index.html ./
 COPY public ./public
 COPY src ./src
-COPY tests ./tests
-COPY scripts ./scripts
 # Stamped into replay-log headers (see vite.config.ts define).
 ARG BUILD_SHA=dev
 ENV BUILD_SHA=$BUILD_SHA
