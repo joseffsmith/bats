@@ -994,3 +994,30 @@ economist remains strongest.
 turtle-vs-balanced 100%; crossroads cap-stalemates; symmetric
 utility-vs-utility never terminates on duel (found same day via headless
 live-site run).
+
+---
+
+## Tooling baseline (pre-iteration-9)
+
+Wave-1 tooling merged (doctrine suite, probes, i8 benchmarks, replay miner,
+this runbook). Recorded before any iteration-9 tuning as the regression
+yardstick. Suite: 641/642 (the one failure is the documented tier3
+wall-clock flake; green solo). Benchmark mirror sanity: balanced vs
+balanced-i8 exactly 15-15 (50.0%) over 30 matches — plumbing is faithful.
+
+**Probe-gate matrix (10 seeds/side, duel+crossroads+canyon, bar 70%):**
+
+| persona   | probe-camper      | probe-kiter       | probe-rush |
+|-----------|-------------------|-------------------|------------|
+| aggressor | 66.7% (20-0-10)   | 73.3% (22-1-7)    | 100%       |
+| balanced  | 30.0% (9-0-21) ✗  | 23.3% (7-0-23) ✗  | 96.7%      |
+| economist | 13.3% (4-0-26) ✗  | 80.0% (24-0-6)    | 100%       |
+| turtle    | 10.0% (3-0-27) ✗  | 20.0% (6-4-20) ✗  | 100%       |
+
+6/12 cells under bar (aggressor-camper 66.7% also ✗), failures almost
+entirely DRAWS not losses — the shared weakness is closing out games, not
+losing them. Converges with: doctrine suite (8 expected-fails, all tagged
+FLIP: WP5 — distraction bug, oscillation, unfinished endgames), miner on
+the iteration-8 pilot logs (stalled units in 100% of matches, cap hits in
+33%), and the 725-turn utility mirror. The 70% bar stands — aggressor and
+economist prove it reachable.
