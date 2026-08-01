@@ -1,0 +1,8 @@
+node_modules
+dist
+coverage
+logs
+.git
+scripts
+plans
+*.md

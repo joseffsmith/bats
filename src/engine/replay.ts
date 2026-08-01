@@ -78,6 +78,10 @@ export type LogHeader = {
   p0?: string;
   p1?: string;
   startedAt?: string;
+  /** Browser-captured logs only (see renderer/replay-capture.ts). */
+  fog?: boolean;
+  sha?: string;
+  client?: string;
 };
 
 export type LogAction = {

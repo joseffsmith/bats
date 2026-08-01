@@ -1,6 +1,10 @@
 import { defineConfig, configDefaults } from 'vitest/config';
 
 export default defineConfig({
+  // Mirror vite.config.ts — renderer modules reference the build-time sha.
+  define: {
+    __BUILD_SHA__: JSON.stringify('test'),
+  },
   test: {
     environment: 'node',
     include: ['tests/**/*.test.ts'],

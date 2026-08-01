@@ -47,6 +47,11 @@ const MARGIN = 12;
 const MIN_TILE_SIZE = 16;
 const MAX_TILE_SIZE = 64;
 
+/** Sprites draw at this fraction of tile size — chunky BW-style art is
+ *  rendered noticeably larger than its tile so silhouettes pop above the grid
+ *  the way Battalion Wars / Days of Ruin units do. */
+const SPRITE_DRAW_SCALE = 1.5;
+
 /** Floor for the measured chrome insets: a mis-measured (near-zero) chrome
  *  height can't let the grid collide with the DOM bars. */
 const MIN_INSET = 40;
@@ -830,7 +835,9 @@ function drawGhosts(
       try {
         const variant = ghost.hp < 50 ? 'damaged' : 'clean';
         const img = sprites.get(ghost.type, ghost.owner, variant);
-        ctx.drawImage(img, p.x, p.y, ts, ts);
+        const drawSize = ts * SPRITE_DRAW_SCALE;
+        const drawOffset = (drawSize - ts) / 2;
+        ctx.drawImage(img, p.x - drawOffset, p.y - drawOffset, drawSize, drawSize);
         drewSprite = true;
       } catch {
         drewSprite = false;
@@ -936,7 +943,9 @@ function drawUnit(
     try {
       const variant = unit.hp < 50 ? 'damaged' : 'clean';
       const img = sprites.get(unit.type, unit.owner, variant);
-      ctx.drawImage(img, renderX, renderY, ts, ts);
+      const drawSize = ts * SPRITE_DRAW_SCALE;
+      const drawOffset = (drawSize - ts) / 2;
+      ctx.drawImage(img, renderX - drawOffset, renderY - drawOffset, drawSize, drawSize);
       drewSprite = true;
     } catch {
       drewSprite = false;

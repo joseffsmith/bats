@@ -63,6 +63,7 @@ import {
   mountMissionSelect,
 } from './campaign/screens';
 import type { Tray } from './renderer/mobile/tray';
+import { installReplayCapture } from './renderer/replay-capture';
 
 // `?render-log=1` flips the render category on for click-by-click traces.
 // `?ai-trace=1` enables the very chatty per-candidate AI score log.
@@ -313,6 +314,17 @@ async function main(): Promise<void> {
   const seedRaw = params.get('seed');
   const seedParsed = seedRaw !== null ? Number(seedRaw) : NaN;
   const seed = Number.isFinite(seedParsed) ? Math.trunc(seedParsed) : undefined;
+  // Capture the live match as a replay log — installed before the AI driver
+  // so its very first action is recorded. Finished games auto-POST to
+  // /api/replays; the toolshelf "Copy log" tool exports the same JSONL.
+  const replayCapture = installReplayCapture(emitter, {
+    map: mapName,
+    seed: seed ?? 0,
+    fog: fogConfig.on,
+    p0: initialAI[0],
+    p1: initialAI[1],
+  });
+
   const aiDriver = createAIDriver({
     emitter,
     animQueue,
@@ -441,6 +453,7 @@ async function main(): Promise<void> {
       },
       // Floating Cancel chip → drop the current input selection/menu/target.
       onCancel: () => input.cancel(),
+      replayCapture,
     });
     log('render', 'chrome mounted', { muted: audio.isMuted() });
 

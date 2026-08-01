@@ -205,6 +205,12 @@ describe('role assignment', () => {
       frontlineTarget: null,
       enemyHqLand: null,
       ownHomeLand: null,
+      // Anti-stall fields (iteration 9). No drift target and a neutral
+      // pressure ramp keep this a pure role-objective measurement.
+      driftTarget: null,
+      pressure: 1,
+      counterRiskScale: 1,
+      futureThreatScale: 1,
     };
     // Apply role multipliers to the weights, mirroring planUtilityTurn's
     // pre-multiplication.

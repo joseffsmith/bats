@@ -30,7 +30,7 @@ import {
 } from '../core/types';
 import { reduce } from '../core/reducer';
 import { isLegalAction } from '../core/validators';
-import { TERRAIN, UNITS, AI_WEIGHTS, CAPTURE_THRESHOLD } from '../data';
+import { TERRAIN, UNITS, DAMAGE, AI_WEIGHTS, CAPTURE_THRESHOLD } from '../data';
 import type { AIWeights } from '../data/loader';
 import { log, isLogEnabled } from '../core/logger';
 import { computeDamage, inAttackRange } from '../systems/combat';
@@ -41,6 +41,7 @@ import { computeThreatMap, computeValueMap } from './threatMap';
 import type { ThreatMap, ValueMap } from './threatMap';
 import { hiddenTiles, viewStateForPlayer } from '../queries/selectors';
 import {
+  DEFENDER_PROXIMITY,
   ROLE_MULTIPLIERS,
   applyRoleMultipliers,
   assignRoles,
@@ -139,6 +140,197 @@ const VALUE_MAP_WEIGHT = 0.1;
  * toward its role objective. PLAN.md specifies +3.
  */
 const OBJECTIVE_BONUS = 3;
+
+/**
+ * Property values in **damageDealt currency** — the units the scorer already
+ * speaks: `hp × cost/1000`, so a full-HP tank kill ≈ 700 and a full-HP
+ * infantry kill ≈ 100.
+ *
+ * Iteration 8's `DEFEND_PROPERTY_BONUS = 4` was in the wrong currency: an
+ * enemy artillery five tiles away is worth `~95 hp × 6 = 570` on raw damage,
+ * so a flat 4–8 for saving the factory being flipped next to us was noise.
+ * Every persona abandoned the factory to chase the frag (doctrine:
+ * "contests the capturer rather than hunting a soft target" — red for all
+ * four, i.e. a shared-scoring bug, not a weights bug).
+ *
+ * These numbers say: an HQ is worth more than any board of units (losing it
+ * ends the game), a factory is worth more than the tank it builds every two
+ * turns, a city about half that. Deliberately raw — no persona weight, no
+ * role multiplier — for the same reason iteration 8 gave: no playstyle
+ * shrugs at a flip, and the mirror bug requires bare `utility` to be fixed
+ * too.
+ */
+const PROPERTY_VALUE: Readonly<Record<string, number>> = {
+  hq: 2000,
+  factory: 900,
+  city: 450,
+};
+
+/**
+ * Urgency ramp on the property-denial term: `URGENCY_BASE` at a fresh
+ * capture, 1.0 when the bar is full. A full-HP infantry adds 10 of the 20
+ * needed per turn, so a 10/20 capture flips NEXT turn — 0.7 there.
+ */
+const DENIAL_URGENCY_BASE = 0.4;
+
+/**
+ * Score for CAPTURE progress on the ENEMY HQ, in the same currency. Capturing
+ * it *ends the game*, and the generic `captureProgressScore` valued that at 5
+ * (× persona capture weight ≈ 7.5) — less than scratching an artillery. That
+ * single mis-calibration is the mechanism behind every unfinished game: the
+ * greedy scorer would always rather trade blows somewhere than walk onto the
+ * tile that wins. Paid pro-rata on partial progress so a capturer that can't
+ * finish this turn still starts, and stays.
+ */
+const HQ_CAPTURE_VALUE = PROPERTY_VALUE.hq!;
+
+/**
+ * Raw value of CAPTURE progress on a property we don't own, in damage
+ * currency, paid pro-rata on the capture bar. (The enemy HQ is priced
+ * separately by `HQ_CAPTURE_VALUE` — that one ends the game.)
+ *
+ * Deliberately far below `PROPERTY_VALUE`: losing ground you hold is worse
+ * than failing to gain ground, and a capturer that walks away can come back.
+ * The number that matters is the **futureThreat wall**: an infantry stepping
+ * into the reach of three enemies eats about −50, while a capture tick was
+ * worth `2 × w.capture ≈ 3`. So every persona — and bare `utility` — parked
+ * exactly one tile outside the enemy's reach envelope and stayed there. That
+ * is the whole 725-turn mirror, the crossroads cap games, and the draw-heavy
+ * probe-camper column: not cowardice, just a scorer that priced territory at
+ * 3 and risk at 50. A city tick is now `120 × 0.5 = 60` and clears the wall.
+ */
+const CAPTURE_PRESSURE: Readonly<Record<string, number>> = {
+  factory: 200,
+  city: 120,
+};
+
+/**
+ * Per-Manhattan-step tiebreak pulling a unit toward its drift target (nearest
+ * enemy, else the enemy HQ) on candidates whose follow-up is WAIT — i.e. when
+ * the unit has nothing productive to do this turn anyway.
+ *
+ * Sized as a TIEBREAK: one step of any role objective is `3 × w.objective`
+ * (1.8–3.6), an order of magnitude more, so a unit with an actual mandate
+ * (including `support`'s retreat) ignores the drift. It only decides between
+ * candidates that are otherwise a wash — which is exactly the mirror
+ * deadlock: on duel, parking on the home HQ scored 0.33 (4 defense stars)
+ * against 0.21 for stepping out, so both sides sat on their HQ and factory
+ * for 725+ turns, blocking their own builds.
+ */
+const DRIFT_BONUS = 0.25;
+
+/**
+ * The other half of the drift tiebreak, and deliberately steeper: cost per
+ * Manhattan step a WAIT candidate moves AWAY from the drift target.
+ *
+ * Symmetric drift does not break oscillation, because oscillation is not a
+ * tie — it is two attractors that both win in one direction. Turtle's tank
+ * shuttles between its home city (terrain defense, `positional` ×1.0 with a
+ * ×1.5 frontline override ⇒ +2.25 for standing there) and midfield (the
+ * frontline objective, +3 toward the enemy's threat concentration): stepping
+ * either way scores positive, forever. Pricing the walk home above the walk
+ * out makes the return leg a net loss while leaving any *mandated* retreat
+ * (support role: +3/step) comfortably ahead.
+ */
+const DRIFT_RETREAT_PENALTY = 1.0;
+
+/**
+ * Penalty for a unit that CANNOT capture ending its move on a capturable tile
+ * we don't own while one of our own capture-capable units stands next to that
+ * tile. Scored against the tile's defense stars (an HQ is 4 stars ≈ 2.0
+ * positional), so parking the tank on the enemy HQ — worth exactly nothing,
+ * tanks can't capture — stops outbidding standing beside it. Doctrine:
+ * turtle drove its tank onto the exposed HQ and physically blocked the
+ * infantry that was one tile away from winning.
+ */
+const BLOCKED_CAPTURE_PENALTY = 8;
+
+/**
+ * The same idea on the one tile that decides the game. A non-capturer that
+ * ends its move on the ENEMY HQ is not "holding" anything — it cannot take
+ * the tile, and while it stands there no capturer of ours can either. This
+ * penalty is unconditional (no adjacent-capturer requirement) because the
+ * capturer that will eventually arrive may still be three tiles away:
+ * economist-vs-balanced on crossroads capped at 120 turns with a 3 hp
+ * economist TANK parked on balanced's HQ and a 23 hp economist infantry
+ * two tiles off, unable to finish a game it had already won.
+ *
+ * Sized to lose to any real attack from that tile (a tank kill is 300+) but
+ * to beat every positional consideration that might park a unit there — the
+ * HQ's 4 defense stars are worth about 2.
+ */
+const BLOCKED_HQ_PENALTY = 100;
+
+/**
+ * Penalty for ending a move on one of OUR OWN factory tiles while we can
+ * afford to build. `enumerateBuilds` skips occupied factories (the engine
+ * rejects a BUILD onto a unit), so a squatter silently switches our economy
+ * off — and the scorer had a positive reason to squat, because a factory is
+ * 3 defense stars of `positional`.
+ *
+ * This is what actually decides tier3-vs-tier1 on duel: by turn 40 BOTH
+ * sides have parked a unit on their only factory and stopped building, with
+ * 100k+ funds banked and a frozen board. Whoever happened to squat later has
+ * the bigger army, and that accident is the game. Sized above a factory's
+ * terrain pull (≈0.5–1.5) and below anything with a purpose.
+ */
+const OWN_FACTORY_SQUAT_PENALTY = 5;
+
+/**
+ * Late-game pressure ramp. Pure functions of `state.turn` (the determinism
+ * suite requires purity), flat until `PRESSURE_RAMP_START`, moving linearly
+ * to their bound at `PRESSURE_RAMP_FULL` and constant after. `state.turn`
+ * counts half-turns, so the window below is roughly rounds 20–45.
+ *
+ * Three curves, because the three terms mean different things:
+ *
+ *   offence  (damageDealt, objective)  ×1 → ×PRESSURE_RAMP_MAX
+ *   counterRisk                        ×1 → ×COUNTER_RISK_FLOOR
+ *   futureThreat                       ×1 → ×0
+ *
+ * futureThreat is the one that has to expire, and the traces are unambiguous
+ * about why. In the crossroads mirror at turn 121 both armies sit exactly
+ * outside each other's reach envelope: every forward tile costs a recon −88
+ * of speculative threat while standing still costs 0, and no term in the
+ * scorer — capture 3, objective 3, drift 0.25 — is within two orders of
+ * magnitude of paying that. Scaling it by 1/1.5 leaves −59, which is the
+ * same wall. A deterrent that never expires is not caution, it is a draw
+ * generator: 35 units vs 10 and the game still cannot end.
+ *
+ * counterRisk only halves — that one is *immediate*, measured damage from a
+ * trade the AI is choosing to make, not a guess about next turn. Zeroing it
+ * would make the endgame a mutual suicide pact rather than a decision.
+ *
+ * The early game is untouched by construction: before turn 40 every curve is
+ * exactly 1, so opening play and every doctrine micro-position (all built at
+ * turn 1) score identically to iteration 8.
+ */
+const PRESSURE_RAMP_START = 40;
+const PRESSURE_RAMP_FULL = 90;
+const PRESSURE_RAMP_MAX = 1.5;
+const COUNTER_RISK_FLOOR = 0.5;
+
+/** 0 before the ramp starts, 1 once it is fully wound up. */
+function rampT(turn: number): number {
+  if (turn <= PRESSURE_RAMP_START) return 0;
+  const span = PRESSURE_RAMP_FULL - PRESSURE_RAMP_START;
+  return Math.min(1, (turn - PRESSURE_RAMP_START) / span);
+}
+
+/** Offence multiplier: 1 → PRESSURE_RAMP_MAX. */
+export function pressureRamp(turn: number): number {
+  return 1 + rampT(turn) * (PRESSURE_RAMP_MAX - 1);
+}
+
+/** counterRisk multiplier: 1 → COUNTER_RISK_FLOOR. */
+export function counterRiskRamp(turn: number): number {
+  return 1 - rampT(turn) * (1 - COUNTER_RISK_FLOOR);
+}
+
+/** futureThreat multiplier: 1 → 0. Speculative caution expires. */
+export function futureThreatRamp(turn: number): number {
+  return 1 - rampT(turn);
+}
 
 /**
  * Soft cap on Tier-3 owned-unit count to keep per-turn AI time under the
@@ -397,10 +589,26 @@ function planUtilityTurn(
         frontlineTarget: tm ? getFrontlineTarget(state) : null,
         enemyHqLand: getEnemyHqLandComponent(state),
         ownHomeLand: getOwnHomeLandComponent(state),
+        driftTarget:
+          nearestEnemy(state, player, unit.pos)?.pos ??
+          state.players[otherPlayer(player)].hq,
+        pressure: pressureRamp(state.turn),
+        counterRiskScale: counterRiskRamp(state.turn),
+        futureThreatScale: futureThreatRamp(state.turn),
       };
       const pick = pickBestCandidate(state, unit, ctx2);
       if (!pick) continue;
-      if (pick.score <= 0) continue;
+      // Act gate. The old gate was `score > 0`, comparing an uncalibrated
+      // score against an absolute zero — so a unit standing under a blanket
+      // threat map (every candidate deeply negative, including the one that
+      // walks out of the fire) took NO action at all and stayed frozen for
+      // the rest of the game. That is the stalled-unit signature the replay
+      // miner flags in 100% of pilot matches.
+      //
+      // "Do nothing" is itself a candidate (stay put + WAIT), so the honest
+      // question is whether the best option beats *that*, not whether it
+      // beats zero. Positive-scoring actions still fire exactly as before.
+      if (pick.score <= 0 && pick.score <= pick.stayScore) continue;
 
       if (pick.candidate.moveAction) {
         out.push(pick.candidate.moveAction);
@@ -428,7 +636,13 @@ function planUtilityTurn(
   // way over 200ms. Capping at TIER3_UNIT_CAP keeps action volume per turn
   // bounded while still letting the AI replenish losses.
   if (state.winner === null) {
-    const unitCap = planOpts.useRoles ? TIER3_UNIT_CAP : Infinity;
+    // The unit cap is a per-turn-time guard, not a strategy. If we are at the
+    // cap with no capture-capable unit left, the cap is the reason we cannot
+    // win — allow exactly one over it until a capturer exists again.
+    const capturerCrisis = countCaptureCapable(state, player) === 0;
+    const unitCap = planOpts.useRoles
+      ? TIER3_UNIT_CAP + (capturerCrisis ? 1 : 0)
+      : Infinity;
     let myUnits = countOwnedAll(state, player);
     for (const b of enumerateBuilds(state, player, planOpts.buildPolicy)) {
       if (stepCount >= ACTION_STEP_CAP - 1) break;
@@ -451,6 +665,14 @@ function planUtilityTurn(
 // ─────────────────────────── Candidate scoring ───────────────────────────────
 
 type Scored = { candidate: Candidate; score: number };
+
+/**
+ * The planner's view of one unit's options: the best candidate, plus the
+ * score of the do-nothing candidate (stay put + WAIT) as the baseline the
+ * act gate compares against. `stayScore` is 0 when no do-nothing candidate
+ * exists (e.g. the unit has already acted this turn).
+ */
+type Pick = Scored & { stayScore: number };
 
 /**
  * Bundled per-turn scoring context. Lives across a single AI turn and is
@@ -489,6 +711,20 @@ export type ScoreContext = {
    * transport instead of capturing the local city.
    */
   ownHomeLand: Set<string> | null;
+  /**
+   * Anti-stall drift target for THIS unit: the nearest enemy unit's tile,
+   * falling back to the enemy HQ when the board is empty of enemies.
+   * Computed once per unit per action (not per candidate) to keep scoring
+   * O(1) per candidate. Null only when there is no enemy and no HQ.
+   */
+  driftTarget: Coord | null;
+  /**
+   * The three late-game ramp multipliers, hoisted out of the candidate loop
+   * (all pure functions of `state.turn`; see `pressureRamp`).
+   */
+  pressure: number;
+  counterRiskScale: number;
+  futureThreatScale: number;
 };
 
 /** How many top-scoring candidates per unit to emit when ai-trace is on. */
@@ -506,13 +742,16 @@ function pickBestCandidate(
   state: GameState,
   unit: Unit,
   sctx: ScoreContext,
-): Scored | null {
+): Pick | null {
   const trace = isLogEnabled('ai-trace');
   const all: Array<Scored> = [];
   let best: Scored | null = null;
+  let stayScore = 0;
   for (const c of generateCandidates(state, unit)) {
     const score = scoreAction(state, c, unit, sctx);
     if (trace) all.push({ candidate: c, score });
+    // The do-nothing baseline: no move, WAIT in place.
+    if (!c.moveAction && c.followUp.type === 'WAIT') stayScore = score;
     if (best === null || score > best.score) {
       best = { candidate: c, score };
     }
@@ -544,11 +783,12 @@ function pickBestCandidate(
           pos: unit.pos,
           role: sctx.role,
           considered: all.length,
+          stay: Number(stayScore.toFixed(3)),
           top,
         }),
     );
   }
-  return best;
+  return best ? { ...best, stayScore } : null;
 }
 
 /**
@@ -666,12 +906,107 @@ export function scoreAction(
     }
   }
 
-  const dd = damageDealt(state, after, unit.owner) * w.damageDealt;
+  // Property defense: attacking an enemy capturer that stands on OUR
+  // capturable is worth the property it is about to take, in damage
+  // currency (see PROPERTY_VALUE). Deliberately raw (no persona weight, no
+  // role multiplier): no playstyle should shrug while its factory is
+  // flipped. Iteration 8 added this term at a flat 4–8, which lost to any
+  // fat kill elsewhere on the board; iteration 9 puts it in the currency the
+  // rest of the scorer uses.
+  let defense = 0;
+  if (candidate.followUp.type === 'ATTACK') {
+    const target = state.units[candidate.followUp.targetId];
+    // Only a unit that can actually take the tile is stealing the property;
+    // an enemy tank parked on our city is just an enemy tank.
+    if (target && UNITS[target.type].canCapture) {
+      const tile = state.map[target.pos.y]?.[target.pos.x];
+      if (tile && tile.owner === unit.owner && isCapturable(tile.terrain)) {
+        const value = PROPERTY_VALUE[tile.terrain] ?? 0;
+        const urgency =
+          DENIAL_URGENCY_BASE +
+          (1 - DENIAL_URGENCY_BASE) *
+            Math.min(1, target.captureProgress / CAPTURE_THRESHOLD);
+        defense = value * urgency;
+      }
+    }
+  }
+
+  // Objective value of a capture, in damage currency: the enemy HQ ends the
+  // game, anything else is territory. Both pro-rata on the capture bar; a
+  // flip resets captureProgress to 0 and hands us the tile, so it pays full.
+  let winPush = 0;
+  if (candidate.followUp.type === 'CAPTURE') {
+    const enemyHq = state.players[otherPlayer(unit.owner)].hq;
+    const afterTile = tileAt(after.map, movedUnit.pos);
+    const value = coordEq(movedUnit.pos, enemyHq)
+      ? HQ_CAPTURE_VALUE
+      : CAPTURE_PRESSURE[afterTile.terrain] ?? 0;
+    winPush =
+      afterTile.owner === movedUnit.owner
+        ? value
+        : value * (movedUnit.captureProgress / CAPTURE_THRESHOLD);
+  }
+
+  // Production denial: don't park on our own factory while we have funds.
+  let blocking = 0;
+  {
+    const destTile = state.map[movedUnit.pos.y]?.[movedUnit.pos.x];
+    if (
+      destTile &&
+      destTile.terrain === 'factory' &&
+      destTile.owner === unit.owner &&
+      state.players[unit.owner].funds >= UNITS.infantry.cost
+    ) {
+      blocking -= OWN_FACTORY_SQUAT_PENALTY;
+    }
+  }
+
+  // Blocking penalty: a unit that cannot capture must not squat on the enemy
+  // HQ at all, nor on any capturable our own capturer is standing next to.
+  if (!UNITS[unit.type].canCapture) {
+    const tile = state.map[movedUnit.pos.y]?.[movedUnit.pos.x];
+    const enemyHq = state.players[otherPlayer(unit.owner)].hq;
+    if (coordEq(movedUnit.pos, enemyHq)) {
+      blocking -= BLOCKED_HQ_PENALTY;
+    } else if (
+      tile &&
+      !coordEq(unit.pos, movedUnit.pos) &&
+      isCapturable(tile.terrain) &&
+      tile.owner !== unit.owner &&
+      friendlyCapturerAdjacent(state, movedUnit.pos, unit.owner, unit.id)
+    ) {
+      blocking -= BLOCKED_CAPTURE_PENALTY;
+    }
+  }
+
+  // Anti-stall drift — only on WAIT candidates (nothing productive to do).
+  let drift = 0;
+  if (candidate.followUp.type === 'WAIT' && sctx.driftTarget) {
+    const dBefore = manhattan(unit.pos, sctx.driftTarget);
+    const dAfter = manhattan(movedUnit.pos, sctx.driftTarget);
+    const delta = dBefore - dAfter;
+    drift = delta >= 0 ? delta * DRIFT_BONUS : delta * DRIFT_RETREAT_PENALTY;
+  }
+
+  // Late-game pressure: offence up, caution down (pure function of turn).
+  const p = sctx.pressure;
+  const dd = damageDealt(state, after, unit.owner) * w.damageDealt * p;
   const cp = captureProgressScore(state, after, movedUnit, candidate.followUp) * w.capture;
-  const ca = counterAttackDamage(state, after, unit) * w.counterRisk * riskScale;
-  const ftw = ft * w.futureThreat * riskScale;
+  const ca =
+    counterAttackDamage(state, after, unit) * w.counterRisk * riskScale * sctx.counterRiskScale;
+  const ftw = ft * w.futureThreat * riskScale * sctx.futureThreatScale;
   const pvw = pv * w.positional;
-  const obw = ob * w.objective;
+  // The `support` objective is the one that points BACKWARDS ("move away from
+  // the nearest enemy"), and this engine has no repair mechanic — a unit that
+  // falls under SUPPORT_HP_THRESHOLD and walks away is gone from the game for
+  // good. Ramping it with the offence multiplier made the endgame worse the
+  // longer it ran: at turn 121 of economist-vs-balanced on crossroads, twelve
+  // damaged units were scoring `objective +5.4` to retreat from four enemies
+  // they collectively outnumbered three to one, every turn, forever. So the
+  // retreat mandate expires on the same curve as speculative threat: full
+  // weight in the opening, nothing once the ramp is wound up.
+  const objectiveScale = sctx.role === 'support' ? sctx.futureThreatScale : p;
+  const obw = ob * w.objective * objectiveScale;
   if (out) {
     out.damageDealt = dd;
     out.capture = cp;
@@ -680,8 +1015,35 @@ export function scoreAction(
     out.positional = pvw;
     out.objective = obw;
     if (navalPull !== 0) out.naval = navalPull;
+    if (defense !== 0) out.defense = defense;
+    if (winPush !== 0) out.winPush = winPush;
+    if (blocking !== 0) out.blocking = blocking;
+    if (drift !== 0) out.drift = drift;
   }
-  return dd + cp - ca - ftw + pvw + obw + navalPull;
+  return (
+    dd + cp - ca - ftw + pvw + obw + navalPull + defense + winPush + blocking + drift
+  );
+}
+
+/**
+ * Is one of `owner`'s capture-capable units (other than `exceptId`) standing
+ * orthogonally adjacent to `tile`? Used by the blocking penalty — 4 lookups,
+ * O(units) worst case but only on capturable destinations.
+ */
+function friendlyCapturerAdjacent(
+  state: GameState,
+  tile: Coord,
+  owner: PlayerId,
+  exceptId: UnitId,
+): boolean {
+  for (const u of Object.values(state.units)) {
+    if (u.owner !== owner) continue;
+    if (u.id === exceptId) continue;
+    if (u.loadedIn !== undefined) continue;
+    if (!UNITS[u.type].canCapture) continue;
+    if (manhattan(u.pos, tile) === 1) return true;
+  }
+  return false;
 }
 
 // ─────────────────────────── Amphibious scorers ──────────────────────────────
@@ -1161,9 +1523,15 @@ function objectiveBonusForRole(
       return dAfter < dBefore ? OBJECTIVE_BONUS : 0;
     }
     case 'defender': {
-      const hq = before.players[unit.owner].hq;
-      const dBefore = manhattan(unit.pos, hq);
-      const dAfter = manhattan(movedUnit.pos, hq);
+      // March toward the actual intruder, not the HQ tile. "Toward own HQ"
+      // (the old target) combined with a threat map that blankets the home
+      // zone meant defenders drifted to whatever safe tile was left —
+      // usually a far corner — while the intruder captured freely. Fall back
+      // to the HQ as a garrison point only when no intruder is on the board.
+      const tgt =
+        nearestHomeIntruder(before, unit.owner)?.pos ?? before.players[unit.owner].hq;
+      const dBefore = manhattan(unit.pos, tgt);
+      const dAfter = manhattan(movedUnit.pos, tgt);
       return dAfter < dBefore ? OBJECTIVE_BONUS : 0;
     }
     case 'support': {
@@ -1219,6 +1587,38 @@ function nearestUnownedCapturable(
     }
   }
   return best;
+}
+
+/**
+ * The enemy unit most urgently violating `player`'s home zone: any enemy
+ * mid-capture on a tile `player` owns, or (failing that) any enemy within
+ * DEFENDER_PROXIMITY + 1 of the HQ. Capturers win ties by progress — a
+ * 15/20 capture is a strictly hotter fire than a fresh one. Used as the
+ * defender role's objective target.
+ */
+export function nearestHomeIntruder(state: GameState, player: PlayerId): Unit | null {
+  const hq = state.players[player].hq;
+  let bestCapturer: Unit | null = null;
+  let bestProgress = -1;
+  let bestNear: Unit | null = null;
+  let bestNearD = Infinity;
+  for (const u of Object.values(state.units)) {
+    if (u.owner === player) continue;
+    const tile = state.map[u.pos.y]?.[u.pos.x];
+    if (tile && tile.owner === player && isCapturable(tile.terrain)) {
+      if (u.captureProgress > bestProgress) {
+        bestProgress = u.captureProgress;
+        bestCapturer = u;
+      }
+      continue;
+    }
+    const d = manhattan(u.pos, hq);
+    if (d <= DEFENDER_PROXIMITY + 1 && d < bestNearD) {
+      bestNearD = d;
+      bestNear = u;
+    }
+  }
+  return bestCapturer ?? bestNear;
 }
 
 function nearestEnemy(
@@ -1403,6 +1803,37 @@ function enumerateBuilds(
   // infantry + 2 tanks.
   const floorActive = myInfantryCount < infantryFloor && myTotalUnits < infantryFloor + 2;
 
+  // Capturer crisis (iteration 9): we own NO capture-capable unit and there
+  // are tiles left to take. In that state the persona's `preferred` list is
+  // building a machine that cannot win — the win condition is a capture, and
+  // nothing on our side can perform one. Overrides `preferred`, `avoid` and
+  // the infantry-floor logic; ends the moment one infantry exists.
+  //
+  // Found in aggressor-vs-balanced on crossroads, capped 10/10: aggressor
+  // (infantryFloor 3, but the floor only fires under 5 total units) held
+  // seven tanks and recons and zero infantry for the last sixty turns.
+  const capturerCrisis = countCaptureCapable(state, player) === 0;
+
+  // Useful-build filter (iteration 9): a unit that can neither capture nor
+  // damage anything the enemy currently fields is a dead build. balanced on
+  // crossroads bought TWELVE fighters against an all-ground aggressor —
+  // `DAMAGE.fighter.tank === 0` and `DAMAGE.tank.fighter === 0`, so the two
+  // armies could not touch each other and the game could not end. This is
+  // the composition half of the same anti-stall problem: no scoring change
+  // can close out a game the roster is incapable of closing.
+  const enemyTypes = new Set<UnitType>();
+  for (const u of Object.values(state.units)) {
+    if (u.owner !== player) enemyTypes.add(u.type);
+  }
+  const usefulBuild = (t: UnitType): boolean => {
+    if (UNITS[t].canCapture) return true;
+    if (enemyTypes.size === 0) return true; // nothing to counter yet
+    for (const et of enemyTypes) {
+      if ((DAMAGE[t]?.[et] ?? 0) > 0) return true;
+    }
+    return false;
+  };
+
   for (let y = 0; y < state.map.length; y++) {
     const row = state.map[y]!;
     for (let x = 0; x < row.length; x++) {
@@ -1424,9 +1855,13 @@ function enumerateBuilds(
         return true;
       };
 
-      // Infantry floor — keep capture pressure up, but only when our total
-      // unit count is also low (see `floorActive` above).
-      if (
+      // Capturer crisis outranks everything: without one of these we cannot
+      // win, whatever else we buy.
+      if (capturerCrisis && unowned > 0 && funds >= UNITS.infantry.cost) {
+        pick = 'infantry';
+      } else if (
+        // Infantry floor — keep capture pressure up, but only when our total
+        // unit count is also low (see `floorActive` above).
         floorActive &&
         unowned > 0 &&
         funds >= UNITS.infantry.cost &&
@@ -1434,15 +1869,25 @@ function enumerateBuilds(
       ) {
         pick = 'infantry';
       } else {
-        // Walk the preferred list; skip avoided types and types this factory
-        // can't legally produce.
+        // Walk the preferred list; skip avoided types, types this factory
+        // can't legally produce, and types that cannot touch this enemy.
         for (const t of preferred) {
           if (avoid.has(t)) continue;
           if (!buildableHere(t)) continue;
+          if (!usefulBuild(t)) continue;
           pick = t;
           break;
         }
-        // Last-resort fallback: try avoided types so we still spend funds.
+        // Last-resort fallbacks: relax `usefulBuild`, then `avoid`, so we
+        // still spend funds rather than stagnate.
+        if (!pick) {
+          for (const t of preferred) {
+            if (avoid.has(t)) continue;
+            if (!buildableHere(t)) continue;
+            pick = t;
+            break;
+          }
+        }
         if (!pick) {
           for (const t of preferred) {
             if (!buildableHere(t)) continue;
@@ -1481,6 +1926,15 @@ function countOwned(state: GameState, player: PlayerId, type: UnitType): number 
   let n = 0;
   for (const u of Object.values(state.units)) {
     if (u.owner === player && u.type === type) n += 1;
+  }
+  return n;
+}
+
+/** Own units that can perform a CAPTURE (cargo included — it will unload). */
+function countCaptureCapable(state: GameState, player: PlayerId): number {
+  let n = 0;
+  for (const u of Object.values(state.units)) {
+    if (u.owner === player && UNITS[u.type].canCapture) n += 1;
   }
   return n;
 }

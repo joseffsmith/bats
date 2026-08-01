@@ -22,12 +22,12 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { runMatch, isAIName } from './run-match';
+import { runMatch, isAIName, AI_NAMES } from './run-match';
 import type { AISpec, RunMatchResult } from './run-match';
 import { UNITS } from '../engine/data';
 import { setLogEnabled } from '../engine/core/logger';
 import type { GameState, PlayerId } from '../engine/core/types';
-import { PERSONA_NAMES, PERSONAS } from '../engine/ai/personas';
+import { PERSONA_NAMES } from '../engine/ai/personas';
 
 // ─────────────────────────── Types ───────────────────────────────────────────
 
@@ -245,9 +245,11 @@ export async function runRoundRobin(opts: RoundRobinOptions): Promise<RoundRobin
   const personas = opts.personas && opts.personas.length > 0
     ? [...opts.personas]
     : [...PERSONA_NAMES];
+  // The default roster is the persona list, but any registered AI name is
+  // accepted so a round-robin can include probes and frozen benchmarks.
   for (const p of personas) {
-    if (!(p in PERSONAS)) {
-      throw new Error(`unknown persona "${p}" — available: ${PERSONA_NAMES.join(', ')}`);
+    if (!isAIName(p)) {
+      throw new Error(`unknown persona "${p}" — available: ${AI_NAMES.join(', ')}`);
     }
   }
   const maps = opts.maps && opts.maps.length > 0
@@ -594,9 +596,9 @@ function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
       if (!v) throw new Error('--personas requires a value');
       const list = v.split(',').map((s) => s.trim()).filter((s) => s.length > 0);
       for (const p of list) {
-        if (!isAIName(p) || !(p in PERSONAS)) {
+        if (!isAIName(p)) {
           throw new Error(
-            `--personas: "${p}" is not a known persona (have: ${PERSONA_NAMES.join(', ')})`,
+            `--personas: "${p}" is not a known AI (have: ${AI_NAMES.join(', ')})`,
           );
         }
       }

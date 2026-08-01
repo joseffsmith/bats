@@ -21,6 +21,7 @@ import type { AIDriver, AIChoice } from './ai-driver';
 import { AI_CHOICES } from './ai-driver';
 import type { AnimationQueue } from './animations';
 import type { AudioModule } from './audio';
+import type { ReplayCapture } from './replay-capture';
 import { deserialize, downloadSave } from '../engine/save';
 import { parseLog, replay } from '../engine/replay';
 import { loadMap } from '../engine/data/loader';
@@ -59,6 +60,9 @@ export type ChromeDeps = {
   /** Called when the floating Cancel chip is tapped. main.ts wires it to
    *  input.cancel. Optional so chrome tests (which omit it) keep working. */
   onCancel?: () => void;
+  /** Live-match capture (main.ts). Optional so chrome tests keep working;
+   *  when present the toolshelf grows a "Copy log" tool. */
+  replayCapture?: ReplayCapture;
 };
 
 export function createChrome(deps: ChromeDeps): Chrome {
@@ -88,6 +92,7 @@ export function createChrome(deps: ChromeDeps): Chrome {
     emitter: deps.emitter,
     animQueue: deps.animQueue,
     audio: deps.audio,
+    ...(deps.replayCapture ? { replayCapture: deps.replayCapture } : {}),
   });
   const actions = createActions({
     emitter: deps.emitter,
@@ -293,6 +298,7 @@ type ToolshelfDeps = {
   emitter: Emitter;
   animQueue: AnimationQueue;
   audio: AudioModule;
+  replayCapture?: ReplayCapture;
 };
 
 function createToolshelf(deps: ToolshelfDeps): { root: HTMLElement } {
@@ -314,6 +320,25 @@ function createToolshelf(deps: ToolshelfDeps): { root: HTMLElement } {
   const saveBtn = makeTool('Save', '◊');
   const loadBtn = makeTool('Load', '◈');
   const soundBtn = makeTool('Sound on', '♪');
+
+  // Copy the live capture's JSONL to the clipboard — paste straight into the
+  // Replay modal (or hand it to `npm run replay`) to step through the match.
+  let copyLogBtn: HTMLButtonElement | null = null;
+  if (deps.replayCapture) {
+    const capture = deps.replayCapture;
+    copyLogBtn = makeTool('Copy log', '⧉');
+    copyLogBtn.addEventListener('click', () => {
+      const btn = copyLogBtn!;
+      if (capture.tainted()) {
+        flashTool(btn, 'Log stale', true);
+        return;
+      }
+      navigator.clipboard
+        .writeText(capture.exportLog())
+        .then(() => flashTool(btn, 'Copied'))
+        .catch(() => flashTool(btn, 'Copy failed', true));
+    });
+  }
 
   // File pickers (hidden, triggered programmatically).
   const loadFile = document.createElement('input');
@@ -383,6 +408,7 @@ function createToolshelf(deps: ToolshelfDeps): { root: HTMLElement } {
 
   root.appendChild(disclosure);
   root.appendChild(replayBtn);
+  if (copyLogBtn) root.appendChild(copyLogBtn);
   root.appendChild(makeDivider());
   root.appendChild(saveBtn);
   root.appendChild(loadBtn);

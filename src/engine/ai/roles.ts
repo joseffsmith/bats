@@ -6,7 +6,7 @@
 // machinery serves all five behaviours.
 //
 //   capturer   ×{capture: 3,        counterRisk: 1.5}
-//   defender   ×{futureThreat: 3,   capture: 0}
+//   defender   ×{damageDealt: 1.5,  futureThreat: 0.5, capture: 0}
 //   support    ×{counterRisk: 2,    futureThreat: 1.5}
 //   pusher     ×{objective: 2,      futureThreat: 0.3, counterRisk: 0.6}
 //   frontline  ×{damageDealt: 1.2}
@@ -68,7 +68,14 @@ const IDENTITY: RoleMultipliers = {
 
 export const ROLE_MULTIPLIERS: Record<Role, RoleMultipliers> = {
   capturer: { ...IDENTITY, capture: 3, counterRisk: 1.5 },
-  defender: { ...IDENTITY, futureThreat: 3, capture: 0 },
+  // Defender: fights for the home zone rather than fleeing it. futureThreat
+  // is *suppressed* (0.5, cf. pusher's 0.3) — a defender must be willing to
+  // stand in the enemy's projected damage to hold ground; the old ×3 made
+  // every tile near the fight score deeply negative and defenders fled to
+  // the safest far corner while their property was captured out from under
+  // them. damageDealt is boosted so trading into the intruder looks good;
+  // capture stays 0 (a defender must not wander off to flip tiles).
+  defender: { ...IDENTITY, damageDealt: 1.5, futureThreat: 0.5, capture: 0 },
   support: { ...IDENTITY, counterRisk: 2, futureThreat: 1.5 },
   // Pusher: walks toward the enemy HQ even at some cost. High objective
   // boost, suppressed futureThreat (the role explicitly accepts marching
