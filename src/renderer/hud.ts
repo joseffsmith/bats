@@ -89,7 +89,7 @@ export function buildMenuEntries(
     const cost = UNITS[type].cost;
     entries.push({
       unitType: type,
-      label: labelFor(type),
+      label: unitLabel(type),
       cost,
       affordable: funds >= cost,
     });
@@ -97,7 +97,13 @@ export function buildMenuEntries(
   return entries;
 }
 
-function labelFor(type: UnitType): string {
+/**
+ * Player-facing name for a unit type. The single source of truth for unit
+ * naming across the UI: build entries here, and the mobile tray's unit /
+ * forecast cards (mobile/tray.ts). Renaming a unit is a one-line change here
+ * rather than a hunt through two DOM modules.
+ */
+export function unitLabel(type: UnitType): string {
   // `aatank` reads better as "AA Tank" in the build menu UI.
   if (type === 'aatank') return 'AA Tank';
   return capitalise(type);

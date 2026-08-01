@@ -299,6 +299,14 @@ export type CanvasRendererDeps = {
   /** Continuous idle animations (bob, dash, water, smoke). Defaults to true;
    *  the `?ambient=off` visual-regression param passes false. */
   ambient?: boolean;
+  /**
+   * Mobile board camera. When present it OWNS `tileSize` + `origin`: draw()
+   * reads both off the camera instead of re-fitting the whole map into the
+   * chrome-bounded box, and the board frame is skipped (mobile is full-bleed —
+   * the board runs to the screen edges and is panned, so there is no bezel to
+   * draw). Absent → the desktop path, byte-for-byte as before.
+   */
+  camera?: import('./camera').Camera;
 };
 
 export type CanvasRenderer = {
@@ -378,12 +386,20 @@ export function createCanvasRenderer(
     viewport = computeViewport(canvas);
     viewport.insetTop = prev.insetTop;
     viewport.insetBottom = prev.insetBottom;
+    // The camera's clamps are all expressed against the view size, so a resize
+    // has to re-clamp zoom and pan (a wider screen may now fit the whole map).
+    deps.camera?.resize();
     return viewport;
   }
 
   function setBoardInsets(top: number, bottom: number): void {
     const t = Math.max(MIN_INSET, Math.round(top));
     const b = Math.max(MIN_INSET, Math.round(bottom));
+    // Forwarded BEFORE the no-op guard: the very first report may coincide with
+    // the seeded defaults, and the camera must still learn its band (it boots
+    // lazily off exactly these numbers). setBand is pure arithmetic, so an
+    // idempotent extra call costs nothing and can't feed the observer loop.
+    deps.camera?.setBand(t, b);
     // Integer-compare + no-op guard: the caller is a ResizeObserver, and
     // re-writing an unchanged value could churn (observer → layout → observer).
     if (t === viewport.insetTop && b === viewport.insetBottom) return;
@@ -416,8 +432,16 @@ export function createCanvasRenderer(
     // which may have changed since the last frame. Cheap arithmetic.
     const rows = state.map.length;
     const cols = state.map[0]?.length ?? 0;
-    vp.tileSize = fitTileSize(cols, rows, vp.width, vp.height, vp.insetTop, vp.insetBottom);
-    vp.origin = originFor(state, vp);
+    if (deps.camera) {
+      // Mobile: the camera owns the transform. It re-clamps against the live map
+      // and view size inside tick(), so a mid-game map swap needs no notice here.
+      deps.camera.tick(performance.now());
+      vp.tileSize = deps.camera.tileSize();
+      vp.origin = deps.camera.origin();
+    } else {
+      vp.tileSize = fitTileSize(cols, rows, vp.width, vp.height, vp.insetTop, vp.insetBottom);
+      vp.origin = originFor(state, vp);
+    }
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('2D context unavailable');
     ctx.setTransform(vp.dpr, 0, 0, vp.dpr, 0, 0);
@@ -445,7 +469,11 @@ export function createCanvasRenderer(
     }
 
     const viewer: PlayerId = fog.viewerOverride ?? state.currentPlayer;
-    drawBoardFrame(ctx, state, vp);
+    // Full-bleed on mobile: the board is bigger than the screen and pans under
+    // the chrome, so a bezel drawn around the grid bounds would be off-screen
+    // half the time and slice through the board the rest. Vignette, colour grade
+    // and the winner banner are viewport-anchored and stay in both modes.
+    if (!deps.camera) drawBoardFrame(ctx, state, vp);
     drawTerrain(ctx, state, vp, deps.terrain);
     drawOverlays(ctx, vp, overlay);
     drawUnits(ctx, state, vp, anim, overlay, deps.sprites, fog.on ? viewer : null);

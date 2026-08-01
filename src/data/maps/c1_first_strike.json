@@ -1,0 +1,37 @@
+{
+  "name": "c1_first_strike",
+  "width": 6,
+  "height": 9,
+  "tiles": [
+    "1.....",
+    "FF....",
+    "..F...",
+    "......",
+    "..F...",
+    "......",
+    "...F..",
+    "......",
+    "...0.."
+  ],
+  "tileLegend": {
+    ".": { "terrain": "plain" },
+    "F": { "terrain": "forest" },
+    "C": { "terrain": "city" },
+    "M": { "terrain": "mountain" },
+    "R": { "terrain": "road" },
+    "S": { "terrain": "sea" },
+    "0": { "terrain": "hq", "owner": 0 },
+    "1": { "terrain": "hq", "owner": 1 }
+  },
+  "players": {
+    "0": { "funds": 0, "hq": { "x": 3, "y": 8 } },
+    "1": { "funds": 0, "hq": { "x": 0, "y": 0 } }
+  },
+  "units": [
+    { "type": "tank", "owner": 0, "pos": { "x": 2, "y": 7 } },
+    { "type": "tank", "owner": 0, "pos": { "x": 4, "y": 7 } },
+    { "type": "infantry", "owner": 0, "pos": { "x": 3, "y": 7 } },
+    { "type": "infantry", "owner": 1, "pos": { "x": 3, "y": 4 }, "hp": 60 },
+    { "type": "infantry", "owner": 1, "pos": { "x": 2, "y": 2 } }
+  ]
+}

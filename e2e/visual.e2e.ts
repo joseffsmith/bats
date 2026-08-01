@@ -24,11 +24,27 @@ const GOLDEN_DIR = resolve(HERE, '__goldens__');
 const ARTIFACT_DIR = resolve(HERE, 'artifacts');
 const MAX_DIFF_RATIO = 0.005; // fail if >0.5% of pixels differ
 
-const CASES = [
+type VisualCase = {
+  name: string;
+  map: string;
+  width: number;
+  height: number;
+  /**
+   * Shoot the MOBILE shell: touch emulation plus an explicit `?mobile=1`, so
+   * the golden covers the HUD strip + full-bleed camera board + command tray
+   * rather than the desktop chrome squeezed into a narrow window. The two
+   * 390×844 cases are deliberately kept side by side — the desktop one is the
+   * regression guard for "a narrow viewport still gets the desktop shell".
+   */
+  mobile?: boolean;
+};
+
+const CASES: VisualCase[] = [
   { name: 'duel-1280x900', map: 'duel', width: 1280, height: 900 },
   { name: 'armada-1280x900', map: 'armada', width: 1280, height: 900 },
   { name: 'duel-390x844', map: 'duel', width: 390, height: 844 },
-] as const;
+  { name: 'duel-390x844-mobile', map: 'duel', width: 390, height: 844, mobile: true },
+];
 
 describe.skipIf(!process.env.RUN_VISUAL)('visual goldens', () => {
   let browser: Browser;
@@ -48,6 +64,10 @@ describe.skipIf(!process.env.RUN_VISUAL)('visual goldens', () => {
         width: c.width,
         height: c.height,
         deviceScaleFactor: 1,
+        // Spread rather than passing `undefined` — exactOptionalPropertyTypes
+        // treats "absent" and "present but undefined" as different things, and
+        // an absent `mobile` means "let the page decide from (pointer: coarse)".
+        ...(c.mobile === true ? { hasTouch: true, isMobile: true, mobile: '1' } : {}),
       });
       await awaitIdle(page);
       // Freeze DOM chrome CSS animations/transitions for a stable capture.
