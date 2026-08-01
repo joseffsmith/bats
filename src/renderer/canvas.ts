@@ -40,6 +40,13 @@ export { PLAYER_COLOURS };
  *  survives in tests that resize() but never draw(). */
 const DEFAULT_TILE_SIZE = 48;
 
+/** The page background (index.html :root --bg). Laid down as opaque pixels in
+ *  full-bleed camera mode so the end-of-pipeline multiply passes (vignette,
+ *  colour grade) darken the dead space around the map the way they darken the
+ *  board, instead of stamping their tint onto transparent pixels — which read
+ *  as a parchment-white surround against the dark mobile chrome. */
+const PAGE_BG = '#14110d';
+
 /** Outer gutter (CSS px) kept clear on every side of the grid when fitting. */
 const MARGIN = 12;
 
@@ -453,6 +460,19 @@ export function createCanvasRenderer(
     // Transparent clear — the body background (warm dark + noise) shows
     // through, unifying the canvas with the DOM chrome.
     ctx.clearRect(0, 0, vp.width, vp.height);
+    // Full-bleed (camera) mode additionally lays the page background down as
+    // real pixels. The multiply passes at the end of the pipeline (vignette,
+    // colour grade) deposit their tint colour wherever the canvas is still
+    // transparent, which painted the dead space around a small map
+    // parchment-white — jarring between the dark HUD strip and tray. Opaque
+    // page-colour pixels multiply DARKER like every other pixel, so the board
+    // floats on the same warm near-black as the menus. Desktop keeps the bare
+    // transparent clear: its framed-board-on-a-light-table look is the
+    // established aesthetic there and the chrome is built against it.
+    if (deps.camera) {
+      ctx.fillStyle = PAGE_BG;
+      ctx.fillRect(0, 0, vp.width, vp.height);
+    }
 
     // Apply camera shake: translate the drawing transform a couple pixels so
     // big-damage hits feel impactful. We add to the dpr-scaled transform.
