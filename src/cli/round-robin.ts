@@ -23,10 +23,13 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { runMatch, isAIName, AI_NAMES } from './run-match';
-import type { AISpec, RunMatchResult } from './run-match';
-import { UNITS } from '../engine/data';
+import type { AISpec } from './run-match';
 import { setLogEnabled } from '../engine/core/logger';
-import type { GameState, PlayerId } from '../engine/core/types';
+import type { PlayerId } from '../engine/core/types';
+// The tie-break ladder used when a match hits `--max-turns` with no winner.
+// Lifted into engine/queries so the live shells score a stand-off exactly the
+// way these tables do — see src/engine/queries/adjudicate.ts.
+import { adjudicate } from '../engine/queries/adjudicate';
 import { PERSONA_NAMES } from '../engine/ai/personas';
 
 // ─────────────────────────── Types ───────────────────────────────────────────
@@ -146,43 +149,6 @@ function deriveSeed(
   salt: number,
 ): number {
   return fnv1a32(`${personaA}|${personaB}|${map}|${i}|${salt}`);
-}
-
-function totalUnitCost(state: GameState, player: PlayerId): number {
-  let n = 0;
-  for (const u of Object.values(state.units)) {
-    if (u.owner === player) n += UNITS[u.type].cost * (u.hp / 100);
-  }
-  return n;
-}
-
-function hqOwnedBy(state: GameState, player: PlayerId): number {
-  let n = 0;
-  for (const row of state.map) {
-    for (const tile of row) {
-      if (tile.terrain === 'hq' && tile.owner === player) n += 1;
-    }
-  }
-  return n;
-}
-
-/**
- * Tournament-style adjudication on the FINAL state.
- * - raw winner wins,
- * - else more HQ tiles owned,
- * - else higher unit cost (by margin > 1),
- * - else draw.
- */
-function adjudicate(result: RunMatchResult): PlayerId | 'draw' {
-  if (result.winner === 0) return 0;
-  if (result.winner === 1) return 1;
-  const hq0 = hqOwnedBy(result.finalState, 0);
-  const hq1 = hqOwnedBy(result.finalState, 1);
-  if (hq0 !== hq1) return hq0 > hq1 ? 0 : 1;
-  const c0 = totalUnitCost(result.finalState, 0);
-  const c1 = totalUnitCost(result.finalState, 1);
-  if (Math.abs(c0 - c1) > 1) return c0 > c1 ? 0 : 1;
-  return 'draw';
 }
 
 function avg(xs: number[]): number {
@@ -314,7 +280,7 @@ export async function runRoundRobin(opts: RoundRobinOptions): Promise<RoundRobin
       }
     }
 
-    const verdict = adjudicate(result);
+    const verdict = adjudicate(result.finalState);
     let outcome: 'A' | 'B' | 'draw';
     if (verdict === 'draw') outcome = 'draw';
     else if (verdict === t.sideA) outcome = 'A';

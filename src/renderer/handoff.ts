@@ -40,6 +40,11 @@ export type HandoffDeps = {
   fogOn: boolean;
   /** Read LIVE at each END_TURN — controllers switch via the dropdowns. */
   bothHuman: () => boolean;
+  /** Extra "the match is over" predicate, ORed into the `state.winner` guard:
+   *  there is nobody to pass the device to once the day cap has adjudicated
+   *  the match (src/renderer/adjudication.ts), and the scrim would otherwise
+   *  land on top of the verdict overlay. Defaults to false. */
+  matchConcluded?: () => boolean;
 };
 
 export function createHandoff(deps: HandoffDeps): Handoff {
@@ -112,6 +117,7 @@ export function createHandoff(deps: HandoffDeps): Handoff {
     if (!deps.fogOn) return;
     if (!deps.bothHuman()) return;
     if (ev.state.winner !== null) return;
+    if (deps.matchConcluded?.()) return;
     show(ev.state.currentPlayer);
   });
 

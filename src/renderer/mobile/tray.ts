@@ -63,6 +63,13 @@ import type { InputController, InputState } from '../input';
 import type { AIDriver, AIChoice } from '../ai-driver';
 import { AI_CHOICES } from '../ai-driver';
 import { MAP_NAMES, mapLabel, resolveMapName } from '../maps';
+import {
+  ADJUDICATED_EYEBROW,
+  adjudicate,
+  adjudicationDetail,
+  adjudicationTitle,
+  stalemateReached,
+} from '../adjudication';
 import type { AnimationQueue } from '../animations';
 import type { AudioModule } from '../audio';
 import type { SpriteCache } from '../sprites';
@@ -123,10 +130,20 @@ export type TrayDeps = {
   sprites: SpriteCache;
   /** Reports the measured tray height (CSS px) whenever it changes. */
   onInsetsChange?: (bottom: number) => void;
+  /** Enforce the skirmish day cap (src/renderer/adjudication.ts): past day 60
+   *  a stand-off is adjudicated and the tray takes over with the verdict.
+   *  Defaults to true — main.ts passes `false` for campaign missions, which
+   *  carry their own `defeat.dayLimit`. */
+  adjudicateStalemate?: boolean;
 };
 
 export function createTray(deps: TrayDeps): Tray {
   ensureStyle();
+
+  // Skirmish stalemate rule. Fixed at mount: whether this shell is hosting a
+  // campaign mission never changes for the life of the page.
+  const capOn = deps.adjudicateStalemate ?? true;
+  const capped = (state: GameState): boolean => capOn && stalemateReached(state);
 
   const root = document.createElement('div');
   root.className = 'tray-root';
@@ -349,14 +366,16 @@ export function createTray(deps: TrayDeps): Tray {
     chev.className = 'tray-chev';
     chev.textContent = '▸▸';
     btn.appendChild(chev);
-    // Same predicate as chrome.ts: dead while the match is over or the AI holds
-    // the turn, because the click handler is inert in both windows.
-    const disabled = state.winner !== null || deps.aiDriver.inputLocked(state);
+    // Same predicate as chrome.ts: dead while the match is over — won outright
+    // or adjudicated at the day cap — or the AI holds the turn, because the
+    // click handler is inert in all of those windows.
+    const disabled =
+      state.winner !== null || capped(state) || deps.aiDriver.inputLocked(state);
     btn.disabled = disabled;
     btn.classList.toggle('disabled', disabled);
     btn.addEventListener('click', () => {
       const s = deps.emitter.getState();
-      if (s.winner !== null) return;
+      if (s.winner !== null || capped(s)) return;
       if (deps.aiDriver.inputLocked(s) || deps.animQueue.busy()) return;
       // Drop any selection first so the next player doesn't inherit a staged
       // action pointing at a unit that is no longer theirs to command.
@@ -676,6 +695,39 @@ export function createTray(deps: TrayDeps): Tray {
     return `Player ${winner + 1} took the field on day ${dayOf(state.turn)}`;
   }
 
+  /**
+   * Day cap reached with no winner — the skirmish stalemate rule
+   * (src/renderer/adjudication.ts). Same takeover shape as `renderWinner`, so
+   * the tray stays the one surface every outcome is reported on, but the
+   * eyebrow says "Adjudicated": the engine never called a winner and this
+   * module is not going to pretend it did. End Turn is gone with the rest of
+   * the state body, and the board itself is locked through the input
+   * controller's `matchConcluded` predicate (main.ts).
+   */
+  function renderAdjudicated(state: GameState, hint: HTMLElement): string {
+    const verdict = adjudicate(state);
+    const wrap = document.createElement('div');
+    wrap.className = 'tray-complete';
+    if (verdict !== 'draw') wrap.dataset.player = String(verdict);
+
+    const eyebrow = document.createElement('div');
+    eyebrow.className = 'tray-comp-eyebrow';
+    eyebrow.textContent = ADJUDICATED_EYEBROW;
+
+    const title = document.createElement('div');
+    title.className = 'tray-comp-title';
+    title.textContent = adjudicationTitle(verdict, PLAYER_NAMES);
+
+    wrap.append(eyebrow, title, hint);
+    body.appendChild(wrap);
+
+    const again = makeBtn('PLAY AGAIN', 'gold');
+    again.dataset.action = 'play-again';
+    again.addEventListener('click', () => window.location.reload());
+    actions.appendChild(again);
+    return adjudicationDetail(verdict);
+  }
+
   /** Confirm before a page reload that would silently discard a live match
    *  (chrome.ts's guard, same definition of "in progress"). */
   function confirmDiscard(): boolean {
@@ -842,10 +894,12 @@ export function createTray(deps: TrayDeps): Tray {
   // settles on idle — a stale-but-stable band beats a jumping one.
   let lastBottom = -1;
   function atBaseline(): boolean {
+    const state = deps.emitter.getState();
     return (
       presented === null &&
       !toolsOpen &&
-      deps.emitter.getState().winner === null &&
+      state.winner === null &&
+      !capped(state) &&
       deps.input.getState().kind === 'idle'
     );
   }
@@ -898,6 +952,9 @@ export function createTray(deps: TrayDeps): Tray {
     } else if (state.winner !== null) {
       panel.dataset.trayState = 'winner';
       text = renderWinner(state, hint);
+    } else if (capped(state)) {
+      panel.dataset.trayState = 'adjudicated';
+      text = renderAdjudicated(state, hint);
     } else {
       panel.dataset.trayState = s.kind;
       text = renderInput(state, s, hint);
