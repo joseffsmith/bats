@@ -15,6 +15,8 @@
 // The store is a factory with an injectable `storage` so tests can drive the
 // throwing / corrupt paths without touching a real localStorage.
 
+import { MAX_STARS } from './types';
+
 export const PROGRESS_KEY = 'bats.campaign.v1';
 export const PROGRESS_VERSION = 1;
 
@@ -53,8 +55,6 @@ export type ProgressStore = {
    *  Screens can use this to warn that progress won't survive a reload. */
   isEphemeral(): boolean;
 };
-
-export const MAX_STARS = 3;
 
 function freshRecord(): CampaignProgress {
   return { version: PROGRESS_VERSION, missions: {} };

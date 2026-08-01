@@ -15,7 +15,6 @@ import type {
   Unit,
   UnitType,
 } from '../engine/core/types';
-import { unitAt } from '../engine/core/types';
 import { isVisibleTo, visibleTiles } from '../engine/queries/selectors';
 import type { AnimationQueue, Anim } from './animations';
 import { easeInOutCubic } from './easing';
@@ -1429,9 +1428,5 @@ export function fitTileSize(
   // leave sub-32 sizes unsnapped so tight phone fits aren't rounded away.
   if (fit >= 32) fit = Math.floor(fit / 16) * 16;
   return Math.max(MIN_TILE_SIZE, Math.min(MAX_TILE_SIZE, fit));
-}
-
-export function isUnitAt(state: GameState, c: Coord): Unit | undefined {
-  return unitAt(state, c);
 }
 

@@ -19,9 +19,7 @@
 import type { GameState, PlayerId, UnitId } from '../engine/core/types';
 import type { Emitter, EmitterEvent } from '../renderer/emitter';
 import type { Mission, MissionResult } from './types';
-import { dayOf } from './types';
-
-export const MAX_STARS = 3;
+import { dayOf, MAX_STARS } from './types';
 
 export type MissionTrackerOptions = {
   emitter: Emitter;

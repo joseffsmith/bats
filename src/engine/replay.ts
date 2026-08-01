@@ -5,10 +5,9 @@
 // to reach the final state. As a bonus we yield each intermediate state so a
 // viewer can step through the match action-by-action.
 //
-// Two surface APIs:
+// Surface API:
 //   - replay(initial, actions): produces the final GameState (and intermediate
 //     states via `states`).
-//   - stepReplay(initial, actions, n): produces the state after `n` actions.
 //
 // We deliberately log under the new `replay` category so a CLI or browser
 // stepper can opt into per-step traces without flooding match logs.
@@ -47,21 +46,6 @@ export function replay(initial: GameState, actions: readonly Action[]): ReplayRe
     states.push(state);
   }
   return { states, finalState: state, skipped };
-}
-
-/** Walk forward `n` actions from initial. Negative `n` is treated as 0. */
-export function stepReplay(
-  initial: GameState,
-  actions: readonly Action[],
-  n: number,
-): GameState {
-  const target = Math.max(0, Math.min(actions.length, n));
-  let state = initial;
-  for (let i = 0; i < target; i++) {
-    const a = actions[i]!;
-    state = reduce(state, a);
-  }
-  return state;
 }
 
 // ─────────────────────────── JSONL log parsing ───────────────────────────────
