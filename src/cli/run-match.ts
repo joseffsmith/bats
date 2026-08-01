@@ -24,6 +24,8 @@ import { createRng } from '../engine/core/rng';
 import { randomAI } from '../engine/ai/random';
 import { utilityAI } from '../engine/ai/utility';
 import { personaAI, PERSONAS, PERSONA_NAMES } from '../engine/ai/personas';
+import { probeAI, PROBE_NAMES, isProbeName } from '../engine/ai/probes';
+import { benchmarkAI, BENCHMARKS, BENCHMARK_NAMES } from '../engine/ai/benchmarks';
 import type { AI } from '../engine/ai/types';
 import type {
   Action,
@@ -42,6 +44,12 @@ import { log, setLogEnabled } from '../engine/core/logger';
 //
 // Persona names (loaded from `src/data/ai-personas.json`) are also accepted —
 // `isAIName` returns true for any persona name as well as the built-ins.
+//
+// So are the scripted probe opponents (`probe-rush`, `probe-camper`,
+// `probe-kiter` — see `engine/ai/probes.ts`) and the frozen benchmark
+// generations (`*-i8` — see `engine/ai/benchmarks.ts`). Both are deliberately
+// absent from `PERSONAS`/`PERSONA_NAMES`; they resolve here so the CLI,
+// tournament, and tuning harnesses can pit anything against anything.
 export type BuiltinAIName = 'random' | 'utility' | 'tier1' | 'tier2' | 'tier3';
 export type AIName = BuiltinAIName | string;
 
@@ -53,15 +61,20 @@ export const BUILTIN_AI_NAMES: ReadonlyArray<BuiltinAIName> = [
   'tier3',
 ];
 
-/** Combined list — built-ins plus all loaded persona names. */
+/** Combined list — built-ins, personas, probes, and frozen benchmarks. */
 export const AI_NAMES: ReadonlyArray<string> = [
   ...BUILTIN_AI_NAMES,
   ...PERSONA_NAMES,
+  ...PROBE_NAMES,
+  ...BENCHMARK_NAMES,
 ];
 
 export function isAIName(s: string): s is AIName {
   return (
-    (BUILTIN_AI_NAMES as ReadonlyArray<string>).includes(s) || s in PERSONAS
+    (BUILTIN_AI_NAMES as ReadonlyArray<string>).includes(s) ||
+    s in PERSONAS ||
+    isProbeName(s) ||
+    s in BENCHMARKS
   );
 }
 
@@ -102,6 +115,13 @@ export function makeAI(spec: AISpec): AI {
   }
   if (spec.name in PERSONAS) {
     return personaAI(spec.name, { fog });
+  }
+  // Probes plan against engine truth and ignore `fog` — see probes.ts.
+  if (isProbeName(spec.name)) {
+    return probeAI(spec.name);
+  }
+  if (spec.name in BENCHMARKS) {
+    return benchmarkAI(spec.name, { fog });
   }
   throw new Error(`unknown AI name: ${spec.name}`);
 }
