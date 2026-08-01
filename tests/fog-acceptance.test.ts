@@ -4,10 +4,31 @@
 // by ai-tier3-vs-tier1.test.ts). Mirrors that test but with `fog: true` on
 // both AIs. crossroads is skipped to keep wall-time bounded; the duel run
 // is the load-bearing acceptance gate for the fog feature.
+//
+// SECOND MAP (canyon). Added after the cross-map sweep in
+// `scripts/fog-sweep.ts` — see the "Cross-map fog sweep" subsection of
+// AI_TUNING.md. canyon is the cheapest non-duel map (~6s/match under fog,
+// roughly half of crossroads), so it broadens the gate from one map to two
+// for ~7s of wall-time.
+//
+// Two things the sweep established that shape what is asserted below:
+//
+//   1. SEEDS ARE INERT for utility-vs-utility. Neither tier1/tier2/tier3 nor
+//      any persona reads `ctx.rng` — only `random` and the scripted probes do.
+//      So the duel case's ten seeds are ten replays of ONE match and can only
+//      score 10/10 or 0/10. The canyon case therefore runs a single match
+//      rather than pretending a seed loop adds samples. (Re-check any time
+//      with `npx tsx scripts/fog-sweep.ts --verify-seeds`.)
+//   2. SIDE BALANCE IS NOT A FOG PROPERTY. On canyon, tier3 beats tier1 from
+//      p0 and loses from p1 — but it does that with fog OFF too, identically.
+//      So this asserts the p0 orientation the duel gate already pins; a
+//      both-sides assertion would fail for reasons that have nothing to do
+//      with fog. The fog-vs-no-fog equivalence is what the sweep measures.
 
 import { describe, expect, it } from 'vitest';
 import './test-helpers';
 
+import canyonMap from '../src/data/maps/canyon.json';
 import duelMap from '../src/data/maps/duel.json';
 import { runMatch } from '../src/cli/run-match';
 import { UNITS } from '../src/engine/data';
@@ -61,4 +82,17 @@ describe('fog acceptance: tier3 vs tier1 with fog on', () => {
     }
     expect(wins).toBeGreaterThanOrEqual(7);
   }, 240_000);
+
+  it('tier3 beats tier1 on canyon under fog', async () => {
+    const result = await runMatch({
+      mapName: 'canyon',
+      maxTurns: 200,
+      seed: 1,
+      mapJson: canyonMap,
+      writeLog: false,
+      p0: { name: 'tier3', fog: true },
+      p1: { name: 'tier1', fog: true },
+    });
+    expect(adjudicate(result.finalState, result.winner)).toBe(0);
+  }, 60_000);
 });

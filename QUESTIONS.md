@@ -240,11 +240,24 @@ Questions and assumptions logged during autonomous execution. Resolved questions
   suggested an optional fade on viewer change for hot-seat play,
   gated by `?private-mode=1`. Deferred — the default works fine for
   AI-vs-AI which is the dominant case.
-- **Phantom-threat sensitivity.** Fog AI uses
-  `PHANTOM_THREAT_PER_HIDDEN_TILE = 2` (see `AI_TUNING.md`). Tier3-fog
-  vs tier1-fog wins ≥7/10 on duel at this value; crossroads / armada
-  / island_hop / canyon / highlands haven't been measured under fog.
-  Open: do they hold without re-tuning?
+- **Phantom-threat sensitivity.** ~~Open: do the thresholds hold on the
+  other five maps without re-tuning?~~ **MEASURED** — see "Cross-map fog
+  sweep" in `AI_TUNING.md`, harness `scripts/fog-sweep.ts` (144 matches,
+  6 maps × 3 ladder matchups × 2 sides × fog on/off). Answer: **fog is
+  neutral everywhere** — on all six maps the fog-on tier3-vs-tier1 result
+  matches or beats its own fog-off control (highlands actually improves,
+  0/2 → 1/2). `PHANTOM_THREAT_PER_HIDDEN_TILE = 2` needs no re-tuning.
+  The ≥70 % bar is only *met* on duel, but it fails on the other five
+  with fog OFF too, so those are pre-existing map/side effects — not fog
+  ones. Two things the sweep turned up that are still open:
+  - **Seeds are inert for utility-vs-utility.** No utility AI or persona
+    reads `ctx.rng`, so every seed replays a byte-identical log. The
+    "≥7/10 over seeds 1..10" in `tests/fog-acceptance.test.ts` is ten
+    replays of one match — it can only score 10/10 or 0/10. Worth
+    deciding whether those gates should sweep sides instead of seeds.
+  - **`duel`, tier3 vs tier2 inverts under fog** (2/2 → 0/2) — the one
+    genuinely fog-caused flip in the sweep, on the map fog was tuned on.
+    Unpinned rung, so it is a finding, not a failure; wants a trace.
 
 ## Phase 7 round 7 — amphibious AI
 
@@ -298,10 +311,13 @@ Questions and assumptions logged during autonomous execution. Resolved questions
   `viewStateForPlayer` indefinitely — until the viewer scouts the
   tile and proves it empty. Matches AW-DS behaviour (you don't know
   the unit is dead). Could surprise players in long games.
-- **Aggressive AI numbers on non-duel maps.** Fog-acceptance still
-  holds tier3-fog ≥7/10 on duel after Aggressive ghost consumption
-  landed. Crossroads / armada / island_hop / canyon / highlands
-  not yet measured under fog v1.1 — same gap as v1.0 noted above.
+- **Aggressive AI numbers on non-duel maps.** ~~Not yet measured under
+  fog v1.1.~~ **MEASURED** — same sweep as the v1.0 gap above: "Cross-map
+  fog sweep" in `AI_TUNING.md`, rerun with `npx tsx scripts/fog-sweep.ts`.
+  All five remaining maps are covered fog-on and fog-off; Aggressive
+  ghost consumption costs nothing relative to the fog-off control on any
+  of them. `tests/fog-acceptance.test.ts` now also pins `canyon` (the
+  cheapest non-duel map, ~7 s) so the gate is no longer duel-only.
 - **Mountain bonus + air units.** Bonus applies to ANY unit on a
   mountain tile, including air units that happen to end a turn there.
   In practice the terrain table makes mountain impassable to
