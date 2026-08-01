@@ -47,6 +47,10 @@
 //          reachable tile → move-previewed, enemy in reach → attack-staged with
 //          an auto-picked firing tile, capturable property → capture-staged.
 //          NEVER commits — the board does not change under the player's finger.
+//          A staged move also paints the unit's attack RADAR from the staged
+//          destination: confirming is MOVE + WAIT (the unit's whole turn), so
+//          the useful read is not "what can I hit this turn" but "where can I
+//          strike NEXT turn if I confirm this".
 //   tap 3  on the SAME staged tile commits, guarded by a 150ms debounce so a
 //          double-tap can't fire the action. Tapping a different legal target
 //          re-stages instead; anything else deselects.
@@ -55,7 +59,10 @@
 // MOVE then CAPTURE — dispatched synchronously in one handler. No new reducer
 // action types, no engine changes. If the follow-up after the MOVE is genuinely
 // ambiguous (`needsOrders`), the MOVE lands alone and the existing action menu
-// opens to ask.
+// opens to ask. A bare staged MOVE likewise keeps every remaining option: when
+// the unit still has any real order at the destination (attack, unload,
+// dive/surface — anything beyond Wait) the orders menu opens instead of the
+// implicit WAIT, so moving first never forfeits the follow-up.
 
 import type {
   Action,
@@ -271,6 +278,46 @@ export function createInputController(
     return area;
   }
 
+  // Staged-move radar (mobile grammar): the same question `threatAreaFor` asks
+  // of an enemy, asked of OUR unit as if it already stood on the staged
+  // destination with a fresh turn. Costs a Dijkstra per recompute and
+  // `getOverlay` runs every frame, so memoise on (state, unit, destination) —
+  // identical trick to `threatMemo`.
+  let radarMemo: {
+    state: GameState;
+    unitId: string;
+    dest: string;
+    area: Coord[];
+  } | null = null;
+
+  function nextTurnRadarFor(
+    state: GameState,
+    unit: Unit,
+    destination: Coord,
+  ): Coord[] {
+    const dest = `${destination.x},${destination.y}`;
+    if (
+      radarMemo &&
+      radarMemo.state === state &&
+      radarMemo.unitId === unit.id &&
+      radarMemo.dest === dest
+    ) {
+      return radarMemo.area;
+    }
+    const ghost: Unit = { ...unit, pos: destination };
+    const ghostState: GameState = {
+      ...state,
+      units: { ...state.units, [unit.id]: ghost },
+    };
+    const area = computeAttackArea(
+      ghostState,
+      ghost,
+      reachableTiles(ghostState, ghost),
+    );
+    radarMemo = { state, unitId: unit.id, dest, area };
+    return area;
+  }
+
   function getOverlay(): Overlay {
     const state = emitter.getState();
     const ov: Overlay = {};
@@ -321,26 +368,45 @@ export function createInputController(
         }
         break;
       }
-      case 'move-previewed':
-        ov.selected = inputState.unit.pos;
-        ov.moveRange = inputState.reachable.map((r) => r.coord);
-        ov.movePath = inputState.path;
-        // Identical attack fringe to unit-selected — one concept, one palette
-        // across both states (previously the attack overlay vanished here and
-        // the same range flipped to clean blue). Arcs are unioned over the FULL
-        // reachable set, not the previewed destination: the MOVE isn't committed
-        // yet, so the player is still choosing which tile to fire from.
-        if (!inputState.unit.hasActed) {
-          ov.attackRange = attackFringe(state, inputState.unit, inputState.reachable);
-          if (UNITS[inputState.unit.type].indirect) {
-            ov.attackRangeBorder = computeAttackArea(
-              state,
-              inputState.unit,
-              inputState.reachable,
-            );
+      case 'move-previewed': {
+        const sel = inputState;
+        ov.selected = sel.unit.pos;
+        ov.moveRange = sel.reachable.map((r) => r.coord);
+        ov.movePath = sel.path;
+        if (grammar === 'mobile') {
+          // Confirming a staged move is MOVE + WAIT — the unit's whole turn —
+          // so this-turn arcs would answer a question the player is no longer
+          // asking. Paint the attack radar instead: everywhere the unit could
+          // strike NEXT turn from the staged destination. Same disjoint-fill
+          // rule as the fringe (fill stays off the blue move range, the border
+          // traces the full radar), and no radar when the staged tile holds a
+          // friendly transport — the unit ends that move as cargo.
+          if (!unitAt(state, sel.destination)) {
+            const radar = nextTurnRadarFor(state, sel.unit, sel.destination);
+            if (radar.length > 0) {
+              const reachKeys = new Set(
+                sel.reachable.map((r) => `${r.coord.x},${r.coord.y}`),
+              );
+              ov.attackRange = radar.filter(
+                (c) => !reachKeys.has(`${c.x},${c.y}`),
+              );
+              ov.attackRangeBorder = radar;
+            }
+          }
+        } else if (!sel.unit.hasActed) {
+          // Identical attack fringe to unit-selected — one concept, one palette
+          // across both states (previously the attack overlay vanished here and
+          // the same range flipped to clean blue). Arcs are unioned over the
+          // FULL reachable set, not the previewed destination: the MOVE isn't
+          // committed yet, so the player is still choosing which tile to fire
+          // from.
+          ov.attackRange = attackFringe(state, sel.unit, sel.reachable);
+          if (UNITS[sel.unit.type].indirect) {
+            ov.attackRangeBorder = computeAttackArea(state, sel.unit, sel.reachable);
           }
         }
         break;
+      }
       case 'action-menu':
         ov.selected = inputState.anchor;
         ov.actionMenu = { tile: inputState.anchor, entries: inputState.entries };
@@ -975,13 +1041,21 @@ export function createInputController(
     }
     const moved = moveLeg(unit, path);
     if (!moved) return;
-    if (needsOrders(emitter.getState(), moved)) {
+    // A bare move used to close the unit out with an unconditional implicit
+    // WAIT ("the tap IS the turn"), only asking when capture AND attack were
+    // both live (needsOrders). That silently discarded every lone post-move
+    // option: a direct unit landing beside an enemy couldn't attack, a
+    // transport could never unload after moving, a submarine couldn't dive.
+    // So: if ANY real order remains at the destination — anything beyond Wait —
+    // open the orders menu and let the player choose; waiting is one more tap.
+    // Only a unit with nothing left gets the implicit WAIT.
+    const entries = computeActionMenuEntries(emitter.getState(), moved, moved.pos);
+    if (entries.some((e) => e.enabled && e.label !== 'Wait')) {
       openActionMenuFor(moved, moved.pos);
       return;
     }
     // MOVE marks hasMoved but NOT hasActed (see reducer.applyMove), so a bare
-    // move would leave the unit hanging around as still-actionable. The mobile
-    // grammar treats "I tapped this tile" as the unit's whole turn, so close it
+    // move would leave the unit hanging around as still-actionable. Close it
     // out with the same WAIT the action menu's Wait entry dispatches.
     commit({ type: 'WAIT', unitId: moved.id });
     setState({ kind: 'idle' }, inputState.kind);

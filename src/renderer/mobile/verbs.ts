@@ -161,8 +161,11 @@ function compareFiringTiles(
  *   - it can attack something from where it stands.
  *
  * Anything less is not ambiguous — a lone capture or a lone attack is exactly
- * what the staged verb already said, and a bare move is an implicit wait. This
- * is the ONLY reason the mobile grammar opens the orders menu.
+ * what the staged verb already said. Note this only gates the ATTACK/CAPTURE
+ * commits: a BARE staged move asks a wider question in `commitStagedMove`
+ * (any enabled order beyond Wait opens the menu), because a plain move never
+ * named a follow-up verb at all — an implicit WAIT there was throwing away
+ * lone attacks, unloads and dives.
  */
 export function needsOrders(state: GameState, unit: Unit): boolean {
   if (unit.hasActed) return false;

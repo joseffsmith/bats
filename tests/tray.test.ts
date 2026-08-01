@@ -236,6 +236,9 @@ describe('tray — state rendering', () => {
     expect(chips).toEqual(['DEF ★☆☆☆', '2 TILES']);
     expect(q('[data-tray-confirm]').textContent).toBe('CONFIRM MOVE');
     expect(hintText()).toContain('confirm the move');
+    // Armed unit staged onto an empty tile: the hint names the radar the board
+    // is painting.
+    expect(hintText()).toContain('strike next turn');
   });
 
   it('capture-staged: property card + CONFIRM CAPTURE', () => {

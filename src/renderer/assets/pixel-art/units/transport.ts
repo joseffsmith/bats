@@ -1,26 +1,28 @@
-// Transport copter — a boxy troop ferry, read against the slim gunship: a tall,
-// distinctly rectangular team-colour cabin (no tapering, no nose gun), a recessed
-// side DOOR panel on the flank, an upright tail rotor mounted straight onto the
-// boxy tail (no thin boom), main rotor across the top, teal cockpit glass at the
-// nose, twin skids. The solid slab body is the silhouette that keeps it from
-// being mistaken for the copter. Light top-left: roof (D/C), belly shadow (A).
+// Transport — a small naval troop launch (movementClass: sea, ferries one foot
+// unit; see units.json). Read against the LANDER, the other ferry: the lander
+// is a long, low, near-empty barge with its wheelhouse at the stern, while the
+// transport is a stubby launch dominated by a tall CENTRED troop cabin with a
+// lit window facing the bow (right). Team-colour hull low in the water with a
+// foam wake (Q) at the waterline so it reads as a boat at a glance — it was
+// previously drawn as a copter, which promised flight the unit doesn't have.
+// Light top-left: cabin roof (D/C), hull shadow (A).
 
 import type { PixelGrid } from '../types';
 
 export const transport: PixelGrid = [
   '................',
-  '...RRRRRRRRRR...',
-  '.........K......',
-  '......KKKKKKKK..',
-  '.....KDCCBBBBLK.',
-  '..RKKABBKAAKBLK.',
-  '..RKABBBKAAKBLK.',
-  '..RKABBBKAAKBBK.',
-  '..RKKBBBBBBBBK..',
-  '......KBBBBBBK..',
-  '......KKKKKKKK..',
-  '.......K...K....',
-  '.....KKKKKKKKK..',
+  '................',
+  '................',
+  '.....KKKKK......',
+  '.....KDDCK......',
+  '.....KCBLK......',
+  '.....KBBLK......',
+  '..KKKKBBBKKKK...',
+  '.KDCCBBBBBBBCK..',
+  '.KCBBBBBBBBBBAK.',
+  '.KABBBBBBBBBAAK.',
+  '..KKAAAAAAAAKK..',
+  '..QQ..QQQ..QQ...',
   '................',
   '................',
   '................',
