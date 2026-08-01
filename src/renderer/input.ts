@@ -39,7 +39,9 @@
 // exactly one of the two handlers and every desktop branch is untouched.
 //
 //   tap 1  selects or inspects. Own unit → unit-selected. Enemy → enemy-inspect
-//          (with a toggleable threat overlay). Terrain/property → tile-inspect.
+//          (threat overlay ON by default — "what can this thing hit" is the
+//          question the tap is asking; the tray button hides it).
+//          Terrain/property → tile-inspect.
 //          Own empty factory → build-menu-open, same as desktop. NEVER commits.
 //   tap 2  stages a verb inferred from what was tapped (mobile/verbs.ts):
 //          reachable tile → move-previewed, enemy in reach → attack-staged with
@@ -831,8 +833,11 @@ export function createInputController(
       return;
     }
     if (occupant) {
+      // Threat range on by default: the reason to tap an enemy is "what can it
+      // hit", so the answer shouldn't hide behind a second tap. The tray's
+      // toggle turns it off for players who just want the stat card.
       setState(
-        { kind: 'enemy-inspect', unit: occupant, showThreat: false },
+        { kind: 'enemy-inspect', unit: occupant, showThreat: true },
         inputState.kind,
       );
       return;
