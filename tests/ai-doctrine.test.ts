@@ -28,7 +28,8 @@ import './test-helpers';
 import { personaAI } from '../src/engine/ai/personas';
 import { createRng } from '../src/engine/core/rng';
 import { manhattan } from '../src/engine/core/types';
-import type { GameState, Unit } from '../src/engine/core/types';
+import type { Action, GameState, Unit, UnitType } from '../src/engine/core/types';
+import { DAMAGE, UNITS } from '../src/engine/data';
 import {
   PERSONA_LIST,
   arena,
@@ -515,5 +516,90 @@ describe('doctrine: a pinned defender still fights', () => {
           `→ ${dest.x},${dest.y} against an enemy at ${intruder.pos.x},${intruder.pos.y}`,
       ).toBe(true);
     });
+  }
+});
+
+// ────────────── 7. Buys an army that can fight the one on the board ──────────
+//
+// The build phase is doctrine too: no amount of good movement rescues a roster
+// that cannot hurt what it is facing. `enumerateBuilds` walks `preferred` and
+// takes the first AFFORDABLE entry, so a persona's list is really a set of
+// PRICE BANDS, and a cheap entry sitting below an expensive one owns every turn
+// the treasury is short of the expensive one.
+//
+// The unit this catches is `recon` (cost 4000): `DAMAGE.recon.tank = 10`
+// against `DAMAGE.tank.recon = 85`. Four infantry — or most of a tank — buys a
+// scout that loses to everything it meets. Iteration 10 measured exactly this
+// for balanced (31% of its build budget) and removing recon from its list took
+// it from 0% to 50% against economist.
+//
+// The position: an all-armour enemy, our own capturer requirement already
+// satisfied (so the capturer-crisis override is off) and a healthy force (so
+// the infantry floor is off), with funds parked in a band BELOW a tank. The
+// competent answer is either something that can hurt a tank or a cheap body
+// that can take ground; what it must not be is 4000 spent on 10 damage.
+describe('doctrine: buys an army that can fight the one on the board', () => {
+  /** p1 owns an idle factory and `funds`; p0 fields nothing but armour. */
+  function armourOnTheBoard(funds: number): GameState {
+    return arena({
+      width: 12,
+      height: 5,
+      hq0: { x: 0, y: 2 },
+      hq1: { x: 11, y: 2 },
+      tiles: [{ pos: { x: 9, y: 2 }, terrain: 'factory', owner: 1 }],
+      units: [
+        { type: 'tank', owner: 0, pos: { x: 4, y: 1 }, hp: 100 },
+        { type: 'tank', owner: 0, pos: { x: 4, y: 2 }, hp: 100 },
+        { type: 'tank', owner: 0, pos: { x: 4, y: 3 }, hp: 100 },
+        // Three infantry + three tanks: capture-capable (no capturer crisis)
+        // and six units (no infantry floor, up to floor 4).
+        { type: 'infantry', owner: 1, pos: { x: 8, y: 1 }, hp: 100 },
+        { type: 'infantry', owner: 1, pos: { x: 8, y: 2 }, hp: 100 },
+        { type: 'infantry', owner: 1, pos: { x: 8, y: 3 }, hp: 100 },
+        { type: 'tank', owner: 1, pos: { x: 7, y: 1 }, hp: 100 },
+        { type: 'tank', owner: 1, pos: { x: 7, y: 2 }, hp: 100 },
+        { type: 'tank', owner: 1, pos: { x: 7, y: 3 }, hp: 100 },
+      ],
+      funds: { 0: 0, 1: funds },
+      currentPlayer: 1,
+    });
+  }
+
+  /** Damage a freshly-built `t` would do to the armour it is being bought to face. */
+  const vsTank = (t: UnitType): number => DAMAGE[t]?.tank ?? 0;
+
+  // Was red for AGGRESSOR alone (iteration 11, WP7) — the same recon
+  // money-fire iteration 10 removed from balanced, still live in the persona
+  // whose own description says "tank push". Its list was
+  // [bomber 14000, cruiser 11000, tank 7000, fighter 12000, recon 4000,
+  // infantry 1000], so every turn the treasury sat between 4000 and 6999 —
+  // which on these maps is most of them — it bought a recon. Measured over the
+  // iteration-10 post pilot: 9.8 recon/match against 5.7 tanks, and on duel
+  // (where it lost all six deterministic games) 8.0 recon against 1.3 tanks.
+  // Green for all four since iteration 11 dropped `recon` from that list.
+  const BUILD_RED: RedMap = {};
+  for (const funds of [4000, 6000]) {
+    for (const persona of PERSONA_LIST) {
+      doctrine(
+        `does not burn ${funds} on a unit that cannot fight armour`,
+        persona,
+        BUILD_RED,
+        () => {
+          const state = armourOnTheBoard(funds);
+          const actions = personaAI(persona).takeTurn({ state, player: 1, rng: createRng(1) });
+          const builds = actions.filter(
+            (a): a is Extract<Action, { type: 'BUILD' }> => a.type === 'BUILD',
+          );
+          for (const b of builds) {
+            const ok = UNITS[b.unitType].canCapture || vsTank(b.unitType) >= 25;
+            expect(
+              ok,
+              `${persona}: bought a ${b.unitType} (cost ${UNITS[b.unitType].cost}) against an ` +
+                `all-tank army — it cannot capture and does ${vsTank(b.unitType)} damage to a tank`,
+            ).toBe(true);
+          }
+        },
+      );
+    }
   }
 });

@@ -37,7 +37,7 @@ const FROZEN_DESCRIPTION =
  * sanctioned response to that test failing (see its comment); re-freezing the
  * benchmark is not.
  */
-const RETUNED_SINCE_I8 = new Set(['turtle', 'balanced']);
+const RETUNED_SINCE_I8 = new Set(['turtle', 'balanced', 'aggressor']);
 
 describe('persona roster contract', () => {
   // If this fails, someone added a persona (or leaked a probe/benchmark into
@@ -91,9 +91,11 @@ describe('i8 benchmarks', () => {
     // Retuned since the freeze (do NOT re-add without re-freezing):
     //   turtle, balanced — iteration 10 (WP6). turtle's
     //   `roleOverrides.defender.futureThreat` 3.0 → 0.5 and balanced's
-    //   `buildPolicy` (recon dropped, infantryFloor 4). aggressor and
-    //   economist are still byte-identical to i8, and the cross-gen table
-    //   uses that: `economist vs economist-i8` is a true mirror at 50.0%.
+    //   `buildPolicy` (recon dropped, infantryFloor 4).
+    //   aggressor — iteration 11 (WP7): `buildPolicy` (recon dropped,
+    //   infantryFloor 3 → 4) and `weights.counterRisk` 0.7 → 1.0. economist
+    //   alone is still byte-identical to i8, and the cross-gen table uses
+    //   that: `economist vs economist-i8` is a true mirror at 50.0%.
     for (const persona of PERSONA_NAMES.filter((p) => !RETUNED_SINCE_I8.has(p))) {
       const live = PERSONAS[persona]!;
       const frozen = BENCHMARKS[`${persona}-i8`]!;

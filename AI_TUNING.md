@@ -1556,3 +1556,516 @@ Mission difficulty has shifted: **mission 1 (turtle) is harder** than it was
 (aggressor) is easier again** (27.8 → 16.7) and remains the easiest opponent
 in the game while being pinned as the final mission. Missions 2 and 3 are now
 indistinguishable in difficulty.
+
+---
+
+## Iteration 11 — the tank-push persona was buying scouts (pilot, 10/pair/map, land maps)
+
+**Trigger:** the last scheduled tuning package, escalated from iterations 9 and
+10. Aggressor sat at **16.7%** — last in the field, losing exactly 5 of every 6
+games to all three opponents — while the campaign pins it as the FINAL mission
+on the assumption that it is the HARDEST opponent. Iteration 10 also left
+economist and balanced in an exact 72.2% tie and recorded that separating them
+was unreachable from either persona's own lever family.
+
+### Diagnosis (traces, not theory)
+
+Four hypotheses came in with the brief. Two die on inspection, one dies on
+measurement, and the mechanism that actually mattered was on none of the lists.
+
+**"`capture 0.9` is mis-tuned against `damageDealt 1.2`" — FALSE, structurally,
+and it is the same trap iteration 10 fell into for economist.** `w.capture`
+multiplies only `captureProgressScore`, which returns 2 or 5. Every term that
+prices territory — `HQ_CAPTURE_VALUE` 2000, `CAPTURE_PRESSURE` 200/120,
+`PROPERTY_VALUE` up to 2000 — is added **raw** in `scoreAction`, with no persona
+weight and no role multiplier. Aggressor's capture weight is worth at most ~13
+points against city ticks that pay everyone 60–120. It cannot be the lever in
+either direction; **`capture` was not touched.**
+
+**"`artillery` in `buildPolicy.avoid` removes its siege answer" — FALSE,
+measured** (see the rejected-lever table below). Giving aggressor artillery in
+the 6000 band costs it 17 pp and triples its cap-outs.
+
+**"`counterRisk 0.7` is too low and feeds units" — TRUE, but worth zero net
+games on its own.** Aggressor really did end games with an empty board (0 units
+in the traced duel loss), and raising the weight is the right correction, but it
+buys one game from balanced and gives one back to turtle. Its actual value was
+elsewhere: it restored the floor sub-iteration 1 broke, and its exact value
+turned out to decide whether the aggressor mirror terminates at all.
+
+**"`roleOverrides.frontline {damageDealt 1.5, counterRisk 0.8}` promotes suicide
+trades" — NOT SUPPORTED, and not needed.** The override is a *multiplier* on the
+base weight, so raising the base from 0.7 to 0.95 lifts the frontline role's
+effective counterRisk from 0.56 to 0.76 without touching the override. Traced
+frontline attacks were not suicidal in the first place (a chosen tank ATTACK
+scored `damageDealt 365.4` against `counterRisk −82.3`, i.e. 203 raw damage dealt
+for 147 raw taken — a trade balanced would also take). **`roleOverrides` was not
+touched.**
+
+**The mechanism: the tank-push persona was spending a third of its money on
+recon.** `enumerateBuilds` walks `preferred` and takes the first AFFORDABLE
+entry, so a persona's list is a set of PRICE BANDS. Aggressor's was
+`[bomber 14000, cruiser 11000, tank 7000, fighter 12000, recon 4000,
+infantry 1000]` — on a land map that resolves to **tank ≥7000 / recon
+4000–6999 / infantry below**, and the treasury sits in that middle band most
+turns. `DAMAGE.recon.tank = 10`; `DAMAGE.tank.recon = 85`. This is precisely the
+money fire iteration 10 removed from balanced, still live in aggressor, and it
+directly contradicts the persona's own description.
+
+Build census over the iteration-10 post pilot (90 matches per persona):
+
+| persona   | infantry | recon | tank | bomber |
+|-----------|----------|-------|------|--------|
+| aggressor | 11.2     | **9.8** | 5.7  | 0.9    |
+| balanced  | 13.1     | 0     | 12.5 | 0      |
+| economist | 16.6     | 0     | 16.5 | 0      |
+
+On **duel**, where aggressor lost all six deterministic games, it built **8.0
+recon against 1.3 tanks per match**. The single game `--map duel --seed 1 --p0
+aggressor --p1 economist` ends at turn 38 with aggressor on **zero units**, two
+properties and 11000 unspent: it had bought 10 infantry, **7 recon** and one
+tank against economist's 11 infantry and 6 tanks. 39 of its 81 unit-decisions in
+that game were recon decisions.
+
+### Doctrine test (red before the fix)
+
+`tests/ai-doctrine.test.ts` §7, "buys an army that can fight the one on the
+board": an all-tank enemy, our capturer requirement already met (no
+capturer-crisis override) and six units on the board (no infantry floor), with
+the treasury parked at 4000 and at 6000 — below a tank. The assertion is that
+whatever is bought either captures or does ≥25 damage to a tank.
+
+| funds | aggressor  | turtle   | economist | balanced  |
+|-------|------------|----------|-----------|-----------|
+| 4000  | **recon**  | infantry | infantry  | infantry  |
+| 6000  | **recon**  | infantry | infantry  | artillery |
+| 7000  | tank       | tank     | tank      | tank      |
+
+Committed red for aggressor alone (`FLIP: WP7`), green for the other three —
+a persona discriminator, not a scoring bug. Green for all four after
+sub-iteration 1.
+
+### Changes — `src/data/ai-personas.json` only (aggressor only)
+
+`utility.ts` and `roles.ts` untouched; economist and balanced and turtle
+untouched. Every change is inside the persona that was being retuned.
+
+*Sub-iteration 1 — `buildPolicy.preferred`, `recon` removed:*
+`[bomber, cruiser, tank, fighter, recon, infantry]` →
+`[bomber, cruiser, tank, fighter, infantry]`. The land bands become **tank
+≥7000 / infantry below**, which is what "tank push with HQ-pressing infantry
+pushers" was supposed to mean all along.
+
+*Sub-iteration 2 — `weights.counterRisk` `0.7 → 0.95`.* Aggressor was the only
+persona under 0.8 and it ends games with an empty board. This is *measured*
+counter-damage, not speculative threat (`futureThreat` stays at 0.3 — the
+persona still walks into danger, it just stops taking trades it loses). Landed
+at 1.0, then recalibrated to 0.95 by the mirror gate — see below.
+
+*Sub-iteration 3 — `buildPolicy.infantryFloor` `3 → 4`.* Calibration of the
+same build lever as sub-iteration 1: with recon gone, aggressor's opening ran
+straight to armour and its capture rush went with it. This is the lever that
+separates economist from balanced, exactly as iteration 10 predicted it would
+have to be a turtle-or-aggressor lever: it takes one more game off balanced
+without taking one off economist.
+
+### Rejected levers (measured, not argued)
+
+Screens are full-field, 3 maps, `--matches 2`. **`--matches 2` is the complete
+deterministic set** — the utility AI consumes no RNG, so a pairing is 6 games,
+and a 2-match screen reproduces the 10-match table exactly (verified against the
+pre-pilot: same overall rates, same pairwise cells, at 1/5 the wall clock — the
+screening harness of this iteration, and worth reusing).
+
+| lever (on top of sub-iteration 1)          | aggressor | field                          | verdict |
+|--------------------------------------------|-----------|--------------------------------|---------|
+| `artillery` into the 6000 band, out of `avoid` | 44.4%  | econ 66.7 > bal 61.1 > turtle 27.8 | rejected — −17 pp, rawNull 5.6% → 16.7%, aggressor-vs-balanced cells at 108/119/118 turns |
+| `counterRisk 1.2`                          | vs balanced 2-4 | —                        | rejected — overshoots |
+| `counterRisk 0.9`                          | vs balanced 3-3 | —                        | rejected — crossroads cell to 121 turns (cap) |
+| `counterRisk 0.95` (adopted)               | vs balanced 3-3 at floor 3, 5-1 at floor 4 | — | adopted |
+
+### Results — standard pilot, 180 matches, duel+crossroads+canyon
+
+PRE reproduces iteration 10's post table exactly (economist 72.2 / balanced 72.2
+/ turtle 38.9 / aggressor 16.7, and every pairwise cell), confirming an
+unchanged field.
+
+| persona   | pre WR | post WR | Δ        |
+|-----------|--------|---------|----------|
+| aggressor | 16.7%  | 77.8%   | **+61.1 pp** |
+| economist | 72.2%  | 55.6%   | −16.6 pp |
+| balanced  | 72.2%  | 50.0%   | −22.2 pp |
+| turtle    | 38.9%  | 16.7%   | −22.2 pp |
+
+Per sub-iteration:
+
+| persona   | pre  | s1 (recon out) | s2 (counterRisk) | s3 = post (floor 4) |
+|-----------|------|----------------|------------------|---------------------|
+| aggressor | 16.7 | 61.1           | 61.1             | **77.8**            |
+| economist | 72.2 | 61.1           | 61.1             | 55.6                |
+| balanced  | 72.2 | 66.7           | 61.1             | 50.0                |
+| turtle    | 38.9 | **11.1**       | 16.7             | 16.7                |
+
+(The s2 column was measured at `counterRisk 1.0`, the value the mirror gate
+later rejected. `0.95` and `1.00` produce identical field tables — verified at
+floor 4, where both give aggressor 77.8 / economist 55.6 / balanced 50.0 /
+turtle 16.7 and the same twelve cells. Only the self-mirror distinguishes them.)
+
+Pairwise (row beats col), pre → post:
+
+| row \ col | aggressor   | turtle      | economist   | balanced    |
+|-----------|-------------|-------------|-------------|-------------|
+| aggressor | —           | 17% → 83%   | 17% → 67%   | 17% → 83%   |
+| turtle    | 83% → 17%   | —           | 17% → 17%   | 17% → 17%   |
+| economist | 83% → 33%   | 83% → 83%   | —           | 50% → 50%   |
+| balanced  | 83% → 17%   | 83% → 83%   | 50% → 50%   | —           |
+
+**Ordering achieved: aggressor 77.8% > economist 55.6% > balanced 50.0% >
+turtle 16.7%**, and every one of the twelve pairwise cells is ≥17% in both
+directions (the 1/6 quantum — one of the six deterministic games per pairing).
+Zero all-cap cells, 10/180 cap hits (5.6%), raw-winner-null 5.6%, unchanged from
+the pre run. Side balance p0 115/65, in line with iteration 10's 120/60.
+
+Each sub-iteration is legible in that table:
+
+- **s1** is the whole recon result: +44.4 pp in one line of JSON. It also broke a
+  floor — `turtle vs aggressor` went to **0/6** — which is what "aggressor is
+  genuinely stronger now" looks like before it is bounded.
+- **s2** is worth zero net games and is not therefore worthless: it trades the
+  turtle game back (restoring the floor at 17%) for a game off balanced. Raising
+  the price of a bad trade makes aggressor lose *fewer* games to the persona that
+  punishes bad trades, and win *fewer* by attrition against the persona that
+  cannot punish anything.
+- **s3** is the ordering. Floor 4 buys the fourth capturer that turns a tank
+  push into a capture rush; it takes one more game from balanced (3-3 → 5-1)
+  while leaving `aggressor vs economist` at 4-2, which is exactly the asymmetric
+  cell iteration 10 said would be needed to break the economist/balanced tie.
+
+Build census after the change (aggressor, per match): **16.7 infantry, 10.2
+tanks, 1.4 bombers, zero recon** — against 11.2 / 5.7 / 0.9 / **9.8** before.
+The persona now builds what its description always claimed.
+
+### Wide land pilot — 240 matches, duel+crossroads+canyon+**highlands**
+
+The final-validation gate. Highlands has never been in a pilot before, so every
+number on that map is newly measured, not a delta.
+
+| persona   | wide WR | 3-map WR |
+|-----------|---------|----------|
+| aggressor | 75.0%   | 77.8%    |
+| economist | 58.3%   | 55.6%    |
+| balanced  | 50.0%   | 50.0%    |
+| turtle    | 16.7%   | 16.7%    |
+
+| row \ col | aggressor | turtle | economist | balanced |
+|-----------|-----------|--------|-----------|----------|
+| aggressor | —         | 75%    | 63%       | 88%      |
+| turtle    | 25%       | —      | 13%       | 13%      |
+| economist | 38%       | 88%    | —         | 50%      |
+| balanced  | 13%       | 88%    | 50%       | —        |
+
+**PASS on ordering and on floors** — the same ordering as the 3-map pilot, and
+all twelve cells ≥13% both ways (the quantum here is 1/8 = 12.5%).
+
+**FAIL on "zero all-cap cells", and neither all-cap cell contains an aggressor
+game.** `turtle vs balanced|highlands` and `economist vs balanced|highlands` are
+both 10/10 turn-cap at 121.0 turns — pairings among the three personas this
+iteration did not touch, on the one map no previous pilot measured. Of the 35
+raw-winner-null games, 30 are in those two cells plus the two half-capped cells
+iteration 10 already recorded (`turtle vs economist|canyon`,
+`turtle vs balanced|crossroads`); the remaining 5 are
+`aggressor vs turtle|highlands`, a cell that splits 5-5 at 100.0 turns and is
+therefore not all-cap. The 3-map standard pilot on the same config has **zero**
+all-cap cells and a 5.6% null rate, inside iteration 9's 10% bar; the wide run
+is 14.6% with the entire excess on highlands. **Flagged for a future iteration:
+it is a balanced/turtle-on-highlands problem and is not reachable from
+aggressor's config.**
+
+### The mirror gate caught a knife-edge, and it is worth writing down
+
+Sub-iteration 2 originally landed `counterRisk` at exactly **1.0**. The
+field tables were fine — identical, cell for cell, to the 0.95 version — and the
+3-map pilot was clean. The **aggressor self-mirror on crossroads then ran to the
+1000-turn harness limit**, with p1 holding a 59–260% material lead for 915 turns
+and 2,657,000 banked funds it could not spend because it was pinned at
+`TIER3_UNIT_CAP`. The replay miner on that single log: `stalledUnit` 176 hits,
+`heldLeadNoWin` 915 turns, `turnCapHit`. Iteration 9's failure mode, re-opened
+by a persona weight.
+
+Bisect (aggressor mirror, crossroads, seed 1, cap 300):
+
+| config                                     | turns |
+|--------------------------------------------|-------|
+| i8 baseline (recon in, cr 0.7, floor 3)    | 97    |
+| s1 only (recon out)                        | 61    |
+| s1 + counterRisk 1.0 (floor 3)             | 169   |
+| s1 + infantryFloor 4 (cr 0.7)              | 61    |
+| s1 + cr 1.0 + floor 4                      | **>300** |
+
+Neither lever breaks it alone; the pair does. And the sweep says the culprit is
+the *value*, not the direction:
+
+| counterRisk (floor 4) | crossroads | duel |
+|-----------------------|------------|------|
+| 0.85                  | 59         | 41   |
+| 0.90                  | 87         | 41   |
+| **0.95 (shipped)**    | **87**     | **41** |
+| 1.00                  | **>300**   | 41   |
+| 1.05                  | 236        | 41   |
+
+`counterRisk = 1.00` is a knife-edge, not a threshold — 1.05 terminates in 236
+turns and 0.95 in 87. In a self-mirror both sides evaluate identical positions,
+so a weight that makes some comparison tie exactly produces two armies that
+mirror each other's refusal indefinitely. **A tuning value that is a round
+number is a candidate tie-maker, and only the mirror gate can see it**: 1.00 and
+0.95 produce byte-identical 3-map and pairwise tables against the other three
+personas. The shipped value is **0.95**, chosen for that reason alone.
+
+### Probe gate (10 matches/cell/map, 3 land maps, bar 70%)
+
+| persona   | probe-camper | probe-kiter | probe-rush | vs iteration 10 |
+|-----------|--------------|-------------|------------|-----------------|
+| aggressor | 100%         | 100%        | 100%       | unchanged       |
+| balanced  | 90.0%        | 100%        | 100%       | unchanged       |
+| economist | 86.7%        | 100%        | 100%       | unchanged       |
+| turtle    | 70.0%        | 100%        | 100%       | unchanged       |
+
+PASS — 12/12, and **no cell moved by a single match** from iterations 9 and 10.
+Aggressor is 30-0-0 in all three of its columns. Turtle still sits exactly on the
+bar (21-0-9 vs probe-camper, all draws); untouched here, still the field's
+thinnest margin.
+
+### Mirror termination (seed 1, `--max-turns 1000`, RAW winner)
+
+| AI        | duel | crossroads |
+|-----------|------|------------|
+| utility   | 68   | 55         |
+| balanced  | 44   | 101        |
+| turtle    | 77   | 117        |
+| aggressor | 41   | **87**     |
+
+8/8 end on a board result well inside the 300-turn bar (aggressor's crossroads
+mirror was >1000 before the recalibration above).
+
+### Cross-generation (vs the frozen i8 field, 6/pair/map, 108 matches)
+
+| persona      | overall | vs its own -i8 self |
+|--------------|---------|---------------------|
+| aggressor    | 66.7%   | **66.7%** (12-6)    |
+| economist    | 55.6%   | 50.0% (9-9)         |
+| economist-i8 | 55.6%   | —                   |
+| aggressor-i8 | 22.2%   | —                   |
+
+PASS on both halves of the gate. **Aggressor beats its own frozen self 12-6**
+(66.7%, against the 38.9%-equivalent bar) and takes 67% off both economist
+generations, where `aggressor-i8` takes 17%. `economist vs economist-i8` is
+**exactly 50.0% and 9-9 on every map** — the byte-identical mirror, an
+independent confirmation that economist was not touched (its config has now
+survived four iterations untouched) and a live calibration check on the
+benchmark plumbing. Zero cap-outs in the whole run.
+
+The one cell worth reading closely is `aggressor vs aggressor-i8|duel` at 3-3:
+the new aggressor sweeps crossroads 6-0 but only splits duel and canyon against
+the version of itself that buys recon. Recon is not useless on a small map —
+its 8 movement takes a neutral city on turn one — which is why the honest
+statement is "the money was in the wrong band", not "recon is a bad unit".
+
+### All-6-maps sanity (4/pair/map, 144 matches)
+
+| persona   | all-6 WR |
+|-----------|----------|
+| aggressor | 66.7%    |
+| balanced  | 58.3%    |
+| economist | 47.2%    |
+| turtle    | 27.8%    |
+
+PASS on both bars. **No pairing dropped to 0%** — the lowest cell in the matrix
+is 25%, in both directions, across all six maps. **All-cap cells: exactly
+14/36**, on the iteration-7 baseline bar of ≤14/36: the twelve sea cells
+(`armada` and `island_hop`, 12/12, unchanged since iteration 7 — no transports
+doctrine, the standing strategic-design issue) plus the two highlands cells from
+the wide pilot. Aggressor's own sea record is 4-0 on armada vs turtle and
+economist but 0-4 vs balanced, and 0-4 on island_hop vs turtle: the ordering is a
+LAND-map property, as scoped, and the sea maps re-shuffle it (balanced 58.3% >
+economist 47.2% there).
+
+### Degeneracy (`mine-replays`)
+
+Same harness as iteration 10 (the 3-map post, 180 files):
+
+| flag               | iter-10 post  | iter-11 post   |
+|--------------------|---------------|----------------|
+| turnCapHit         | 10 (5.6%)     | 10 (5.6%)      |
+| heldLeadNoWin      | 20 (11.1%)    | 20 hits (8.3% of files) |
+| uncontestedCapture | 70 (38.9%)    | 135 hits (47.2%) |
+| stalledUnit        | 645 hits (66.7%) | 610 hits (66.7%) |
+
+And on the wide pilot the gate requires (240 files):
+
+| flag               | wide          |
+|--------------------|---------------|
+| turnCapHit         | 35 (14.6%)    |
+| heldLeadNoWin      | 35 hits (10.4%) |
+| uncontestedCapture | 250 hits (58.3%) |
+| stalledUnit        | 1715 hits (75.0%) |
+
+`turnCapHit` **misses the <10% bar on the wide set (14.6%) and meets it on the
+3-map set (5.6%)** — every capped game outside the two cells iteration 10
+already carried is on highlands. `stalledUnit` file-coverage is flat at 66.7%
+(iteration 10 regressed it 44 → 67 and suspected balanced's infantry floor;
+aggressor now has the same floor and coverage did not move, which weakens that
+hypothesis — the hits per file fell, 645 → 610). `uncontestedCapture` rises
+38.9% → 47.2%, and the miner names the mechanism in its own output: the top
+entries are aggressor infantry taking **an enemy HQ** over turns 41–45 with
+three idle enemy units in reach. That is not a defect on the capturing side; it
+is the losing side failing to contest, and it is the flag that measures "games
+end by someone actually winning".
+
+### Suite
+
+`npx vitest run`: **907/909 across 77 files.** The two failures are both the
+documented `tests/ai-tier3-vs-tier1.test.ts` wall-clock flake
+(`expectTurnBudget` at 499 ms against the 200 ms budget under a 77-file parallel
+run); the file is **green solo**, both acceptances including the budget, and the
+*win-rate* assertions never failed. As iteration 10 recorded, `makeAI('tier3')`
+builds `utilityAI` with default weights and never reads `ai-personas.json`, so
+no persona change can alter what that test simulates. `npm run lint` clean.
+
+Two test files changed, both in the sanctioned way:
+
+- `tests/ai-doctrine.test.ts` — new §7 (8 cases: 4 personas × 2 funds levels),
+  committed red for aggressor and flipped by sub-iteration 1.
+- `tests/ai-benchmarks.test.ts` — `aggressor` added to `RETUNED_SINCE_I8`. That
+  snapshot-fidelity assertion is *designed* to fail when a persona is retuned and
+  its own comment says the fix is to drop the expectation for the changed
+  persona, never to re-freeze i8. **`economist` is now the only persona still
+  byte-identical to the i8 freeze.**
+
+### Known regressions and what is left
+
+- **Two all-cap cells on highlands** (`turtle vs balanced`,
+  `economist vs balanced`), and the wide-pilot `turnCapHit` rate at 14.6%
+  against the <10% bar. Neither all-cap cell contains an aggressor game, both
+  are pairings this iteration did not touch, and highlands was in no previous
+  pilot's map set — this is newly *measured*, not newly *caused*. Not reachable
+  from aggressor's config; it needs a balanced or turtle lever, or a look at why
+  highlands is slow for artillery-heavy compositions.
+- **Turtle is now 16.7% overall** (38.9% pre) and 13% on the wide pilot. That is
+  the intended direction for the campaign ramp (turtle is mission 1) and every
+  cell stays above the floor, but turtle is now the field's fragile persona: it
+  wins exactly one game in six from everyone and sits exactly on the 70%
+  probe-camper bar. Any future change touching turtle should re-run the probe
+  gate first.
+- **`uncontestedCapture` 38.9% → 47.2%.** More games are decided by a capture
+  rather than a rout, which is the flag counting events. Worth a look only if it
+  keeps climbing.
+- Sea maps: unchanged and untargeted, 12/12 cells still 100% cap. The standing
+  iteration-7 issue.
+- Budget: **3 sub-iterations, as scoped**, plus one recalibration of
+  sub-iteration 2's value forced by the mirror gate (1.0 → 0.95, identical field
+  tables), four rejected levers screened at `--matches 2`, and one 5-point sweep
+  of `counterRisk` against the mirror.
+
+**Campaign impact.** Land-map ordering after this change: **aggressor 77.8% >
+economist 55.6% > balanced 50.0% > turtle 16.7%** on the 3-map pilot, and
+**aggressor 75.0% > economist 58.3% > balanced 50.0% > turtle 16.7%** on the
+4-map wide pilot. The intended ramp **turtle < balanced < economist <
+aggressor** **HOLDS, on both map sets, for the first time in this project.**
+
+---
+
+## Campaign coordination note (end of the WP1–WP7 programme)
+
+Addressed to the campaign-mode workstream. This is the final entry of the AI
+tuning programme; iterations 9, 10 and 11 all moved persona behaviour, and
+campaign mode pins its opponents **by name**.
+
+### Final 4×4 land matrix (row beats col), 240-match wide pilot
+
+| row \ col | aggressor | turtle | economist | balanced | overall |
+|-----------|-----------|--------|-----------|----------|---------|
+| aggressor | —         | 75%    | 63%       | 88%      | **75.0%** |
+| economist | 38%       | 88%    | —         | 50%      | **58.3%** |
+| balanced  | 13%       | 88%    | 50%       | —        | **50.0%** |
+| turtle    | 25%       | —      | 13%       | 13%      | **16.7%** |
+
+(3-map standard pilot, same ordering: aggressor 77.8 > economist 55.6 >
+balanced 50.0 > turtle 16.7. Every cell ≥10% in both directions on both runs.)
+
+### Does the intended mission ramp hold?
+
+**Yes — turtle < balanced < economist < aggressor, on both land pilots.**
+
+| mission | opponent  | wide WR | ramp position |
+|---------|-----------|---------|---------------|
+| m1      | turtle    | 16.7%   | easiest ✓     |
+| m2      | balanced  | 50.0%   | ✓             |
+| m3      | economist | 58.3%   | ✓             |
+| m4      | aggressor | 75.0%   | hardest ✓     |
+| m5      | balanced  | 50.0%   | (repeat of m2) |
+
+Two caveats worth designing around:
+
+1. **m2 and m3 are close** (50.0% vs 58.3%, i.e. one game in eight). The ordering
+   is correct but the *step* between missions 2 and 3 is small; missions 3 → 4 is
+   the big jump.
+2. **m5 repeats m2's opponent** and balanced has not changed since iteration 10.
+   If mission 5 is meant to be the victory lap, it is currently easier than
+   mission 4 by 25 pp.
+3. This ordering is a **land-map** property. On `armada`/`island_hop` the field
+   re-shuffles (aggressor 66.7 > balanced 58.3 > economist 47.2 > turtle 27.8)
+   and every sea cell still runs to the turn cap. If any mission uses a sea map,
+   its difficulty is not described by the table above.
+
+### Mission difficulty shifted across iterations 9–11 — per-persona "feels" delta
+
+Nothing in campaign code notices a persona retune. These are the deltas since
+the campaign branch was cut (pre-iteration-9), one line each:
+
+- **turtle (m1): much easier — 50.0% → 16.7%.** It stopped freezing its whole
+  army behind a `futureThreat` wall (iteration 10) but never gained an offence;
+  it now walls up, trades badly with armour, and loses on time. *Feels:* a
+  passive opponent that no longer beats you by accident.
+- **balanced (m2, m5): harder — 33.3% → 50.0%.** Dropped recon, gained artillery
+  in its build band and a 4-infantry opening (iteration 10). *Feels:* it now
+  answers a tank push with siege instead of scouts, and it contests captures
+  instead of parking (iteration 8/9).
+- **economist (m3): easier than its iteration-9 peak, harder than its original —
+  77.8% → 94.4% → 58.3%.** **Its config was never touched in the entire
+  programme**; all of that movement is the shared scorer (iteration 9's
+  win-condition pricing) and the field improving around it. *Feels:* the same
+  swarm-and-capture opponent, now beatable.
+- **aggressor (m4): much harder — 38.9% → 16.7% → 75.0%.** Iterations 8 and 9
+  cost it its free wins against passive opponents; iteration 11 stopped it
+  buying recon, made it decline losing trades, and gave it a fourth capturer.
+  *Feels:* the biggest behavioural change of the programme — it now shows up
+  with tanks and infantry instead of scouts, and it takes your HQ around turn 45.
+
+**Every persona in the game plays differently than it did when the campaign
+missions were written, and mission difficulty moved silently in both
+directions.** Missions should be re-playtested before release; the numbers above
+are self-play win rates, not human-vs-AI difficulty.
+
+### What did NOT change (the frozen contract, verified)
+
+- **Persona names and count:** exactly `aggressor`, `balanced`, `economist`,
+  `turtle`. `tests/ai-benchmarks.test.ts` pins `PERSONA_NAMES` to those four and
+  asserts no probe or benchmark name leaks into `PERSONAS`; green.
+- **Signatures:** `personaAI(name, { fog })` and `PERSONA_NAMES` untouched
+  through all three iterations.
+- **No persona key was renamed or removed** — iterations 9–11 only changed
+  values inside existing keys (and `roleOverrides`/`buildPolicy` entries within
+  them).
+- **Every persona keeps its signature identity:** aggressor is still the
+  damage-first tank push (`damageDealt 1.2`, `futureThreat 0.3`, the
+  `frontline` override), economist is still the capture swarm (byte-identical to
+  i8), turtle is still terrain-anchored defence, balanced is still the control
+  persona. Iteration 11 removed a unit type from one build list, moved one
+  weight by 0.25 and one floor by 1.
+
+### Rebase reminder (unchanged from iteration 9)
+
+The campaign branch is based pre-iteration-8 and must merge `main`. Its stale
+copies of `src/engine/ai/utility.ts` and `src/engine/ai/roles.ts` are not
+intentional edits — **resolve those two as take-main.** `ai-personas.json`
+likewise: take-main.
